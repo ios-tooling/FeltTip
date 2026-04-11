@@ -14,6 +14,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
+	var typewriterMode: Bool = false
 
 	public init(
 		text: Binding<String>,
@@ -21,7 +22,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		fontSize: CGFloat = 13,
 		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
-		syncScrollFraction: Double? = nil
+		syncScrollFraction: Double? = nil,
+		typewriterMode: Bool = false
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -29,6 +31,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.onVisibleHeadingChanged = onVisibleHeadingChanged
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.syncScrollFraction = syncScrollFraction
+		self.typewriterMode = typewriterMode
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
@@ -143,6 +146,25 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		public func textDidChange(_ notification: Notification) {
 			guard let tv = notification.object as? NSTextView else { return }
 			parent.text = tv.string
+			if parent.typewriterMode { centerCursor(in: tv) }
+		}
+
+		public func textViewDidChangeSelection(_ notification: Notification) {
+			guard parent.typewriterMode,
+					let tv = notification.object as? NSTextView else { return }
+			centerCursor(in: tv)
+		}
+
+		private func centerCursor(in textView: NSTextView) {
+			guard let scrollView = textView.enclosingScrollView,
+					let layoutManager = textView.layoutManager else { return }
+			let insertionPoint = textView.selectedRange().location
+			let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: insertionPoint, length: 0), actualCharacterRange: nil)
+			let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+			let visibleHeight = scrollView.contentView.bounds.height
+			let targetY = lineRect.midY + textView.textContainerOrigin.y - visibleHeight / 2
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: max(0, targetY)))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
 		}
 	}
 }
