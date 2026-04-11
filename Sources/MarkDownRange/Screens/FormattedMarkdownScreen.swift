@@ -16,8 +16,10 @@ public struct FormattedMarkdownScreen: View {
 	@State private var highlightedFootnoteID: String?
 	@State private var renderModel: FormattedMarkdownRenderModel?
 	@State private var renderTask: Task<Void, Never>?
+	@State private var focusedSectionID: String?
 	var syncSectionID: String?
 	var syncScrollFraction: Double?
+	var focusModeEnabled: Bool = false
 	@Environment(LinkDisplayState.self) var linkDisplay
 
 	public init(
@@ -27,7 +29,8 @@ public struct FormattedMarkdownScreen: View {
 		theme: MarkdownTheme,
 		fontSize: CGFloat,
 		syncSectionID: String? = nil,
-		syncScrollFraction: Double? = nil
+		syncScrollFraction: Double? = nil,
+		focusModeEnabled: Bool = false
 	) {
 		self.text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -36,6 +39,7 @@ public struct FormattedMarkdownScreen: View {
 		self.fontSize = fontSize
 		self.syncSectionID = syncSectionID
 		self.syncScrollFraction = syncScrollFraction
+		self.focusModeEnabled = focusModeEnabled
 	}
 
 	private var renderKey: FormattedMarkdownRenderModel.Key {
@@ -63,6 +67,15 @@ public struct FormattedMarkdownScreen: View {
 										.fill(.tint.opacity(flashingID == section.id ? 0.15 : 0))
 										.padding(.horizontal, 4)
 								)
+								.opacity(focusModeOpacity(for: section.id))
+								.onContinuousHover { phase in
+									guard focusModeEnabled else { return }
+									switch phase {
+									case .active: focusedSectionID = section.id
+									case .ended:
+										if focusedSectionID == section.id { focusedSectionID = nil }
+									}
+								}
 								.id(section.id)
 							}
 						}
@@ -116,6 +129,11 @@ public struct FormattedMarkdownScreen: View {
 			linkDisplay.show(url: url.absoluteString)
 			return .systemAction
 		})
+	}
+
+	private func focusModeOpacity(for sectionID: String) -> Double {
+		guard focusModeEnabled, focusedSectionID != nil else { return 1.0 }
+		return focusedSectionID == sectionID ? 1.0 : 0.25
 	}
 }
 
