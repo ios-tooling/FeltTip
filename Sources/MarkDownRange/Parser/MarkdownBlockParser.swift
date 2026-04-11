@@ -13,7 +13,7 @@ public enum MarkdownBlockParser {
 		fontSize: CGFloat = 16
 	) -> [MarkdownBlock] {
 		let (frontmatter, body) = extractFrontmatter(markdown)
-		let processed = EmojiShortcodes.process(body)
+		let processed = HighlightSyntax.process(EmojiShortcodes.process(body))
 		let document = Document(parsing: processed)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize)
 		var blocks = builder.build(from: document)
