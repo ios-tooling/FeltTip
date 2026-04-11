@@ -1,0 +1,149 @@
+//
+//  MarkdownTextEditor.swift
+//  MarkdownRendering
+//
+
+#if os(macOS)
+import SwiftUI
+import AppKit
+
+public struct MarkdownTextEditor: NSViewRepresentable {
+	@Binding var text: String
+	@Binding var selectedHeadingID: String?
+	var fontSize: CGFloat = 13
+	var onVisibleHeadingChanged: ((String?) -> Void)?
+	var onScrollFractionChanged: ((Double) -> Void)?
+	var syncScrollFraction: Double?
+
+	public init(
+		text: Binding<String>,
+		selectedHeadingID: Binding<String?>,
+		fontSize: CGFloat = 13,
+		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
+		onScrollFractionChanged: ((Double) -> Void)? = nil,
+		syncScrollFraction: Double? = nil
+	) {
+		self._text = text
+		self._selectedHeadingID = selectedHeadingID
+		self.fontSize = fontSize
+		self.onVisibleHeadingChanged = onVisibleHeadingChanged
+		self.onScrollFractionChanged = onScrollFractionChanged
+		self.syncScrollFraction = syncScrollFraction
+	}
+
+	public func makeNSView(context: Context) -> NSScrollView {
+		let scrollView = NSScrollView()
+		let textView = MarkdownFormattingTextView()
+
+		textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+		textView.isEditable = true
+		textView.isRichText = false
+		textView.allowsUndo = true
+		textView.delegate = context.coordinator
+		textView.isVerticallyResizable = true
+		textView.isHorizontallyResizable = false
+		textView.autoresizingMask = [.width]
+		textView.textContainerInset = NSSize(width: 8, height: 8)
+		textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		textView.textContainer?.widthTracksTextView = true
+		textView.usesFindBar = true
+		textView.isIncrementalSearchingEnabled = true
+		textView.string = text
+
+		scrollView.documentView = textView
+		scrollView.hasVerticalScroller = true
+		scrollView.autohidesScrollers = true
+		scrollView.contentView.postsBoundsChangedNotifications = true
+
+		context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
+			forName: NSView.boundsDidChangeNotification,
+			object: scrollView.contentView,
+			queue: .main
+		) { [weak scrollView, weak textView, weak coordinator = context.coordinator] _ in
+			guard let scrollView, let coordinator, !coordinator.isSyncScroll else { return }
+
+			let docHeight = scrollView.documentView?.frame.height ?? 0
+			let visibleHeight = scrollView.contentView.bounds.height
+			let offset = scrollView.contentView.bounds.origin.y
+			let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
+			coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
+
+			guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
+			let now = CFAbsoluteTimeGetCurrent()
+			guard now - coordinator.lastScrollTime > 0.15 else { return }
+			coordinator.lastScrollTime = now
+
+			guard let layoutManager = textView.layoutManager,
+				  let textContainer = textView.textContainer else { return }
+			let origin = textView.textContainerOrigin
+			let point = NSPoint(x: 0, y: max(0, textView.visibleRect.minY - origin.y))
+			let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+			guard glyphIndex < layoutManager.numberOfGlyphs else { return }
+			let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+			let heading = MarkdownHeading.heading(atCharacterOffset: charIndex, in: textView.string)
+
+			if heading?.id != coordinator.lastReportedHeading {
+				coordinator.lastReportedHeading = heading?.id
+				coordinator.parent.onVisibleHeadingChanged?(heading?.id)
+			}
+		}
+
+		return scrollView
+	}
+
+	public func updateNSView(_ scrollView: NSScrollView, context: Context) {
+		context.coordinator.parent = self
+		guard let textView = scrollView.documentView as? NSTextView else { return }
+
+		let expectedFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+		if textView.font != expectedFont { textView.font = expectedFont }
+
+		if textView.string != text {
+			let sel = textView.selectedRange()
+			textView.string = text
+			let clampedLoc = min(sel.location, (text as NSString).length)
+			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
+		}
+
+		if let raw = selectedHeadingID, raw != context.coordinator.lastScrolledID {
+			context.coordinator.lastScrolledID = raw
+			let headingID = raw.components(separatedBy: "\t").first ?? raw
+			if let range = MarkdownHeading.characterRange(for: headingID, in: text) {
+				textView.scrollRangeToVisible(range)
+				textView.showFindIndicator(for: range)
+			}
+			Task { @MainActor in selectedHeadingID = nil }
+		}
+
+		if let fraction = syncScrollFraction, fraction != context.coordinator.lastAppliedFraction {
+			context.coordinator.lastAppliedFraction = fraction
+			context.coordinator.isSyncScroll = true
+			let docHeight = scrollView.documentView?.frame.height ?? 0
+			let visibleHeight = scrollView.contentView.bounds.height
+			let target = fraction * max(0, docHeight - visibleHeight)
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+			context.coordinator.isSyncScroll = false
+		}
+	}
+
+	public func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	public class Coordinator: NSObject, NSTextViewDelegate {
+		var parent: MarkdownTextEditor
+		var lastScrolledID: String?
+		var scrollObserver: Any?
+		var lastScrollTime: CFAbsoluteTime = 0
+		var lastReportedHeading: String?
+		var lastAppliedFraction: Double = -1
+		var isSyncScroll = false
+		init(_ parent: MarkdownTextEditor) { self.parent = parent }
+		deinit { if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) } }
+
+		public func textDidChange(_ notification: Notification) {
+			guard let tv = notification.object as? NSTextView else { return }
+			parent.text = tv.string
+		}
+	}
+}
+#endif

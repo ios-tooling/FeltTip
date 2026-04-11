@@ -1,0 +1,60 @@
+{
+  "originHash" : "cc4906148355d93856a9e736a8a646e7e35853a10e6583a21bf884a0746a4ba7",
+  "pins" : [
+    {
+      "identity" : "chronicle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/Chronicle/",
+      "state" : {
+        "revision" : "f16ceaf9fb951092edc7d7ffb77b3fa8f78889d8",
+        "version" : "0.0.23"
+      }
+    },
+    {
+      "identity" : "convey",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/Convey",
+      "state" : {
+        "revision" : "3bf3ad51c27f87c56ce1f4836379a34dab10982b",
+        "version" : "3.2.6"
+      }
+    },
+    {
+      "identity" : "johnnycache",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/JohnnyCache.git",
+      "state" : {
+        "revision" : "e596c9f607cbba6c2fccf30ddda722c5cd5f1eb8",
+        "version" : "1.0.16"
+      }
+    },
+    {
+      "identity" : "swift-cmark",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-cmark.git",
+      "state" : {
+        "revision" : "5d9bdaa4228b381639fff09403e39a04926e2dbe",
+        "version" : "0.7.1"
+      }
+    },
+    {
+      "identity" : "swift-markdown",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-markdown",
+      "state" : {
+        "revision" : "7d9a5ce307528578dfa777d505496bd5f544ad94",
+        "version" : "0.7.3"
+      }
+    },
+    {
+      "identity" : "tagalong",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/TagAlong/",
+      "state" : {
+        "revision" : "f7ddf6ae68e18703c209923210e8a713beb280f3",
+        "version" : "0.0.4"
+      }
+    }
+  ],
+  "version" : 3
+}
