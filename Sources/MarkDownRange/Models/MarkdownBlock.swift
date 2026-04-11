@@ -32,13 +32,15 @@ public enum MarkdownBlock: Identifiable, Sendable {
 	case htmlBlock(content: String, id: String)
 	case details(summary: String, children: [MarkdownBlock], id: String)
 	case alert(type: AlertType, children: [MarkdownBlock], id: String)
+	case frontmatter(pairs: [(key: String, value: String)], id: String)
 
 	public var id: String {
 		switch self {
 		case .heading(_, _, let id), .paragraph(_, _, let id), .codeBlock(_, _, let id),
 			  .blockquote(_, let id), .orderedList(_, _, let id), .unorderedList(_, let id),
 			  .table(_, _, let id), .thematicBreak(let id), .image(_, _, let id),
-			  .htmlBlock(_, let id), .details(_, _, let id), .alert(_, _, let id):
+			  .htmlBlock(_, let id), .details(_, _, let id), .alert(_, _, let id),
+			  .frontmatter(_, let id):
 			return id
 		}
 	}

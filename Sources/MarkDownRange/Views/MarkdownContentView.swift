@@ -74,6 +74,8 @@ public struct MarkdownContentView: View {
 			DetailsBlockView(summary: summary, children: children, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 		case .alert(let type, let children, _):
 			AlertBlockView(type: type, children: children, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+		case .frontmatter(let pairs, _):
+			FrontmatterView(pairs: pairs, theme: theme)
 		}
 	}
 }

@@ -12,10 +12,41 @@ public enum MarkdownBlockParser {
 		theme: MarkdownTheme = .default,
 		fontSize: CGFloat = 16
 	) -> [MarkdownBlock] {
-		let document = Document(parsing: markdown)
+		let (frontmatter, body) = extractFrontmatter(markdown)
+		let document = Document(parsing: body)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize)
-		let blocks = builder.build(from: document)
+		var blocks = builder.build(from: document)
+		if let fm = frontmatter { blocks.insert(fm, at: 0) }
 		return postProcess(blocks)
+	}
+
+	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String) {
+		let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard trimmed.hasPrefix("---") else { return (nil, markdown) }
+		let lines = markdown.components(separatedBy: .newlines)
+		guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return (nil, markdown) }
+
+		var endIndex: Int?
+		for i in 1..<lines.count {
+			if lines[i].trimmingCharacters(in: .whitespaces) == "---" {
+				endIndex = i; break
+			}
+		}
+		guard let end = endIndex, end > 1 else { return (nil, markdown) }
+
+		var pairs: [(key: String, value: String)] = []
+		for i in 1..<end {
+			let line = lines[i]
+			if let colonIdx = line.firstIndex(of: ":") {
+				let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
+				let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+				if !key.isEmpty { pairs.append((key, value)) }
+			}
+		}
+
+		let body = lines[(end + 1)...].joined(separator: "\n")
+		let block = MarkdownBlock.frontmatter(pairs: pairs, id: "frontmatter")
+		return (block, body)
 	}
 
 	/// Groups consecutive blocks between <details> and </details> HTML blocks
