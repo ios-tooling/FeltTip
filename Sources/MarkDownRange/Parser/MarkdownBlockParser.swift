@@ -13,7 +13,8 @@ public enum MarkdownBlockParser {
 		fontSize: CGFloat = 16
 	) -> [MarkdownBlock] {
 		let (frontmatter, body) = extractFrontmatter(markdown)
-		let document = Document(parsing: body)
+		let processed = EmojiShortcodes.process(body)
+		let document = Document(parsing: processed)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize)
 		var blocks = builder.build(from: document)
 		if let fm = frontmatter { blocks.insert(fm, at: 0) }
