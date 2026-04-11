@@ -155,10 +155,11 @@ struct InlineBuilder: MarkupWalker {
 		if highlight { str.backgroundColor = .yellow.opacity(0.3) }
 	}
 
+	private static let urlDetector: NSDataDetector? = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
 	private mutating func linkifyBareURLs() {
 		let plainText = String(result.characters)
-		guard !plainText.isEmpty else { return }
-		guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return }
+		guard !plainText.isEmpty, let detector = Self.urlDetector else { return }
 		let matches = detector.matches(in: plainText, range: NSRange(location: 0, length: (plainText as NSString).length))
 
 		for match in matches.reversed() {

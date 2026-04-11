@@ -12,9 +12,10 @@ struct CodeBlockView: View {
 	let theme: MarkdownTheme
 	var showLineNumbers: Bool = true
 	@State private var copied = false
+	@State private var highlightedText: Text?
 
 	private var trimmedCode: String { code.trimmingCharacters(in: .newlines) }
-	private var lines: [String] { trimmedCode.components(separatedBy: .newlines) }
+	private var lineCount: Int { trimmedCode.components(separatedBy: .newlines).count }
 
 	var body: some View {
 		ZStack(alignment: .topTrailing) {
@@ -22,7 +23,7 @@ struct CodeBlockView: View {
 				HStack(alignment: .top, spacing: 0) {
 					if showLineNumbers {
 						VStack(alignment: .trailing, spacing: 0) {
-							ForEach(1...max(1, lines.count), id: \.self) { num in
+							ForEach(1...max(1, lineCount), id: \.self) { num in
 								Text("\(num)")
 									.font(.system(size: 13, design: .monospaced))
 									.foregroundStyle(theme.secondaryColor.opacity(0.5))
@@ -36,7 +37,7 @@ struct CodeBlockView: View {
 						Divider().padding(.vertical, 4)
 					}
 
-					Tokenizer.highlightedText(trimmedCode)
+					(highlightedText ?? Text(trimmedCode))
 						.font(.system(size: 13, design: .monospaced))
 						.textSelection(.enabled)
 						.padding(12)
@@ -55,6 +56,11 @@ struct CodeBlockView: View {
 			.padding(8)
 		}
 		.background(theme.codeBackground, in: RoundedRectangle(cornerRadius: 8))
+		.task(id: trimmedCode) {
+			let code = trimmedCode
+			let text = await Task.detached { Tokenizer.highlightedText(code) }.value
+			highlightedText = text
+		}
 	}
 
 	private func copyToClipboard() {

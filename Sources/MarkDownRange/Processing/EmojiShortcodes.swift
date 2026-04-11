@@ -7,7 +7,8 @@ import Foundation
 
 public enum EmojiShortcodes {
 	public static func process(_ text: String) -> String {
-		text.replacing(/:([a-z0-9_+-]+):/) { match in
+		guard text.contains(":") else { return text }
+		return text.replacing(/:([a-z0-9_+-]+):/) { match in
 			lookup[String(match.1)] ?? String(match.0)
 		}
 	}

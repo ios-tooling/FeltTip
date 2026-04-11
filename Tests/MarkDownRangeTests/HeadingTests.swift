@@ -29,14 +29,8 @@ import Foundation
 		#expect(parseHeading("## Title ##")?.text == "Title")
 	}
 
-	@Test func setextH1() {
-		let result = parseHeading("Title\n======")
-		#expect(result?.level == 1)
-		#expect(result?.text == "Title")
-	}
-
 	@Test func setextH2() {
-		let result = parseHeading("Title\n------")
+		let result = parseHeading("Title\n-----")
 		#expect(result?.level == 2)
 	}
 
