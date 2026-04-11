@@ -10,23 +10,41 @@ struct CodeBlockView: View {
 	let code: String
 	let language: String?
 	let theme: MarkdownTheme
+	var showLineNumbers: Bool = true
 	@State private var copied = false
 
 	private var trimmedCode: String { code.trimmingCharacters(in: .newlines) }
+	private var lines: [String] { trimmedCode.components(separatedBy: .newlines) }
 
 	var body: some View {
 		ZStack(alignment: .topTrailing) {
 			ScrollView(.horizontal, showsIndicators: false) {
-				Tokenizer.highlightedText(trimmedCode)
-					.font(.system(size: 13, design: .monospaced))
-					.textSelection(.enabled)
-					.padding(16)
-					.padding(.trailing, 32)
+				HStack(alignment: .top, spacing: 0) {
+					if showLineNumbers {
+						VStack(alignment: .trailing, spacing: 0) {
+							ForEach(1...max(1, lines.count), id: \.self) { num in
+								Text("\(num)")
+									.font(.system(size: 13, design: .monospaced))
+									.foregroundStyle(theme.secondaryColor.opacity(0.5))
+									.frame(height: 18.5)
+							}
+						}
+						.padding(.leading, 12)
+						.padding(.trailing, 8)
+						.padding(.vertical, 12)
+
+						Divider().padding(.vertical, 4)
+					}
+
+					Tokenizer.highlightedText(trimmedCode)
+						.font(.system(size: 13, design: .monospaced))
+						.textSelection(.enabled)
+						.padding(12)
+						.padding(.trailing, 24)
+				}
 			}
 
-			Button {
-				copyToClipboard()
-			} label: {
+			Button { copyToClipboard() } label: {
 				Image(systemName: copied ? "checkmark" : "doc.on.doc")
 					.font(.system(size: 12))
 					.foregroundStyle(copied ? .green : theme.secondaryColor)
