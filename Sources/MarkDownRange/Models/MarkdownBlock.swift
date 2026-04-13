@@ -12,10 +12,12 @@ public enum CheckboxState: Sendable {
 public struct ListItemContent: Sendable {
 	public let blocks: [MarkdownBlock]
 	public let checkbox: CheckboxState?
+	public let checkboxIndex: Int?
 
-	public init(blocks: [MarkdownBlock], checkbox: CheckboxState? = nil) {
+	public init(blocks: [MarkdownBlock], checkbox: CheckboxState? = nil, checkboxIndex: Int? = nil) {
 		self.blocks = blocks
 		self.checkbox = checkbox
+		self.checkboxIndex = checkboxIndex
 	}
 }
 

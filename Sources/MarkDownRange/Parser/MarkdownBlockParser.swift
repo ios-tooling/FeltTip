@@ -10,12 +10,14 @@ public enum MarkdownBlockParser {
 	public static func parse(
 		_ markdown: String,
 		theme: MarkdownTheme = .default,
-		fontSize: CGFloat = 16
+		fontSize: CGFloat = 16,
+		checkboxOffset: Int = 0
 	) -> [MarkdownBlock] {
 		let (frontmatter, body) = extractFrontmatter(markdown)
 		let processed = HighlightSyntax.process(EmojiShortcodes.process(body))
 		let document = Document(parsing: processed)
-		var builder = BlockBuilder(theme: theme, fontSize: fontSize)
+		let counter = CheckboxCounter(checkboxOffset)
+		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)
 		var blocks = builder.build(from: document)
 		if let fm = frontmatter { blocks.insert(fm, at: 0) }
 		return postProcess(blocks)

@@ -13,6 +13,7 @@ struct ListBlockView: View {
 	let fontSize: CGFloat
 	let baseURL: URL?
 	let onLinkHover: ((String?) -> Void)?
+	@Environment(\.onCheckboxToggle) private var onCheckboxToggle
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
@@ -34,9 +35,17 @@ struct ListBlockView: View {
 
 	@ViewBuilder private func bulletOrCheckbox(index: Int, item: ListItemContent) -> some View {
 		if let checkbox = item.checkbox {
-			Image(systemName: checkbox == .checked ? "checkmark.square.fill" : "square")
-				.font(.system(size: fontSize * 0.85))
-				.foregroundStyle(checkbox == .checked ? theme.linkColor : theme.secondaryColor)
+			let isChecked = checkbox == .checked
+			if let onCheckboxToggle, let checkboxIndex = item.checkboxIndex {
+				Button {
+					onCheckboxToggle(checkboxIndex, !isChecked)
+				} label: {
+					checkboxImage(isChecked: isChecked)
+				}
+				.buttonStyle(.plain)
+			} else {
+				checkboxImage(isChecked: isChecked)
+			}
 		} else if ordered {
 			Text("\(start + index).")
 				.font(.system(size: fontSize))
@@ -46,5 +55,11 @@ struct ListBlockView: View {
 				.font(.system(size: fontSize))
 				.foregroundStyle(theme.secondaryColor)
 		}
+	}
+
+	private func checkboxImage(isChecked: Bool) -> some View {
+		Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+			.font(.system(size: fontSize * 0.85))
+			.foregroundStyle(isChecked ? theme.linkColor : theme.secondaryColor)
 	}
 }

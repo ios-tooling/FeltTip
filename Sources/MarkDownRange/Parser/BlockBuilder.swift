@@ -7,15 +7,23 @@ import Foundation
 import Markdown
 import SwiftUI
 
+final class CheckboxCounter: @unchecked Sendable {
+	private(set) var value: Int
+	init(_ value: Int = 0) { self.value = value }
+	func next() -> Int { defer { value += 1 }; return value }
+}
+
 struct BlockBuilder: MarkupWalker {
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
+	let checkboxCounter: CheckboxCounter
 	private var blocks: [MarkdownBlock] = []
 	private var counter = 0
 
-	init(theme: MarkdownTheme, fontSize: CGFloat) {
+	init(theme: MarkdownTheme, fontSize: CGFloat, checkboxCounter: CheckboxCounter = CheckboxCounter()) {
 		self.theme = theme
 		self.fontSize = fontSize
+		self.checkboxCounter = checkboxCounter
 	}
 
 	mutating func build(from document: Document) -> [MarkdownBlock] {
@@ -64,25 +72,27 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
-		var inner = BlockBuilder(theme: theme, fontSize: fontSize)
+		var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
 		let children = inner.build(from: blockQuote)
 		blocks.append(.blockquote(children: children, id: nextID()))
 	}
 
 	mutating func visitOrderedList(_ list: OrderedList) {
 		let items = Array(list.listItems).map { item -> ListItemContent in
-			var inner = BlockBuilder(theme: theme, fontSize: fontSize)
+			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
-			return ListItemContent(blocks: inner.build(from: item), checkbox: checkbox)
+			let index = checkbox != nil ? checkboxCounter.next() : nil
+			return ListItemContent(blocks: inner.build(from: item), checkbox: checkbox, checkboxIndex: index)
 		}
 		blocks.append(.orderedList(items: items, start: Int(list.startIndex), id: nextID()))
 	}
 
 	mutating func visitUnorderedList(_ list: UnorderedList) {
 		let items = Array(list.listItems).map { item -> ListItemContent in
-			var inner = BlockBuilder(theme: theme, fontSize: fontSize)
+			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
-			return ListItemContent(blocks: inner.build(from: item), checkbox: checkbox)
+			let index = checkbox != nil ? checkboxCounter.next() : nil
+			return ListItemContent(blocks: inner.build(from: item), checkbox: checkbox, checkboxIndex: index)
 		}
 		blocks.append(.unorderedList(items: items, id: nextID()))
 	}

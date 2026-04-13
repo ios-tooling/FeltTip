@@ -155,16 +155,32 @@ private struct FormattedMarkdownRenderModel {
 		let fontSize = key.fontSize
 		let (footnotes, sections) = await Task.detached {
 			let footnotes = MarkdownFootnote.parse(from: text)
+			var checkboxOffset = 0
 			let sections = MarkdownSection.parse(from: text).map { section in
 				let content = MarkdownFootnote.renderableContent(from: section.content, footnotes: footnotes)
 				let rendered = SuperSubProcessor.process(content)
-				let blocks = MarkdownBlockParser.parse(rendered, theme: theme, fontSize: fontSize)
+				let blocks = MarkdownBlockParser.parse(rendered, theme: theme, fontSize: fontSize, checkboxOffset: checkboxOffset)
+				checkboxOffset += Self.checkboxCount(in: blocks)
 				return RenderedMarkdownSection(id: section.id, blocks: blocks)
 			}
 			return (footnotes, sections)
 		}.value
 		self.footnotes = footnotes
 		self.sections = sections
+	}
+
+	private static func checkboxCount(in blocks: [MarkdownBlock]) -> Int {
+		blocks.reduce(0) { total, block in
+			switch block {
+			case .orderedList(let items, _, _), .unorderedList(let items, _):
+				let itemCount = items.filter { $0.checkbox != nil }.count
+				let nested = items.flatMap(\.blocks)
+				return total + itemCount + checkboxCount(in: nested)
+			case .blockquote(let children, _), .details(_, let children, _), .alert(_, let children, _):
+				return total + checkboxCount(in: children)
+			default: return total
+			}
+		}
 	}
 }
 
