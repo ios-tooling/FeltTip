@@ -23,14 +23,27 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 			}
 			if inCodeBlock { continue }
 
-			if let match = trimmed.firstMatch(of: /^(#{1,6})\s+(.+)/) {
-				let level = match.1.count
-				let text = String(match.2)
+			if let (level, text) = parseHeadingLine(trimmed) {
 				let id = "\(headings.count)-\(text)"
 				headings.append(MarkdownHeading(id: id, level: level, text: text))
 			}
 		}
 		return headings
+	}
+
+	/// Fast heading line parser using string operations instead of regex.
+	static func parseHeadingLine(_ trimmed: String) -> (level: Int, text: String)? {
+		guard trimmed.hasPrefix("#") else { return nil }
+		var level = 0
+		for ch in trimmed {
+			if ch == "#" { level += 1 } else { break }
+		}
+		guard level >= 1, level <= 6 else { return nil }
+		let rest = trimmed.dropFirst(level)
+		guard rest.first == " " || rest.first == "\t" else { return nil }
+		let text = rest.drop(while: { $0 == " " || $0 == "\t" })
+		guard !text.isEmpty else { return nil }
+		return (level, String(text))
 	}
 
 	public static func heading(atCharacterOffset offset: Int, in text: String) -> MarkdownHeading? {
@@ -43,8 +56,8 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 
-			if !inCodeBlock, let match = trimmed.firstMatch(of: /^(#{1,6})\s+(.+)/) {
-				let heading = MarkdownHeading(id: "\(headingIndex)-\(match.2)", level: match.1.count, text: String(match.2))
+			if !inCodeBlock, let (level, headingText) = parseHeadingLine(trimmed) {
+				let heading = MarkdownHeading(id: "\(headingIndex)-\(headingText)", level: level, text: headingText)
 				if charOffset > offset { return lastHeading }
 				lastHeading = heading
 				headingIndex += 1
@@ -63,8 +76,8 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 
-			if !inCodeBlock, let match = trimmed.firstMatch(of: /^(#{1,6})\s+(.+)/) {
-				let id = "\(headingIndex)-\(match.2)"
+			if !inCodeBlock, let (_, headingText) = parseHeadingLine(trimmed) {
+				let id = "\(headingIndex)-\(headingText)"
 				if id == headingID {
 					return NSRange(location: charOffset, length: line.count)
 				}

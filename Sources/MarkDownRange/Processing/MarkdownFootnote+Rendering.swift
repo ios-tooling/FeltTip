@@ -20,27 +20,40 @@ extension MarkdownFootnote {
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 			if inCodeBlock { lines.append(line); continue }
-			if trimmed.firstMatch(of: /^\[\^[^\]]+\]:\s+/) != nil { continue }
+			if parseDefinition(trimmed) != nil { continue }
+
+			guard line.contains("[") else { lines.append(line); continue }
 
 			var result = ""
-			var remaining = line[line.startIndex...]
-
-			while let match = remaining.firstMatch(of: /\[\^([^\]]+)\]|\^\[([^\]]+)\]/) {
-				result += remaining[..<match.range.lowerBound]
-
-				if let label = match.output.1.map(String.init) {
-					if let n = indexByID[label] {
-						result += "[\(superscript(for: n))](footnote://\(label))"
+			var i = line.startIndex
+			while i < line.endIndex {
+				let ch = line[i]
+				if ch == "[", line.index(after: i) < line.endIndex, line[line.index(after: i)] == "^" {
+					let labelStart = line.index(i, offsetBy: 2)
+					if let closeIdx = line[labelStart...].firstIndex(of: "]") {
+						let afterClose = line.index(after: closeIdx)
+						if afterClose >= line.endIndex || line[afterClose] != ":" {
+							let label = String(line[labelStart..<closeIdx])
+							if let n = indexByID[label] {
+								result += "[\(superscript(for: n))](footnote://\(label))"
+							}
+							i = afterClose; continue
+						}
 					}
-				} else if match.output.2 != nil, inlineIndex < inlineFootnotes.count {
-					let fn = inlineFootnotes[inlineIndex]
-					result += "[\(superscript(for: fn.displayIndex))](footnote://\(fn.id))"
-					inlineIndex += 1
+				} else if ch == "^", line.index(after: i) < line.endIndex, line[line.index(after: i)] == "[" {
+					let contentStart = line.index(i, offsetBy: 2)
+					if let closeIdx = line[contentStart...].firstIndex(of: "]") {
+						if inlineIndex < inlineFootnotes.count {
+							let fn = inlineFootnotes[inlineIndex]
+							result += "[\(superscript(for: fn.displayIndex))](footnote://\(fn.id))"
+							inlineIndex += 1
+						}
+						i = line.index(after: closeIdx); continue
+					}
 				}
-
-				remaining = remaining[match.range.upperBound...]
+				result.append(ch)
+				i = line.index(after: i)
 			}
-			result += remaining
 			lines.append(result)
 		}
 		return lines.joined(separator: "\n")
