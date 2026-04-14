@@ -89,7 +89,59 @@ public enum MarkdownBlockParser {
 	}
 
 	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-		convertAlerts(groupDetailsBlocks(blocks))
+		convertAlerts(groupDetailsBlocks(convertPreBlocks(blocks)))
+	}
+
+	/// Convert `<pre>` HTML blocks into code blocks for consistent styling.
+	private static func convertPreBlocks(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+		blocks.map { block in
+			guard case .htmlBlock(let html, let id) = block else { return block }
+			let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
+			let lower = trimmed.lowercased()
+			guard lower.hasPrefix("<pre") else { return block }
+
+			// Extract inner text, stripping <pre>, </pre>, <code>, </code> tags
+			var content = trimmed
+			// Remove opening <pre...>
+			if let closeAngle = content.firstIndex(of: ">") {
+				content = String(content[content.index(after: closeAngle)...])
+			}
+			// Remove closing </pre>
+			if let range = content.range(of: "</pre>", options: [.caseInsensitive, .backwards]) {
+				content = String(content[..<range.lowerBound])
+			}
+			// Strip <code...> and </code> if present
+			content = content.trimmingCharacters(in: .whitespacesAndNewlines)
+			let contentLower = content.lowercased()
+			if contentLower.hasPrefix("<code") {
+				if let closeAngle = content.firstIndex(of: ">") {
+					content = String(content[content.index(after: closeAngle)...])
+				}
+			}
+			if let range = content.range(of: "</code>", options: [.caseInsensitive, .backwards]) {
+				content = String(content[..<range.lowerBound])
+			}
+
+			// Extract language from <code class="language-xxx">
+			var language: String?
+			if let codeRange = lower.range(of: "<code"),
+			   let classRange = html[codeRange.lowerBound...].range(of: "language-") {
+				let afterLang = html[classRange.upperBound...]
+				if let end = afterLang.firstIndex(where: { $0 == "\"" || $0 == "'" || $0 == " " || $0 == ">" }) {
+					language = String(afterLang[..<end])
+				}
+			}
+
+			// Decode basic HTML entities
+			content = content
+				.replacingOccurrences(of: "&lt;", with: "<")
+				.replacingOccurrences(of: "&gt;", with: ">")
+				.replacingOccurrences(of: "&amp;", with: "&")
+				.replacingOccurrences(of: "&quot;", with: "\"")
+				.replacingOccurrences(of: "&#39;", with: "'")
+
+			return .codeBlock(code: content, language: language, id: id)
+		}
 	}
 
 	/// Convert blockquotes starting with [!TYPE] into alert blocks
