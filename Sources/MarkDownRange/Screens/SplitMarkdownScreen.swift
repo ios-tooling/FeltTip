@@ -10,6 +10,8 @@ public struct SplitMarkdownScreen: View {
 	@Binding var selectedHeadingID: String?
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
+	var focusModeEnabled: Bool = false
+	var typewriterMode: Bool = false
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 
@@ -17,12 +19,16 @@ public struct SplitMarkdownScreen: View {
 		text: Binding<String>,
 		selectedHeadingID: Binding<String?>,
 		theme: MarkdownTheme,
-		fontSize: CGFloat
+		fontSize: CGFloat,
+		focusModeEnabled: Bool = false,
+		typewriterMode: Bool = false
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
 		self.theme = theme
 		self.fontSize = fontSize
+		self.focusModeEnabled = focusModeEnabled
+		self.typewriterMode = typewriterMode
 	}
 
 	public var body: some View {
@@ -36,14 +42,16 @@ public struct SplitMarkdownScreen: View {
 					scrollSource = .raw
 					scrollFraction = fraction
 				},
-				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil
+				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
+				typewriterMode: typewriterMode
 			)
 			FormattedMarkdownScreen(
 				text: text,
 				selectedHeadingID: $selectedHeadingID,
 				theme: theme,
 				fontSize: fontSize,
-				syncScrollFraction: scrollSource == .raw ? scrollFraction : nil
+				syncScrollFraction: scrollSource == .raw ? scrollFraction : nil,
+				focusModeEnabled: focusModeEnabled
 			)
 			.overlay {
 				ScrollFractionSync(fraction: $scrollFraction, isSource: true)
@@ -62,16 +70,16 @@ public struct SplitMarkdownScreen: View {
 		GeometryReader { geometry in
 			if geometry.size.width > 600 {
 				HStack(spacing: 0) {
-					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize)
+					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode)
 					Divider()
-					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize)
+					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize, focusModeEnabled: focusModeEnabled)
 				}
 			} else {
 				VStack(spacing: 0) {
-					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize)
+					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode)
 						.frame(maxHeight: .infinity)
 					Divider()
-					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize)
+					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize, focusModeEnabled: focusModeEnabled)
 						.frame(maxHeight: .infinity)
 				}
 			}
