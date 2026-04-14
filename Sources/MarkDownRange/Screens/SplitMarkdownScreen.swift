@@ -33,31 +33,35 @@ public struct SplitMarkdownScreen: View {
 
 	public var body: some View {
 		#if os(macOS)
-		HSplitView {
-			RawMarkdownScreen(
-				text: $text,
-				selectedHeadingID: $selectedHeadingID,
-				fontSize: fontSize,
-				onScrollFractionChanged: { fraction in
-					scrollSource = .raw
-					scrollFraction = fraction
-				},
-				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
-				typewriterMode: typewriterMode
-			)
-			FormattedMarkdownScreen(
-				text: text,
-				selectedHeadingID: $selectedHeadingID,
-				theme: theme,
-				fontSize: fontSize,
-				syncScrollFraction: scrollSource == .raw ? scrollFraction : nil,
-				focusModeEnabled: focusModeEnabled
-			)
-			.overlay {
-				ScrollFractionSync(fraction: $scrollFraction, isSource: true)
-					.onChange(of: scrollFraction) {
-						if scrollSource != .raw { scrollSource = .formatted }
-					}
+		GeometryReader { geo in
+			HSplitView {
+				RawMarkdownScreen(
+					text: $text,
+					selectedHeadingID: $selectedHeadingID,
+					fontSize: fontSize,
+					onScrollFractionChanged: { fraction in
+						scrollSource = .raw
+						scrollFraction = fraction
+					},
+					syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
+					typewriterMode: typewriterMode
+				)
+				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
+				FormattedMarkdownScreen(
+					text: text,
+					selectedHeadingID: $selectedHeadingID,
+					theme: theme,
+					fontSize: fontSize,
+					syncScrollFraction: scrollSource == .raw ? scrollFraction : nil,
+					focusModeEnabled: focusModeEnabled
+				)
+				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
+				.overlay {
+					ScrollFractionSync(fraction: $scrollFraction, isSource: true)
+						.onChange(of: scrollFraction) {
+							if scrollSource != .raw { scrollSource = .formatted }
+						}
+				}
 			}
 		}
 		.onChange(of: scrollFraction) {
