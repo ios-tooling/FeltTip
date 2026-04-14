@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: transparent;
+    display: flex;
+    justify-content: center;
+    padding: 8px;
+  }
+  #diagram {
+    display: inline-block;
+  }
+  #diagram svg {
+    max-width: 100%;
+    height: auto;
+  }
+</style>
+<script>MERMAID_JS_PLACEHOLDER</script>
+</head>
+<body>
+<div id="diagram"></div>
+<script>
+  async function renderDiagram(code, theme) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme || 'default',
+      securityLevel: 'strict',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif'
+    });
+    try {
+      const { svg } = await mermaid.render('mermaid-output', code);
+      document.getElementById('diagram').innerHTML = svg;
+      const el = document.getElementById('diagram');
+      const height = el.scrollHeight;
+      window.webkit.messageHandlers.mermaid.postMessage({ type: 'rendered', height: height });
+    } catch (e) {
+      window.webkit.messageHandlers.mermaid.postMessage({ type: 'error', message: e.message || String(e) });
+    }
+  }
+</script>
+</body>
+</html>

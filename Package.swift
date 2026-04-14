@@ -21,7 +21,8 @@ let package = Package(
 				"MarkdownSyntaxHighlighting",
 				.product(name: "Markdown", package: "swift-markdown"),
 				.product(name: "Convey", package: "Convey"),
-			]
+			],
+			resources: [.copy("Resources")]
 		),
 		.testTarget(name: "MarkDownRangeTests", dependencies: ["MarkDownRange"]),
 	]

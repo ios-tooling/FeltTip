@@ -36,6 +36,12 @@ public struct MarkdownTheme: Equatable, Sendable {
 		return .system(size: base * scale, weight: weight)
 	}
 
+	/// Mermaid.js theme name corresponding to this theme.
+	public var mermaidTheme: String {
+		if self == .dark { return "dark" }
+		return "default"
+	}
+
 	public static let `default` = MarkdownTheme()
 
 	public static let github = MarkdownTheme(

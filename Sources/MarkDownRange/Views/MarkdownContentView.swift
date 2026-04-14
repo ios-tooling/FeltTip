@@ -65,7 +65,15 @@ public struct MarkdownContentView: View {
 		case .paragraph(let content, let links, _):
 			ParagraphBlockView(content: content, links: links, onLinkHover: onLinkHover)
 		case .codeBlock(let code, let language, _):
-			CodeBlockView(code: code, language: language, theme: theme)
+			if language?.lowercased() == "mermaid" {
+				#if os(macOS)
+				MermaidBlockView(code: code, theme: theme)
+				#else
+				CodeBlockView(code: code, language: language, theme: theme)
+				#endif
+			} else {
+				CodeBlockView(code: code, language: language, theme: theme)
+			}
 		case .blockquote(let children, _):
 			BlockQuoteView(children: children, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 		case .orderedList(let items, let start, _):
