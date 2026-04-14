@@ -49,6 +49,16 @@ public struct MarkdownContentView: View {
 	}
 
 	@ViewBuilder private func blockView(for block: MarkdownBlock) -> some View {
+		Self.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+	}
+
+	@ViewBuilder static func blockView(
+		for block: MarkdownBlock,
+		theme: MarkdownTheme,
+		fontSize: CGFloat,
+		baseURL: URL?,
+		onLinkHover: ((String?) -> Void)?
+	) -> some View {
 		switch block {
 		case .heading(let level, let content, _):
 			HeadingBlockView(level: level, content: content, theme: theme, fontSize: fontSize)

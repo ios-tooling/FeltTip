@@ -11,10 +11,11 @@ public enum MarkdownBlockParser {
 		_ markdown: String,
 		theme: MarkdownTheme = .default,
 		fontSize: CGFloat = 16,
-		checkboxOffset: Int = 0
+		checkboxOffset: Int = 0,
+		preprocessed: Bool = false
 	) -> [MarkdownBlock] {
 		let (frontmatter, body) = extractFrontmatter(markdown)
-		let processed = HighlightSyntax.process(EmojiShortcodes.process(body))
+		let processed = preprocessed ? body : HighlightSyntax.process(EmojiShortcodes.process(body))
 		let document = Document(parsing: processed)
 		let counter = CheckboxCounter(checkboxOffset)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)

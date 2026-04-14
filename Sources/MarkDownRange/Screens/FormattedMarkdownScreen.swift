@@ -142,6 +142,18 @@ private struct FormattedMarkdownRenderModel {
 		let text: String
 		let theme: MarkdownTheme
 		let fontSize: CGFloat
+		private let textHash: Int
+
+		init(text: String, theme: MarkdownTheme, fontSize: CGFloat) {
+			self.text = text
+			self.theme = theme
+			self.fontSize = fontSize
+			self.textHash = text.hashValue
+		}
+
+		static func == (lhs: Key, rhs: Key) -> Bool {
+			lhs.textHash == rhs.textHash && lhs.fontSize == rhs.fontSize && lhs.theme == rhs.theme && lhs.text == rhs.text
+		}
 	}
 
 	let key: Key
@@ -155,11 +167,12 @@ private struct FormattedMarkdownRenderModel {
 		let fontSize = key.fontSize
 		let (footnotes, sections) = await Task.detached {
 			let footnotes = MarkdownFootnote.parse(from: text)
+			let withFootnotes = MarkdownFootnote.renderableContent(from: text, footnotes: footnotes)
+			let withSuperSub = SuperSubProcessor.process(withFootnotes)
+			let fullyProcessed = HighlightSyntax.process(EmojiShortcodes.process(withSuperSub))
 			var checkboxOffset = 0
-			let sections = MarkdownSection.parse(from: text).map { section in
-				let content = MarkdownFootnote.renderableContent(from: section.content, footnotes: footnotes)
-				let rendered = SuperSubProcessor.process(content)
-				let blocks = MarkdownBlockParser.parse(rendered, theme: theme, fontSize: fontSize, checkboxOffset: checkboxOffset)
+			let sections = MarkdownSection.parse(from: fullyProcessed).map { section in
+				let blocks = MarkdownBlockParser.parse(section.content, theme: theme, fontSize: fontSize, checkboxOffset: checkboxOffset, preprocessed: true)
 				checkboxOffset += Self.checkboxCount(in: blocks)
 				return RenderedMarkdownSection(id: section.id, blocks: blocks)
 			}

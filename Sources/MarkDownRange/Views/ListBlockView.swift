@@ -24,7 +24,7 @@ struct ListBlockView: View {
 
 					VStack(alignment: .leading, spacing: 4) {
 						ForEach(item.blocks) { block in
-							MarkdownContentView(blocks: [block], theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+							MarkdownContentView.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 						}
 					}
 				}

@@ -25,7 +25,7 @@ struct AlertBlockView: View {
 					.foregroundStyle(type.color)
 
 				ForEach(children) { block in
-					MarkdownContentView(blocks: [block], theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+					MarkdownContentView.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 				}
 			}
 			.padding(.leading, 12)

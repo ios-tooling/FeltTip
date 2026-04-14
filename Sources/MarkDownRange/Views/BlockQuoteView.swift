@@ -20,7 +20,7 @@ struct BlockQuoteView: View {
 
 			VStack(alignment: .leading, spacing: 8) {
 				ForEach(children) { block in
-					MarkdownContentView(blocks: [block], theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+					MarkdownContentView.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 				}
 			}
 			.foregroundStyle(theme.secondaryColor)

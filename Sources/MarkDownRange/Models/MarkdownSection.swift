@@ -21,12 +21,11 @@ public struct MarkdownSection: Identifiable, Sendable {
 
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 
-			if !inCodeBlock, trimmed.firstMatch(of: /^(#{1,6})\s+(.+)/) != nil {
+			if !inCodeBlock, let match = trimmed.firstMatch(of: /^#{1,6}\s+(.+)/) {
 				if !currentLines.isEmpty {
 					sections.append(MarkdownSection(id: currentID, content: currentLines.joined(separator: "\n")))
 				}
-				let headingText = String(trimmed.firstMatch(of: /^#{1,6}\s+(.+)/)!.1)
-				currentID = "\(headingIndex)-\(headingText)"
+				currentID = "\(headingIndex)-\(match.1)"
 				headingIndex += 1
 				currentLines = [line]
 			} else {

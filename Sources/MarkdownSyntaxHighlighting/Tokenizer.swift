@@ -14,26 +14,48 @@ public enum Tokenizer {
 	public static func tokenize(_ code: String) -> [Token] {
 		var tokens: [Token] = []
 		var remaining = Substring(code)
+		var plainStart: String.Index?
 
 		while !remaining.isEmpty {
+			let before = remaining.startIndex
 			if let token = matchToken(&remaining) {
+				if let start = plainStart {
+					tokens.append(Token(text: String(code[start..<before]), color: .primary))
+					plainStart = nil
+				}
 				tokens.append(token)
 			} else {
-				let ch = remaining.removeFirst()
-				if let last = tokens.last, last.color == .primary {
-					tokens[tokens.count - 1] = Token(text: last.text + String(ch), color: .primary)
-				} else {
-					tokens.append(Token(text: String(ch), color: .primary))
-				}
+				if plainStart == nil { plainStart = remaining.startIndex }
+				remaining.removeFirst()
 			}
+		}
+		if let start = plainStart {
+			tokens.append(Token(text: String(code[start..<code.endIndex]), color: .primary))
 		}
 		return tokens
 	}
 
 	public static func highlightedText(_ code: String) -> Text {
-		tokenize(code).reduce(Text("")) { result, token in
+		coalesce(tokenize(code)).reduce(Text("")) { result, token in
 			result + Text(token.text).foregroundColor(token.color)
 		}
+	}
+
+	/// Merge consecutive tokens that share the same color to reduce Text chaining depth.
+	private static func coalesce(_ tokens: [Token]) -> [Token] {
+		guard var current = tokens.first else { return [] }
+		var result: [Token] = []
+		result.reserveCapacity(tokens.count)
+		for token in tokens.dropFirst() {
+			if token.color == current.color {
+				current = Token(text: current.text + token.text, color: current.color)
+			} else {
+				result.append(current)
+				current = token
+			}
+		}
+		result.append(current)
+		return result
 	}
 
 	private static func matchToken(_ s: inout Substring) -> Token? {
@@ -46,4 +68,5 @@ public enum Tokenizer {
 		if let t = matchType(&s) { return t }
 		return nil
 	}
+
 }

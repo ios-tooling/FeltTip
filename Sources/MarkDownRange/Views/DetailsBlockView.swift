@@ -18,7 +18,7 @@ struct DetailsBlockView: View {
 		DisclosureGroup(isExpanded: $isExpanded) {
 			VStack(alignment: .leading, spacing: 8) {
 				ForEach(children) { block in
-					MarkdownContentView(blocks: [block], theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+					MarkdownContentView.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 				}
 			}
 			.padding(.top, 4)
