@@ -24,6 +24,7 @@
 <body>
 <div id="diagram"></div>
 <script>
+  let renderCounter = 0;
   async function renderDiagram(code, theme) {
     mermaid.initialize({
       startOnLoad: false,
@@ -32,7 +33,10 @@
       fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif'
     });
     try {
-      const { svg } = await mermaid.render('mermaid-output', code);
+      // Use a unique id per render to avoid mermaid's duplicate-id error
+      renderCounter++;
+      const id = 'mermaid-output-' + renderCounter;
+      const { svg } = await mermaid.render(id, code);
       document.getElementById('diagram').innerHTML = svg;
       const el = document.getElementById('diagram');
       const height = el.scrollHeight;

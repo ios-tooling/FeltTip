@@ -44,25 +44,42 @@ private struct MermaidWebView: NSViewRepresentable {
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = handler
 		webView.setValue(false, forKey: "drawsBackground")
-		loadDiagram(in: webView)
+		loadPage(in: webView)
 		return webView
 	}
 
 	func updateNSView(_ webView: WKWebView, context: Context) {
 		let coordinator = context.coordinator
+		coordinator.parent = self
 		if coordinator.lastCode != code || coordinator.lastTheme != mermaidTheme {
 			coordinator.lastCode = code
 			coordinator.lastTheme = mermaidTheme
-			loadDiagram(in: webView)
+			if coordinator.pageLoaded {
+				renderViaJS(in: webView)
+			} else {
+				loadPage(in: webView)
+			}
 		}
 	}
 
-	private func loadDiagram(in webView: WKWebView) {
+	private func loadPage(in webView: WKWebView) {
 		guard let html = MermaidResources.html(for: code, theme: mermaidTheme) else {
 			hasError = true
 			return
 		}
 		webView.loadHTMLString(html, baseURL: nil)
+	}
+
+	private func renderViaJS(in webView: WKWebView) {
+		let escaped = Self.escapeForJS(code)
+		webView.evaluateJavaScript("renderDiagram(`\(escaped)`, '\(mermaidTheme)')")
+	}
+
+	static func escapeForJS(_ code: String) -> String {
+		code.replacingOccurrences(of: "\\", with: "\\\\")
+			.replacingOccurrences(of: "`", with: "\\`")
+			.replacingOccurrences(of: "$", with: "\\$")
+			.replacingOccurrences(of: "\n", with: "\\n")
 	}
 
 	func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -71,6 +88,7 @@ private struct MermaidWebView: NSViewRepresentable {
 		var parent: MermaidWebView
 		var lastCode: String
 		var lastTheme: String
+		var pageLoaded = false
 
 		init(_ parent: MermaidWebView) {
 			self.parent = parent
@@ -90,10 +108,8 @@ private struct MermaidWebView: NSViewRepresentable {
 		}
 
 		func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-			let escaped = parent.code
-				.replacingOccurrences(of: "\\", with: "\\\\")
-				.replacingOccurrences(of: "`", with: "\\`")
-				.replacingOccurrences(of: "\n", with: "\\n")
+			pageLoaded = true
+			let escaped = MermaidWebView.escapeForJS(parent.code)
 			webView.evaluateJavaScript("renderDiagram(`\(escaped)`, '\(parent.mermaidTheme)')")
 		}
 	}
