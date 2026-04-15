@@ -22,6 +22,7 @@ public class MarkdownFormattingTextView: NSTextView {
 		case "-" where !mods.contains(.shift): adjustHeading(promote: false); return true
 		case "6" where mods.contains(.shift): toggleInlineFormat("^"); return true
 		case "-" where mods.contains(.shift): toggleInlineFormat("~"); return true
+		case "\r", "\u{3}": return false
 		default: return super.performKeyEquivalent(with: event)
 		}
 	}
