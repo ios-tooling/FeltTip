@@ -8,12 +8,13 @@ import Markdown
 
 public enum MarkdownBlockParser {
 	public static func parse(
-		_ markdown: String,
+		_ content: some MarkdownContent,
 		theme: MarkdownTheme = .default,
 		fontSize: CGFloat = 16,
 		checkboxOffset: Int = 0,
 		preprocessed: Bool = false
 	) -> [MarkdownBlock] {
+		let markdown = content.resolveMarkdown()
 		let (frontmatter, body) = extractFrontmatter(markdown)
 		let processed = preprocessed ? body : HighlightSyntax.process(EmojiShortcodes.process(body))
 		let document = Document(parsing: processed)

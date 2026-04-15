@@ -63,7 +63,7 @@ public struct FootnotesPanelView: View {
 										.foregroundStyle(.secondary)
 										.frame(minWidth: 24, alignment: .trailing)
 									MarkdownContentView(
-										markdown: footnote.content,
+										content: footnote.content,
 										theme: theme,
 										fontSize: noteSize
 									)
