@@ -12,7 +12,8 @@ public enum MarkdownBlockParser {
 		theme: MarkdownTheme = .default,
 		fontSize: CGFloat = 16,
 		checkboxOffset: Int = 0,
-		preprocessed: Bool = false
+		preprocessed: Bool = false,
+		linkifyURLs: Bool = true
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body) = extractFrontmatter(markdown)
@@ -20,7 +21,7 @@ public enum MarkdownBlockParser {
 		let document = Document(parsing: processed)
 		let counter = CheckboxCounter(checkboxOffset)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)
-		var blocks = builder.build(from: document)
+		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		if let fm = frontmatter { blocks.insert(fm, at: 0) }
 		return postProcess(blocks)
 	}

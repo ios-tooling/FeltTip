@@ -34,13 +34,13 @@ struct InlineBuilder: MarkupWalker {
 	private var kbd = false
 	private var inlineCode = false
 
-	mutating func build(from markup: Markup) -> InlineResult {
+	mutating func build(from markup: Markup, linkifyURLs: Bool = true) -> InlineResult {
 		for child in markup.children { visit(child) }
-		return finalize()
+		return finalize(linkifyURLs: linkifyURLs)
 	}
 
-	mutating func finalize() -> InlineResult {
-		linkifyBareURLs()
+	mutating func finalize(linkifyURLs: Bool = true) -> InlineResult {
+		if linkifyURLs { linkifyBareURLs() }
 		return InlineResult(attributed: result, links: links)
 	}
 
@@ -159,7 +159,7 @@ struct InlineBuilder: MarkupWalker {
 
 	private mutating func linkifyBareURLs() {
 		let plainText = String(result.characters)
-		guard !plainText.isEmpty, let detector = Self.urlDetector else { return }
+		guard !plainText.isEmpty, plainText.contains("://"), let detector = Self.urlDetector else { return }
 		let matches = detector.matches(in: plainText, range: NSRange(location: 0, length: (plainText as NSString).length))
 
 		for match in matches.reversed() {

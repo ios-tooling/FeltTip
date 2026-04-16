@@ -17,9 +17,10 @@ public struct MarkdownContentView: View {
 		theme: MarkdownTheme = .default,
 		fontSize: CGFloat = 16,
 		baseURL: URL? = nil,
-		onLinkHover: ((String?) -> Void)? = nil
+		onLinkHover: ((String?) -> Void)? = nil,
+		linkifyURLs: Bool = true
 	) {
-		self.blocks = MarkdownBlockParser.parse(content, theme: theme, fontSize: fontSize)
+		self.blocks = MarkdownBlockParser.parse(content, theme: theme, fontSize: fontSize, linkifyURLs: linkifyURLs)
 		self.theme = theme
 		self.fontSize = fontSize
 		self.baseURL = baseURL

@@ -17,6 +17,7 @@ struct BlockBuilder: MarkupWalker {
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
 	let checkboxCounter: CheckboxCounter
+	var linkifyURLs: Bool = true
 	private var blocks: [MarkdownBlock] = []
 	private var counter = 0
 
@@ -26,14 +27,15 @@ struct BlockBuilder: MarkupWalker {
 		self.checkboxCounter = checkboxCounter
 	}
 
-	mutating func build(from document: Document) -> [MarkdownBlock] {
+	mutating func build(from document: Document, linkifyURLs: Bool = true) -> [MarkdownBlock] {
+		self.linkifyURLs = linkifyURLs
 		for child in document.children { visit(child) }
 		return blocks
 	}
 
 	mutating func visitHeading(_ heading: Heading) {
 		var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-		let inline = builder.build(from: heading)
+		let inline = builder.build(from: heading, linkifyURLs: linkifyURLs)
 		blocks.append(.heading(level: heading.level, content: inline.attributed, id: nextID()))
 	}
 
@@ -63,7 +65,7 @@ struct BlockBuilder: MarkupWalker {
 	private mutating func buildParagraph(from children: [Markup]) -> MarkdownBlock {
 		var builder = InlineBuilder(theme: theme, fontSize: fontSize)
 		for child in children { builder.visit(child) }
-		let inline = builder.finalize()
+		let inline = builder.finalize(linkifyURLs: linkifyURLs)
 		return .paragraph(content: inline.attributed, links: inline.links, id: nextID())
 	}
 
@@ -73,16 +75,18 @@ struct BlockBuilder: MarkupWalker {
 
 	mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
 		var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
-		let children = inner.build(from: blockQuote)
+		inner.linkifyURLs = linkifyURLs
+		let children = inner.build(from: blockQuote as Markup)
 		blocks.append(.blockquote(children: children, id: nextID()))
 	}
 
 	mutating func visitOrderedList(_ list: OrderedList) {
 		let items = Array(list.listItems).map { item -> ListItemContent in
 			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
+			inner.linkifyURLs = linkifyURLs
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
-			return ListItemContent(blocks: inner.build(from: item), checkbox: checkbox, checkboxIndex: index)
+			return ListItemContent(blocks: inner.build(from: item as Markup), checkbox: checkbox, checkboxIndex: index)
 		}
 		blocks.append(.orderedList(items: items, start: Int(list.startIndex), id: nextID()))
 	}
@@ -90,9 +94,10 @@ struct BlockBuilder: MarkupWalker {
 	mutating func visitUnorderedList(_ list: UnorderedList) {
 		let items = Array(list.listItems).map { item -> ListItemContent in
 			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
+			inner.linkifyURLs = linkifyURLs
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
-			return ListItemContent(blocks: inner.build(from: item), checkbox: checkbox, checkboxIndex: index)
+			return ListItemContent(blocks: inner.build(from: item as Markup), checkbox: checkbox, checkboxIndex: index)
 		}
 		blocks.append(.unorderedList(items: items, id: nextID()))
 	}
@@ -100,14 +105,14 @@ struct BlockBuilder: MarkupWalker {
 	mutating func visitTable(_ table: Markdown.Table) {
 		let headerCells = Array(table.head.cells).map { cell -> AttributedString in
 			var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-			return builder.build(from: cell).attributed
+			return builder.build(from: cell, linkifyURLs: linkifyURLs).attributed
 		}
 		var rows: [[AttributedString]] = []
 		for child in table.body.children {
 			guard let row = child as? Markdown.Table.Row else { continue }
 			rows.append(Array(row.cells).map { cell in
 				var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-				return builder.build(from: cell).attributed
+				return builder.build(from: cell, linkifyURLs: linkifyURLs).attributed
 			})
 		}
 		blocks.append(.table(header: headerCells, rows: rows, id: nextID()))
@@ -128,7 +133,7 @@ struct BlockBuilder: MarkupWalker {
 }
 
 private extension BlockBuilder {
-	mutating func build(from markup: some Markup) -> [MarkdownBlock] {
+	mutating func build(from markup: Markup) -> [MarkdownBlock] {
 		for child in markup.children { visit(child) }
 		return blocks
 	}
