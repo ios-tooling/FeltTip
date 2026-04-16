@@ -85,8 +85,10 @@ public struct MarkdownContentView: View {
 			TableBlockView(header: header, rows: rows, theme: theme)
 		case .thematicBreak:
 			ThematicBreakView()
-		case .image(let source, let alt, _):
-			ImageBlockView(source: source, alt: alt, baseURL: baseURL)
+		case .image(let source, let alt, let width, let height, _):
+			ImageBlockView(source: source, alt: alt, baseURL: baseURL, htmlWidth: width, htmlHeight: height)
+		case .imageRow(let images, _):
+			ImageRowView(images: images)
 		case .htmlBlock(let content, _):
 			HTMLBlockView(html: content, theme: theme, fontSize: fontSize)
 		case .details(let summary, let children, _):
@@ -95,6 +97,11 @@ public struct MarkdownContentView: View {
 			AlertBlockView(type: type, children: children, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 		case .frontmatter(let pairs, _):
 			FrontmatterView(pairs: pairs, theme: theme)
+		case .aligned(let alignment, let inner, _):
+			AnyView(
+				Self.blockView(for: inner, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+					.frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+			)
 		}
 	}
 }

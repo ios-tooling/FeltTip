@@ -42,24 +42,77 @@ struct BlockBuilder: MarkupWalker {
 	mutating func visitParagraph(_ paragraph: Paragraph) {
 		// Extract images as separate blocks, text as paragraphs
 		var inlineChildren: [Markup] = []
+		let children = Array(paragraph.children)
 
-		for child in paragraph.children {
-			if let image = child as? Markdown.Image {
-				// Flush pending inline content first
+		var i = 0
+		while i < children.count {
+			if let image = children[i] as? Markdown.Image {
 				if !inlineChildren.isEmpty {
-					let para = buildParagraph(from: inlineChildren)
-					blocks.append(para)
+					blocks.append(buildParagraph(from: inlineChildren))
 					inlineChildren = []
 				}
 				blocks.append(.image(source: image.source ?? "", alt: image.plainText, id: nextID()))
+				i += 1
+			} else if let imgBlock = extractInlineHTMLImage(from: children, at: &i) {
+				if !inlineChildren.isEmpty {
+					blocks.append(buildParagraph(from: inlineChildren))
+					inlineChildren = []
+				}
+				blocks.append(imgBlock)
 			} else {
-				inlineChildren.append(child)
+				inlineChildren.append(children[i])
+				i += 1
 			}
 		}
 
 		if !inlineChildren.isEmpty {
 			blocks.append(buildParagraph(from: inlineChildren))
 		}
+	}
+
+	/// Detects `<a href="..."><img src="..."/></a>` or standalone `<img>` in inline HTML nodes.
+	private mutating func extractInlineHTMLImage(from children: [Markup], at i: inout Int) -> MarkdownBlock? {
+		guard let html = children[i] as? InlineHTML else { return nil }
+		let tag = html.rawHTML.trimmingCharacters(in: .whitespaces)
+
+		// Standalone <img>
+		if tag.lowercased().hasPrefix("<img"), let src = Self.extractAttr("src", from: tag) {
+			let alt = Self.extractAttr("alt", from: tag) ?? ""
+			let w = Self.extractAttr("width", from: tag).flatMap { Double($0) }.map { CGFloat($0) }
+			let h = Self.extractAttr("height", from: tag).flatMap { Double($0) }.map { CGFloat($0) }
+			i += 1
+			return .image(source: src, alt: alt, width: w, height: h, id: nextID())
+		}
+
+		// <a href="..."> followed by <img> followed by </a>
+		if tag.lowercased().hasPrefix("<a "),
+		   i + 2 < children.count,
+		   let imgHTML = children[i + 1] as? InlineHTML,
+		   let closeHTML = children[i + 2] as? InlineHTML,
+		   imgHTML.rawHTML.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("<img"),
+		   closeHTML.rawHTML.trimmingCharacters(in: .whitespaces).lowercased() == "</a>" {
+			let imgTag = imgHTML.rawHTML.trimmingCharacters(in: .whitespaces)
+			guard let src = Self.extractAttr("src", from: imgTag) else { return nil }
+			let alt = Self.extractAttr("alt", from: imgTag) ?? ""
+			let w = Self.extractAttr("width", from: imgTag).flatMap { Double($0) }.map { CGFloat($0) }
+			let h = Self.extractAttr("height", from: imgTag).flatMap { Double($0) }.map { CGFloat($0) }
+			i += 3
+			return .image(source: src, alt: alt, width: w, height: h, id: nextID())
+		}
+
+		return nil
+	}
+
+	private static func extractAttr(_ name: String, from tag: String) -> String? {
+		let pattern = try! NSRegularExpression(pattern: "\(name)=[\"']([^\"']*)[\"']", options: .caseInsensitive)
+		let ns = tag as NSString
+		guard let match = pattern.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)) else {
+			// Try unquoted: width=300
+			let unquoted = try! NSRegularExpression(pattern: "\(name)=(\\S+)", options: .caseInsensitive)
+			guard let m = unquoted.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)) else { return nil }
+			return ns.substring(with: m.range(at: 1))
+		}
+		return ns.substring(with: match.range(at: 1))
 	}
 
 	private mutating func buildParagraph(from children: [Markup]) -> MarkdownBlock {
@@ -103,16 +156,16 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitTable(_ table: Markdown.Table) {
-		let headerCells = Array(table.head.cells).map { cell -> AttributedString in
+		let headerCells = Array(table.head.cells).map { cell -> TableCell in
 			var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-			return builder.build(from: cell, linkifyURLs: linkifyURLs).attributed
+			return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
 		}
-		var rows: [[AttributedString]] = []
+		var rows: [[TableCell]] = []
 		for child in table.body.children {
 			guard let row = child as? Markdown.Table.Row else { continue }
 			rows.append(Array(row.cells).map { cell in
 				var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-				return builder.build(from: cell, linkifyURLs: linkifyURLs).attributed
+				return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
 			})
 		}
 		blocks.append(.table(header: headerCells, rows: rows, id: nextID()))

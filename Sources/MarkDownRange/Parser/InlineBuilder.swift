@@ -33,6 +33,9 @@ struct InlineBuilder: MarkupWalker {
 	private var highlight = false
 	private var kbd = false
 	private var inlineCode = false
+	private var currentLinkURL: URL?
+	private var linkStartIndex: AttributedString.Index?
+	private var linkStartChar: Int = 0
 
 	mutating func build(from markup: Markup, linkifyURLs: Bool = true) -> InlineResult {
 		for child in markup.children { visit(child) }
@@ -97,11 +100,43 @@ struct InlineBuilder: MarkupWalker {
 	}
 
 	mutating func visitInlineHTML(_ html: InlineHTML) {
-		let tag = html.rawHTML.trimmingCharacters(in: .whitespaces).lowercased()
+		let raw = html.rawHTML.trimmingCharacters(in: .whitespaces)
+		let tag = raw.lowercased()
 
 		if tag == "<br>" || tag == "<br/>" || tag == "<br />" {
 			result += AttributedString("\n")
 			charOffset += 1
+			return
+		}
+
+		// Inline <img> — emit alt text
+		if tag.hasPrefix("<img") {
+			let alt = Self.extractAttribute("alt", from: raw) ?? "image"
+			var str = AttributedString(alt)
+			applyCurrentStyle(&str)
+			if let url = currentLinkURL { str.link = url }
+			result += str
+			charOffset += alt.count
+			return
+		}
+
+		// Inline <a href="..."> — start tracking link
+		if tag.hasPrefix("<a "), let href = Self.extractAttribute("href", from: raw), let url = URL(string: href) {
+			currentLinkURL = url
+			linkStartIndex = result.endIndex
+			linkStartChar = charOffset
+			return
+		}
+
+		// </a> — apply link to accumulated content
+		if tag == "</a>" {
+			if let url = currentLinkURL, let start = linkStartIndex, start < result.endIndex {
+				result[start..<result.endIndex].link = url
+				result[start..<result.endIndex].foregroundColor = theme.linkColor
+				links.append(LinkInfo(url: url.absoluteString, characterOffset: linkStartChar))
+			}
+			currentLinkURL = nil
+			linkStartIndex = nil
 			return
 		}
 
@@ -124,7 +159,13 @@ struct InlineBuilder: MarkupWalker {
 		else if tag == "</i>" || tag == "</em>" { italic = false }
 		else if tag == "<code>" { inlineCode = true }
 		else if tag == "</code>" { inlineCode = false }
-		// Unknown HTML tags are silently ignored
+	}
+
+	private static func extractAttribute(_ name: String, from tag: String) -> String? {
+		let pattern = try! NSRegularExpression(pattern: "\(name)=[\"']([^\"']*)[\"']", options: .caseInsensitive)
+		let ns = tag as NSString
+		guard let match = pattern.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)) else { return nil }
+		return ns.substring(with: match.range(at: 1))
 	}
 
 	mutating func visitSoftBreak(_ softBreak: SoftBreak) {

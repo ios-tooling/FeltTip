@@ -4,7 +4,7 @@ import Testing
 @Suite struct ImageTests {
 	@Test func soloImage() {
 		let blocks = MarkdownBlockParser.parse("![Alt text](https://example.com/image.png)")
-		guard case .image(let source, let alt, _) = blocks.first else {
+		guard case .image(let source, let alt, _, _, _) = blocks.first else {
 			Issue.record("Expected image block, got \(blocks.first.debugDescription)"); return
 		}
 		#expect(source == "https://example.com/image.png")
@@ -13,7 +13,7 @@ import Testing
 
 	@Test func imageWithEmptyAlt() {
 		let blocks = MarkdownBlockParser.parse("![](https://example.com/img.jpg)")
-		guard case .image(let source, let alt, _) = blocks.first else {
+		guard case .image(let source, let alt, _, _, _) = blocks.first else {
 			Issue.record("Expected image block"); return
 		}
 		#expect(source == "https://example.com/img.jpg")

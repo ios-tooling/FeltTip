@@ -91,7 +91,26 @@ public enum MarkdownBlockParser {
 	}
 
 	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-		convertAlerts(groupDetailsBlocks(convertPreBlocks(blocks)))
+		convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLTables(blocks)))))
+	}
+
+	private static func convertHTMLTables(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+		blocks.map { block in
+			guard case .htmlBlock(let html, let id) = block,
+				  html.lowercased().contains("<table"),
+				  let parsed = HTMLTableParser.parse(html: html)
+			else { return block }
+			return .table(header: parsed.header, rows: parsed.rows, id: id)
+		}
+	}
+
+	private static func convertHTMLInlines(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+		blocks.flatMap { block -> [MarkdownBlock] in
+			guard case .htmlBlock(let html, let id) = block,
+				  let converted = HTMLInlineConverter.convert(html: html, id: id)
+			else { return [block] }
+			return converted
+		}
 	}
 
 	/// Convert `<pre>` HTML blocks into code blocks for consistent styling.
