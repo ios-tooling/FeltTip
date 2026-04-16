@@ -15,6 +15,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
 	var typewriterMode: Bool = false
+	var theme: MarkdownTheme?
 
 	public init(
 		text: Binding<String>,
@@ -23,7 +24,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		syncScrollFraction: Double? = nil,
-		typewriterMode: Bool = false
+		typewriterMode: Bool = false,
+		theme: MarkdownTheme? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -32,6 +34,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.syncScrollFraction = syncScrollFraction
 		self.typewriterMode = typewriterMode
+		self.theme = theme
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
@@ -57,6 +60,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.hasVerticalScroller = true
 		scrollView.autohidesScrollers = true
 		scrollView.contentView.postsBoundsChangedNotifications = true
+		applyTheme(to: textView, scrollView: scrollView)
 
 		context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
 			forName: NSView.boundsDidChangeNotification,
@@ -100,6 +104,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		let expectedFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 		if textView.font != expectedFont { textView.font = expectedFont }
+		applyTheme(to: textView, scrollView: scrollView)
 
 		if textView.string != text {
 			let sel = textView.selectedRange()
@@ -131,6 +136,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView) {
+		guard let theme else { return }
+		let bg = NSColor(theme.backgroundColor)
+		let fg = NSColor(theme.textColor)
+		textView.backgroundColor = bg
+		textView.textColor = fg
+		textView.insertionPointColor = fg
+		scrollView.drawsBackground = true
+		scrollView.backgroundColor = bg
+	}
 
 	public class Coordinator: NSObject, NSTextViewDelegate {
 		var parent: MarkdownTextEditor

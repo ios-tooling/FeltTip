@@ -44,7 +44,8 @@ public struct SplitMarkdownScreen: View {
 						scrollFraction = fraction
 					},
 					syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
-					typewriterMode: typewriterMode
+					typewriterMode: typewriterMode,
+					theme: theme
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
 				FormattedMarkdownScreen(
@@ -74,13 +75,13 @@ public struct SplitMarkdownScreen: View {
 		GeometryReader { geometry in
 			if geometry.size.width > 600 {
 				HStack(spacing: 0) {
-					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode)
+					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode, theme: theme)
 					Divider()
 					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize, focusModeEnabled: focusModeEnabled)
 				}
 			} else {
 				VStack(spacing: 0) {
-					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode)
+					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode, theme: theme)
 						.frame(maxHeight: .infinity)
 					Divider()
 					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize, focusModeEnabled: focusModeEnabled)
