@@ -10,12 +10,15 @@ import AppKit
 public struct MarkdownTextEditor: NSViewRepresentable {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
+	@Environment(\.showLineNumbers) var showLineNumbers
+	@Environment(\.syntaxHighlightingEnabled) var syntaxHighlightingEnabled
 	var fontSize: CGFloat = 13
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
+	var onCursorPositionChanged: ((Int, Int, Int) -> Void)?
 
 	public init(
 		text: Binding<String>,
@@ -25,7 +28,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
-		theme: MarkdownTheme? = nil
+		theme: MarkdownTheme? = nil,
+		onCursorPositionChanged: ((Int, Int, Int) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -35,6 +39,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.syncScrollFraction = syncScrollFraction
 		self.typewriterMode = typewriterMode
 		self.theme = theme
+		self.onCursorPositionChanged = onCursorPositionChanged
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
@@ -61,6 +66,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.autohidesScrollers = true
 		scrollView.contentView.postsBoundsChangedNotifications = true
 		applyTheme(to: textView, scrollView: scrollView)
+		updateRuler(scrollView: scrollView, textView: textView)
+		updateHighlighting(textView: textView)
 
 		context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
 			forName: NSView.boundsDidChangeNotification,
@@ -74,6 +81,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let offset = scrollView.contentView.bounds.origin.y
 			let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
 			coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
+			(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
 
 			guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
 			let now = CFAbsoluteTimeGetCurrent()
@@ -100,11 +108,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	public func updateNSView(_ scrollView: NSScrollView, context: Context) {
 		context.coordinator.parent = self
+		context.coordinator.isUpdatingFromSwiftUI = true
+		defer { context.coordinator.isUpdatingFromSwiftUI = false }
 		guard let textView = scrollView.documentView as? NSTextView else { return }
 
 		let expectedFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 		if textView.font != expectedFont { textView.font = expectedFont }
 		applyTheme(to: textView, scrollView: scrollView)
+		updateRuler(scrollView: scrollView, textView: textView)
+		updateHighlighting(textView: textView)
 
 		if textView.string != text {
 			let sel = textView.selectedRange()
@@ -137,6 +149,35 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	public func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+	private func updateRuler(scrollView: NSScrollView, textView: NSTextView) {
+		if showLineNumbers {
+			if scrollView.verticalRulerView == nil {
+				let ruler = LineNumberRulerView(textView: textView)
+				ruler.textColor = NSColor(theme?.secondaryColor ?? .secondary)
+				scrollView.verticalRulerView = ruler
+			}
+			if let ruler = scrollView.verticalRulerView as? LineNumberRulerView, let theme {
+				ruler.textColor = NSColor(theme.secondaryColor)
+				ruler.invalidateLineNumbers()
+			}
+			scrollView.hasVerticalRuler = true
+			scrollView.rulersVisible = true
+		} else if scrollView.verticalRulerView != nil {
+			scrollView.hasVerticalRuler = false
+			scrollView.rulersVisible = false
+			scrollView.verticalRulerView = nil
+		}
+	}
+
+	private func updateHighlighting(textView: NSTextView) {
+		if syntaxHighlightingEnabled, let theme {
+			MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme)
+		} else if !syntaxHighlightingEnabled, let lm = textView.layoutManager {
+			let full = NSRange(location: 0, length: (textView.string as NSString).length)
+			lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
+		}
+	}
+
 	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView) {
 		guard let theme else { return }
 		let bg = NSColor(theme.backgroundColor)
@@ -156,6 +197,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastReportedHeading: String?
 		var lastAppliedFraction: Double = -1
 		var isSyncScroll = false
+		var isUpdatingFromSwiftUI = false
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
 		deinit { if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) } }
 
@@ -163,12 +205,25 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard let tv = notification.object as? NSTextView else { return }
 			parent.text = tv.string
 			if parent.typewriterMode { centerCursor(in: tv) }
+			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+			if parent.syntaxHighlightingEnabled, let theme = parent.theme {
+				MarkdownSyntaxHighlighter.highlight(textView: tv, theme: theme)
+			}
 		}
 
 		public func textViewDidChangeSelection(_ notification: Notification) {
-			guard parent.typewriterMode,
-					let tv = notification.object as? NSTextView else { return }
-			centerCursor(in: tv)
+			guard !isUpdatingFromSwiftUI, let tv = notification.object as? NSTextView else { return }
+			if parent.typewriterMode { centerCursor(in: tv) }
+			reportCursorPosition(in: tv)
+		}
+
+		private func reportCursorPosition(in textView: NSTextView) {
+			guard parent.onCursorPositionChanged != nil else { return }
+			let range = textView.selectedRange()
+			let insertion = range.location
+			let prefix = (textView.string as NSString).substring(to: min(insertion, (textView.string as NSString).length))
+			let lines = prefix.components(separatedBy: "\n")
+			parent.onCursorPositionChanged?(lines.count, (lines.last?.count ?? 0) + 1, range.length)
 		}
 
 		private func centerCursor(in textView: NSTextView) {

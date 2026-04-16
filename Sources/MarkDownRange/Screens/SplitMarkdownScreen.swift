@@ -12,6 +12,7 @@ public struct SplitMarkdownScreen: View {
 	let fontSize: CGFloat
 	var focusModeEnabled: Bool = false
 	var typewriterMode: Bool = false
+	var onCursorPositionChanged: ((Int, Int, Int) -> Void)?
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 
@@ -21,7 +22,8 @@ public struct SplitMarkdownScreen: View {
 		theme: MarkdownTheme,
 		fontSize: CGFloat,
 		focusModeEnabled: Bool = false,
-		typewriterMode: Bool = false
+		typewriterMode: Bool = false,
+		onCursorPositionChanged: ((Int, Int, Int) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -29,6 +31,7 @@ public struct SplitMarkdownScreen: View {
 		self.fontSize = fontSize
 		self.focusModeEnabled = focusModeEnabled
 		self.typewriterMode = typewriterMode
+		self.onCursorPositionChanged = onCursorPositionChanged
 	}
 
 	public var body: some View {
@@ -45,7 +48,8 @@ public struct SplitMarkdownScreen: View {
 					},
 					syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
 					typewriterMode: typewriterMode,
-					theme: theme
+					theme: theme,
+					onCursorPositionChanged: onCursorPositionChanged
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
 				FormattedMarkdownScreen(
@@ -75,13 +79,13 @@ public struct SplitMarkdownScreen: View {
 		GeometryReader { geometry in
 			if geometry.size.width > 600 {
 				HStack(spacing: 0) {
-					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode, theme: theme)
+					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode, theme: theme, onCursorPositionChanged: onCursorPositionChanged)
 					Divider()
 					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize, focusModeEnabled: focusModeEnabled)
 				}
 			} else {
 				VStack(spacing: 0) {
-					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode, theme: theme)
+					RawMarkdownScreen(text: $text, selectedHeadingID: $selectedHeadingID, fontSize: fontSize, typewriterMode: typewriterMode, theme: theme, onCursorPositionChanged: onCursorPositionChanged)
 						.frame(maxHeight: .infinity)
 					Divider()
 					FormattedMarkdownScreen(text: text, selectedHeadingID: $selectedHeadingID, theme: theme, fontSize: fontSize, focusModeEnabled: focusModeEnabled)
