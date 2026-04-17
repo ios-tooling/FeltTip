@@ -23,12 +23,10 @@ struct ImageBlockView: View {
 	var body: some View {
 		if let url = resolvedURL {
 			ScaleDownImage(url: url, alt: alt, htmlWidth: htmlWidth, htmlHeight: htmlHeight)
-				.frame(maxWidth: .infinity, alignment: .leading)
 		} else {
 			Label(alt.isEmpty ? source : alt, systemImage: "photo")
 				.foregroundStyle(.secondary)
 				.padding(8)
-				.frame(maxWidth: .infinity, alignment: .leading)
 				.background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
 		}
 	}

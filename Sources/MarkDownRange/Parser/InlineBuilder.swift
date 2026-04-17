@@ -111,7 +111,7 @@ struct InlineBuilder: MarkupWalker {
 
 		// Inline <img> — emit alt text
 		if tag.hasPrefix("<img") {
-			let alt = Self.extractAttribute("alt", from: raw) ?? "image"
+			let alt = HTMLAttributeParser.extractAttribute("alt", from: raw) ?? "image"
 			var str = AttributedString(alt)
 			applyCurrentStyle(&str)
 			if let url = currentLinkURL { str.link = url }
@@ -121,7 +121,7 @@ struct InlineBuilder: MarkupWalker {
 		}
 
 		// Inline <a href="..."> — start tracking link
-		if tag.hasPrefix("<a "), let href = Self.extractAttribute("href", from: raw), let url = URL(string: href) {
+		if tag.hasPrefix("<a "), let href = HTMLAttributeParser.extractAttribute("href", from: raw), let url = URL(string: href) {
 			currentLinkURL = url
 			linkStartIndex = result.endIndex
 			linkStartChar = charOffset
@@ -161,12 +161,6 @@ struct InlineBuilder: MarkupWalker {
 		else if tag == "</code>" { inlineCode = false }
 	}
 
-	private static func extractAttribute(_ name: String, from tag: String) -> String? {
-		let pattern = try! NSRegularExpression(pattern: "\(name)=[\"']([^\"']*)[\"']", options: .caseInsensitive)
-		let ns = tag as NSString
-		guard let match = pattern.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)) else { return nil }
-		return ns.substring(with: match.range(at: 1))
-	}
 
 	mutating func visitSoftBreak(_ softBreak: SoftBreak) {
 		result += AttributedString(" ")

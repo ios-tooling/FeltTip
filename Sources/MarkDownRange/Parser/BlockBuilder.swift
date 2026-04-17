@@ -76,12 +76,9 @@ struct BlockBuilder: MarkupWalker {
 		let tag = html.rawHTML.trimmingCharacters(in: .whitespaces)
 
 		// Standalone <img>
-		if tag.lowercased().hasPrefix("<img"), let src = Self.extractAttr("src", from: tag) {
-			let alt = Self.extractAttr("alt", from: tag) ?? ""
-			let w = Self.extractAttr("width", from: tag).flatMap { Double($0) }.map { CGFloat($0) }
-			let h = Self.extractAttr("height", from: tag).flatMap { Double($0) }.map { CGFloat($0) }
+		if tag.lowercased().hasPrefix("<img"), let img = HTMLAttributeParser.extractImage(from: tag) {
 			i += 1
-			return .image(source: src, alt: alt, width: w, height: h, id: nextID())
+			return .image(source: img.src, alt: img.alt, width: img.width, height: img.height, id: nextID())
 		}
 
 		// <a href="..."> followed by <img> followed by </a>
@@ -92,27 +89,12 @@ struct BlockBuilder: MarkupWalker {
 		   imgHTML.rawHTML.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("<img"),
 		   closeHTML.rawHTML.trimmingCharacters(in: .whitespaces).lowercased() == "</a>" {
 			let imgTag = imgHTML.rawHTML.trimmingCharacters(in: .whitespaces)
-			guard let src = Self.extractAttr("src", from: imgTag) else { return nil }
-			let alt = Self.extractAttr("alt", from: imgTag) ?? ""
-			let w = Self.extractAttr("width", from: imgTag).flatMap { Double($0) }.map { CGFloat($0) }
-			let h = Self.extractAttr("height", from: imgTag).flatMap { Double($0) }.map { CGFloat($0) }
+			guard let img = HTMLAttributeParser.extractImage(from: imgTag) else { return nil }
 			i += 3
-			return .image(source: src, alt: alt, width: w, height: h, id: nextID())
+			return .image(source: img.src, alt: img.alt, width: img.width, height: img.height, id: nextID())
 		}
 
 		return nil
-	}
-
-	private static func extractAttr(_ name: String, from tag: String) -> String? {
-		let pattern = try! NSRegularExpression(pattern: "\(name)=[\"']([^\"']*)[\"']", options: .caseInsensitive)
-		let ns = tag as NSString
-		guard let match = pattern.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)) else {
-			// Try unquoted: width=300
-			let unquoted = try! NSRegularExpression(pattern: "\(name)=(\\S+)", options: .caseInsensitive)
-			guard let m = unquoted.firstMatch(in: tag, range: NSRange(location: 0, length: ns.length)) else { return nil }
-			return ns.substring(with: m.range(at: 1))
-		}
-		return ns.substring(with: match.range(at: 1))
 	}
 
 	private mutating func buildParagraph(from children: [Markup]) -> MarkdownBlock {

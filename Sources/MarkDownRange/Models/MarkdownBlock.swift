@@ -36,6 +36,22 @@ public enum TableCell: Sendable {
 	}
 }
 
+public struct ImageRowItem: Sendable {
+	public let source: String
+	public let alt: String
+	public let link: URL?
+	public let width: CGFloat?
+	public let height: CGFloat?
+
+	public init(source: String, alt: String, link: URL? = nil, width: CGFloat? = nil, height: CGFloat? = nil) {
+		self.source = source
+		self.alt = alt
+		self.link = link
+		self.width = width
+		self.height = height
+	}
+}
+
 public enum MarkdownBlock: Identifiable, Sendable {
 	case heading(level: Int, content: AttributedString, id: String)
 	case paragraph(content: AttributedString, links: [LinkInfo], id: String)
@@ -46,7 +62,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 	case table(header: [TableCell], rows: [[TableCell]], id: String)
 	case thematicBreak(id: String)
 	case image(source: String, alt: String, width: CGFloat? = nil, height: CGFloat? = nil, id: String)
-	case imageRow(images: [(source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?)], id: String)
+	case imageRow(images: [ImageRowItem], id: String)
 	case htmlBlock(content: String, id: String)
 	case details(summary: String, children: [MarkdownBlock], id: String)
 	case alert(type: AlertType, children: [MarkdownBlock], id: String)

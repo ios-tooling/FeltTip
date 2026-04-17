@@ -4,10 +4,9 @@
 //
 
 import SwiftUI
-import Convey
 
 struct ImageRowView: View {
-	let images: [(source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?)]
+	let images: [ImageRowItem]
 
 	var body: some View {
 		HStack(spacing: 8) {
@@ -15,10 +14,9 @@ struct ImageRowView: View {
 				imageCell(item)
 			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
-	@ViewBuilder private func imageCell(_ item: (source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?)) -> some View {
+	@ViewBuilder private func imageCell(_ item: ImageRowItem) -> some View {
 		if let url = URL(string: item.source) {
 			let image = ScaleDownImage(url: url, alt: item.alt, htmlWidth: item.width, htmlHeight: item.height)
 			if let link = item.link {
