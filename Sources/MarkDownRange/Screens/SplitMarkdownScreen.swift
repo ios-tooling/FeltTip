@@ -72,6 +72,7 @@ public struct SplitMarkdownScreen: View {
 					},
 					highlightedSectionID: highlightedSectionID,
 					onSectionHovered: { sectionID in
+						highlightedSectionID = sectionID
 						guard let sectionID else { rawScrollTarget = nil; return }
 						if let range = MarkdownHeading.characterRange(for: sectionID, in: text) {
 							rawScrollTarget = range.location
