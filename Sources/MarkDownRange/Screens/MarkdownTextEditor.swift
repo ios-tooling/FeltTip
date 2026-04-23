@@ -153,7 +153,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			context.coordinator.lastScrolledOffset = offset
 			context.coordinator.isSyncScroll = true
 			let clampedOffset = min(offset, (textView.string as NSString).length)
-			textView.scrollRangeToVisible(NSRange(location: clampedOffset, length: 0))
+			// Find the line containing this offset and flash it
+			let lineRange = (textView.string as NSString).lineRange(for: NSRange(location: clampedOffset, length: 0))
+			textView.scrollRangeToVisible(lineRange)
+			textView.showFindIndicator(for: lineRange)
 			context.coordinator.isSyncScroll = false
 		}
 	}

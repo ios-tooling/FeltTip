@@ -23,7 +23,7 @@ public struct FormattedMarkdownScreen: View {
 	var focusModeEnabled: Bool = false
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var highlightedSectionID: String?
-	var onSectionHovered: ((String?) -> Void)?
+	var onSectionTapped: ((String) -> Void)?
 	@Environment(LinkDisplayState.self) var linkDisplay
 
 	public init(
@@ -37,7 +37,7 @@ public struct FormattedMarkdownScreen: View {
 		focusModeEnabled: Bool = false,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		highlightedSectionID: String? = nil,
-		onSectionHovered: ((String?) -> Void)? = nil
+		onSectionTapped: ((String) -> Void)? = nil
 	) {
 		self.text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -49,7 +49,7 @@ public struct FormattedMarkdownScreen: View {
 		self.focusModeEnabled = focusModeEnabled
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.highlightedSectionID = highlightedSectionID
-		self.onSectionHovered = onSectionHovered
+		self.onSectionTapped = onSectionTapped
 	}
 
 	private var renderKey: FormattedMarkdownRenderModel.Key {
@@ -79,14 +79,15 @@ public struct FormattedMarkdownScreen: View {
 								)
 								.opacity(focusModeOpacity(for: section.id))
 								.onContinuousHover { phase in
+									guard focusModeEnabled else { return }
 									switch phase {
-									case .active:
-										if focusModeEnabled { focusedSectionID = section.id }
-										onSectionHovered?(section.id)
+									case .active: focusedSectionID = section.id
 									case .ended:
 										if focusedSectionID == section.id { focusedSectionID = nil }
-										onSectionHovered?(nil)
 									}
+								}
+								.onTapGesture {
+									onSectionTapped?(section.id)
 								}
 								.id(section.id)
 							}
