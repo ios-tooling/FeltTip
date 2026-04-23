@@ -17,7 +17,7 @@ public enum MarkdownBlockParser {
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body) = extractFrontmatter(markdown)
-		let processed = preprocessed ? body : HighlightSyntax.process(EmojiShortcodes.process(body))
+		let processed = preprocessed ? body : DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(body)))
 		let document = Document(parsing: processed)
 		let counter = CheckboxCounter(checkboxOffset)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)
@@ -91,7 +91,55 @@ public enum MarkdownBlockParser {
 	}
 
 	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-		convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLTables(blocks)))))
+		convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLTables(convertDefinitionLists(blocks))))))
+	}
+
+	/// Convert `<dl>` HTML blocks into `.definitionList` blocks.
+	private static func convertDefinitionLists(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+		blocks.map { block in
+			guard case .htmlBlock(let html, let id) = block,
+				  html.lowercased().contains("<dl") else { return block }
+			let items = parseDefinitionListHTML(html)
+			guard !items.isEmpty else { return block }
+			return .definitionList(items: items, id: id)
+		}
+	}
+
+	private static func parseDefinitionListHTML(_ html: String) -> [DefinitionItem] {
+		var items: [DefinitionItem] = []
+		var currentTerm: String?
+		var currentDefs: [String] = []
+
+		for line in html.components(separatedBy: .newlines) {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			let lower = trimmed.lowercased()
+
+			if lower.hasPrefix("<dt>") {
+				// Flush previous item
+				if let term = currentTerm {
+					items.append(DefinitionItem(term: term, definitions: currentDefs))
+				}
+				currentTerm = stripTag(trimmed, open: "<dt>", close: "</dt>")
+				currentDefs = []
+			} else if lower.hasPrefix("<dd>") {
+				currentDefs.append(stripTag(trimmed, open: "<dd>", close: "</dd>"))
+			}
+		}
+		if let term = currentTerm {
+			items.append(DefinitionItem(term: term, definitions: currentDefs))
+		}
+		return items
+	}
+
+	private static func stripTag(_ text: String, open: String, close: String) -> String {
+		var result = text
+		if let range = result.range(of: open, options: .caseInsensitive) {
+			result = String(result[range.upperBound...])
+		}
+		if let range = result.range(of: close, options: [.caseInsensitive, .backwards]) {
+			result = String(result[..<range.lowerBound])
+		}
+		return result.trimmingCharacters(in: .whitespaces)
 	}
 
 	private static func convertHTMLTables(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {

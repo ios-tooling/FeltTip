@@ -169,7 +169,7 @@ private struct FormattedMarkdownRenderModel {
 			let footnotes = MarkdownFootnote.parse(from: text)
 			let withFootnotes = MarkdownFootnote.renderableContent(from: text, footnotes: footnotes)
 			let withSuperSub = SuperSubProcessor.process(withFootnotes)
-			let fullyProcessed = HighlightSyntax.process(EmojiShortcodes.process(withSuperSub))
+			let fullyProcessed = DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(withSuperSub)))
 			var checkboxOffset = 0
 			let sections = MarkdownSection.parse(from: fullyProcessed).map { section in
 				let blocks = MarkdownBlockParser.parse(section.content, theme: theme, fontSize: fontSize, checkboxOffset: checkboxOffset, preprocessed: true)

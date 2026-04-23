@@ -68,6 +68,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 	case alert(type: AlertType, children: [MarkdownBlock], id: String)
 	case frontmatter(pairs: [(key: String, value: String)], id: String)
 	indirect case aligned(alignment: HorizontalAlignment, block: MarkdownBlock, id: String)
+	case definitionList(items: [DefinitionItem], id: String)
 
 	public var id: String {
 		switch self {
@@ -75,7 +76,8 @@ public enum MarkdownBlock: Identifiable, Sendable {
 			  .blockquote(_, let id), .orderedList(_, _, let id), .unorderedList(_, let id),
 			  .table(_, _, let id), .thematicBreak(let id), .image(_, _, _, _, let id),
 			  .imageRow(_, let id), .htmlBlock(_, let id), .details(_, _, let id),
-			  .alert(_, _, let id), .frontmatter(_, let id), .aligned(_, _, let id):
+			  .alert(_, _, let id), .frontmatter(_, let id), .aligned(_, _, let id),
+			  .definitionList(_, let id):
 			return id
 		}
 	}

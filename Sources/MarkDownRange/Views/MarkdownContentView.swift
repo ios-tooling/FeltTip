@@ -102,6 +102,8 @@ public struct MarkdownContentView: View {
 				Self.blockView(for: inner, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 					.frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
 			)
+		case .definitionList(let items, _):
+			DefinitionListView(items: items, theme: theme, fontSize: fontSize)
 		}
 	}
 }
