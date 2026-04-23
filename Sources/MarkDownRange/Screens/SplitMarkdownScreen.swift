@@ -16,6 +16,7 @@ public struct SplitMarkdownScreen: View {
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 	@State private var highlightedSectionID: String?
+	@State private var rawScrollTarget: Int?
 
 	public init(
 		text: Binding<String>,
@@ -54,7 +55,8 @@ public struct SplitMarkdownScreen: View {
 						onCursorPositionChanged?(line, col, sel, charOffset)
 						let heading = MarkdownHeading.heading(atCharacterOffset: charOffset, in: text)
 						highlightedSectionID = heading?.id ?? "preamble"
-					}
+					},
+					scrollToCharacterOffset: rawScrollTarget
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
 				FormattedMarkdownScreen(
@@ -68,7 +70,13 @@ public struct SplitMarkdownScreen: View {
 						scrollSource = .formatted
 						scrollFraction = fraction
 					},
-					highlightedSectionID: highlightedSectionID
+					highlightedSectionID: highlightedSectionID,
+					onSectionHovered: { sectionID in
+						guard let sectionID else { rawScrollTarget = nil; return }
+						if let range = MarkdownHeading.characterRange(for: sectionID, in: text) {
+							rawScrollTarget = range.location
+						}
+					}
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
 			}

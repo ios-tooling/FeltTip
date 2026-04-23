@@ -15,6 +15,7 @@ public struct RawMarkdownScreen: View {
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
+	var scrollToCharacterOffset: Int?
 
 	public init(
 		text: Binding<String>,
@@ -25,7 +26,8 @@ public struct RawMarkdownScreen: View {
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
-		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil
+		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
+		scrollToCharacterOffset: Int? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -36,6 +38,7 @@ public struct RawMarkdownScreen: View {
 		self.typewriterMode = typewriterMode
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
+		self.scrollToCharacterOffset = scrollToCharacterOffset
 	}
 
 	public var body: some View {
@@ -49,7 +52,8 @@ public struct RawMarkdownScreen: View {
 			syncScrollFraction: syncScrollFraction,
 			typewriterMode: typewriterMode,
 			theme: theme,
-			onCursorPositionChanged: onCursorPositionChanged
+			onCursorPositionChanged: onCursorPositionChanged,
+			scrollToCharacterOffset: scrollToCharacterOffset
 		)
 		#else
 		TextEditor(text: $text)

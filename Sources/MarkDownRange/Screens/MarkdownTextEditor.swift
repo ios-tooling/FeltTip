@@ -19,6 +19,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
+	var scrollToCharacterOffset: Int?
 
 	public init(
 		text: Binding<String>,
@@ -29,7 +30,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
-		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil
+		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
+		scrollToCharacterOffset: Int? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -40,6 +42,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.typewriterMode = typewriterMode
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
+		self.scrollToCharacterOffset = scrollToCharacterOffset
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
@@ -145,6 +148,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			scrollView.reflectScrolledClipView(scrollView.contentView)
 			context.coordinator.isSyncScroll = false
 		}
+
+		if let offset = scrollToCharacterOffset, offset != context.coordinator.lastScrolledOffset {
+			context.coordinator.lastScrolledOffset = offset
+			context.coordinator.isSyncScroll = true
+			let clampedOffset = min(offset, (textView.string as NSString).length)
+			textView.scrollRangeToVisible(NSRange(location: clampedOffset, length: 0))
+			context.coordinator.isSyncScroll = false
+		}
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -196,6 +207,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrollTime: CFAbsoluteTime = 0
 		var lastReportedHeading: String?
 		var lastAppliedFraction: Double = -1
+		var lastScrolledOffset: Int = -1
 		var isSyncScroll = false
 		var isUpdatingFromSwiftUI = false
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
