@@ -71,7 +71,7 @@ public struct SplitMarkdownScreen: View {
 						scrollFraction = fraction
 					},
 					highlightedSectionID: highlightedSectionID,
-					onSectionTapped: { sectionID in
+					onVisibleSectionChanged: { sectionID in
 						if let range = MarkdownHeading.characterRange(for: sectionID, in: text) {
 							rawScrollTarget = range.location
 						}

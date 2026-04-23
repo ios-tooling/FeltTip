@@ -23,7 +23,7 @@ public struct FormattedMarkdownScreen: View {
 	var focusModeEnabled: Bool = false
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var highlightedSectionID: String?
-	var onSectionTapped: ((String) -> Void)?
+	var onVisibleSectionChanged: ((String) -> Void)?
 	@Environment(LinkDisplayState.self) var linkDisplay
 
 	public init(
@@ -37,7 +37,7 @@ public struct FormattedMarkdownScreen: View {
 		focusModeEnabled: Bool = false,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		highlightedSectionID: String? = nil,
-		onSectionTapped: ((String) -> Void)? = nil
+		onVisibleSectionChanged: ((String) -> Void)? = nil
 	) {
 		self.text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -49,7 +49,7 @@ public struct FormattedMarkdownScreen: View {
 		self.focusModeEnabled = focusModeEnabled
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.highlightedSectionID = highlightedSectionID
-		self.onSectionTapped = onSectionTapped
+		self.onVisibleSectionChanged = onVisibleSectionChanged
 	}
 
 	private var renderKey: FormattedMarkdownRenderModel.Key {
@@ -86,9 +86,14 @@ public struct FormattedMarkdownScreen: View {
 										if focusedSectionID == section.id { focusedSectionID = nil }
 									}
 								}
-								.onTapGesture {
-									onSectionTapped?(section.id)
-								}
+								.background(
+									GeometryReader { geo in
+										Color.clear.preference(
+											key: VisibleSectionKey.self,
+											value: geo.frame(in: .named("formattedScroll")).minY < 60 && geo.frame(in: .named("formattedScroll")).maxY > 60 ? section.id : nil
+										)
+									}
+								)
 								.id(section.id)
 							}
 						}
@@ -100,8 +105,12 @@ public struct FormattedMarkdownScreen: View {
 						ScrollFractionReporter(onChanged: onScrollFractionChanged ?? { _ in })
 						#endif
 					}
+					.coordinateSpace(name: "formattedScroll")
 					.font(.system(size: fontSize))
 					.background(theme.backgroundColor)
+					.onPreferenceChange(VisibleSectionKey.self) { sectionID in
+						if let sectionID { onVisibleSectionChanged?(sectionID) }
+					}
 					.onChange(of: selectedHeadingID) { _, raw in
 						guard let raw else { return }
 						let id = raw.components(separatedBy: "\t").first ?? raw
@@ -249,4 +258,11 @@ private struct FormattedMarkdownRenderModel {
 private struct RenderedMarkdownSection: Identifiable {
 	let id: String
 	let blocks: [MarkdownBlock]
+}
+
+private struct VisibleSectionKey: PreferenceKey {
+	static let defaultValue: String? = nil
+	static func reduce(value: inout String?, nextValue: () -> String?) {
+		value = value ?? nextValue()
+	}
 }
