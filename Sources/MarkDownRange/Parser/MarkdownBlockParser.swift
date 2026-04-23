@@ -17,7 +17,7 @@ public enum MarkdownBlockParser {
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body) = extractFrontmatter(markdown)
-		let processed = preprocessed ? body : DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(body)))
+		let processed = preprocessed ? body : WikilinkProcessor.process(DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(body))))
 		let document = Document(parsing: processed)
 		let counter = CheckboxCounter(checkboxOffset)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)

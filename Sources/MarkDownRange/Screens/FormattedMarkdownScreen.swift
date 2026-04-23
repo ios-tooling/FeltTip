@@ -126,6 +126,17 @@ public struct FormattedMarkdownScreen: View {
 				linkDisplay.show(url: "Footnote \(id)")
 				return .handled
 			}
+			if url.scheme == "wikilink", let page = url.host?.removingPercentEncoding, let base = baseURL {
+				let fileURL = base.appendingPathComponent(page).appendingPathExtension("md")
+				if FileManager.default.fileExists(atPath: fileURL.path) {
+					#if os(macOS)
+					NSWorkspace.shared.open(fileURL)
+					#endif
+					return .handled
+				}
+				linkDisplay.show(url: "\(page).md (not found)")
+				return .handled
+			}
 			linkDisplay.show(url: url.absoluteString)
 			return .systemAction
 		})
@@ -169,7 +180,7 @@ private struct FormattedMarkdownRenderModel {
 			let footnotes = MarkdownFootnote.parse(from: text)
 			let withFootnotes = MarkdownFootnote.renderableContent(from: text, footnotes: footnotes)
 			let withSuperSub = SuperSubProcessor.process(withFootnotes)
-			let fullyProcessed = DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(withSuperSub)))
+			let fullyProcessed = WikilinkProcessor.process(DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(withSuperSub))))
 			var checkboxOffset = 0
 			let sections = MarkdownSection.parse(from: fullyProcessed).map { section in
 				let blocks = MarkdownBlockParser.parse(section.content, theme: theme, fontSize: fontSize, checkboxOffset: checkboxOffset, preprocessed: true)
