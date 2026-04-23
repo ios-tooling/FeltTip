@@ -82,6 +82,60 @@ public struct ScrollFractionSync: NSViewRepresentable {
 	}
 }
 
+/// Reports scroll fraction changes from inside a scroll view's content.
+/// Must be placed inside the ScrollView (not as an overlay) to find the correct NSScrollView.
+public struct ScrollFractionReporter: NSViewRepresentable {
+	let onChanged: (Double) -> Void
+
+	public init(onChanged: @escaping (Double) -> Void) { self.onChanged = onChanged }
+
+	public func makeNSView(context: Context) -> NSView {
+		let view = NSView(frame: .zero)
+		view.isHidden = true
+		DispatchQueue.main.async { context.coordinator.setup(from: view) }
+		return view
+	}
+
+	public func updateNSView(_ nsView: NSView, context: Context) {}
+	public func makeCoordinator() -> Coordinator { Coordinator(onChanged: onChanged) }
+
+	public class Coordinator: NSObject {
+		let onChanged: (Double) -> Void
+		weak var scrollView: NSScrollView?
+		var observer: Any?
+
+		init(onChanged: @escaping (Double) -> Void) { self.onChanged = onChanged }
+
+		func setup(from view: NSView) {
+			guard scrollView == nil else { return }
+			var current: NSView? = view.superview
+			while let v = current {
+				if let sv = v as? NSScrollView { scrollView = sv; break }
+				current = v.superview
+			}
+			guard let scrollView else { return }
+			scrollView.contentView.postsBoundsChangedNotifications = true
+			observer = NotificationCenter.default.addObserver(
+				forName: NSView.boundsDidChangeNotification,
+				object: scrollView.contentView,
+				queue: .main
+			) { [weak self] _ in self?.reportFraction() }
+		}
+
+		func reportFraction() {
+			guard let scrollView else { return }
+			let docHeight = scrollView.documentView?.frame.height ?? 0
+			let visibleHeight = scrollView.contentView.bounds.height
+			guard docHeight > visibleHeight else { return }
+			let offset = scrollView.contentView.bounds.origin.y
+			let f = min(1, max(0, offset / (docHeight - visibleHeight)))
+			onChanged(f)
+		}
+
+		deinit { if let obs = observer { NotificationCenter.default.removeObserver(obs) } }
+	}
+}
+
 public struct ScrollFractionReceiver: NSViewRepresentable {
 	let fraction: Double
 

@@ -21,6 +21,7 @@ public struct FormattedMarkdownScreen: View {
 	var syncSectionID: String?
 	var syncScrollFraction: Double?
 	var focusModeEnabled: Bool = false
+	var onScrollFractionChanged: ((Double) -> Void)?
 	@Environment(LinkDisplayState.self) var linkDisplay
 
 	public init(
@@ -31,7 +32,8 @@ public struct FormattedMarkdownScreen: View {
 		fontSize: CGFloat,
 		syncSectionID: String? = nil,
 		syncScrollFraction: Double? = nil,
-		focusModeEnabled: Bool = false
+		focusModeEnabled: Bool = false,
+		onScrollFractionChanged: ((Double) -> Void)? = nil
 	) {
 		self.text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -41,6 +43,7 @@ public struct FormattedMarkdownScreen: View {
 		self.syncSectionID = syncSectionID
 		self.syncScrollFraction = syncScrollFraction
 		self.focusModeEnabled = focusModeEnabled
+		self.onScrollFractionChanged = onScrollFractionChanged
 	}
 
 	private var renderKey: FormattedMarkdownRenderModel.Key {
@@ -84,6 +87,9 @@ public struct FormattedMarkdownScreen: View {
 						#if os(macOS)
 						if let fraction = syncScrollFraction {
 							ScrollFractionReceiver(fraction: fraction)
+						}
+						if onScrollFractionChanged != nil {
+							ScrollFractionReporter(onChanged: onScrollFractionChanged!)
 						}
 						#endif
 					}

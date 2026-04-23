@@ -58,15 +58,13 @@ public struct SplitMarkdownScreen: View {
 					theme: theme,
 					fontSize: fontSize,
 					syncScrollFraction: scrollSource == .raw ? scrollFraction : nil,
-					focusModeEnabled: focusModeEnabled
+					focusModeEnabled: focusModeEnabled,
+					onScrollFractionChanged: { fraction in
+						scrollSource = .formatted
+						scrollFraction = fraction
+					}
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
-				.overlay {
-					ScrollFractionSync(fraction: $scrollFraction, isSource: true)
-						.onChange(of: scrollFraction) {
-							if scrollSource != .raw { scrollSource = .formatted }
-						}
-				}
 			}
 		}
 		.onChange(of: scrollFraction) {
