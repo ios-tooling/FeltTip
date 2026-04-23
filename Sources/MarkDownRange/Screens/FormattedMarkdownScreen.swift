@@ -13,6 +13,7 @@ public struct FormattedMarkdownScreen: View {
 	let fontSize: CGFloat
 	@State private var flashingID: String?
 	@State private var showFootnotes = false
+	@State private var showBibliography = false
 	@State private var highlightedFootnoteID: String?
 	@State private var renderModel: FormattedMarkdownRenderModel?
 	@State private var renderTask: Task<Void, Never>?
@@ -110,6 +111,15 @@ public struct FormattedMarkdownScreen: View {
 						fontSize: fontSize
 					)
 				}
+
+				if !renderModel.citations.isEmpty {
+					BibliographyPanelView(
+						citations: renderModel.citations,
+						isExpanded: $showBibliography,
+						theme: theme,
+						fontSize: fontSize
+					)
+				}
 			}
 		}
 		.onChange(of: renderKey, initial: true) { _, key in
@@ -124,6 +134,11 @@ public struct FormattedMarkdownScreen: View {
 			if url.scheme == "footnote", let id = url.host, !id.isEmpty {
 				highlightedFootnoteID = id
 				linkDisplay.show(url: "Footnote \(id)")
+				return .handled
+			}
+			if url.scheme == "citation", let id = url.host, !id.isEmpty {
+				showBibliography = true
+				linkDisplay.show(url: "Citation: \(id)")
 				return .handled
 			}
 			if url.scheme == "wikilink", let page = url.host?.removingPercentEncoding, let base = baseURL {
@@ -169,6 +184,7 @@ private struct FormattedMarkdownRenderModel {
 
 	let key: Key
 	let footnotes: [MarkdownFootnote]
+	let citations: [Citation]
 	let sections: [RenderedMarkdownSection]
 
 	init(key: Key) async {
@@ -176,10 +192,12 @@ private struct FormattedMarkdownRenderModel {
 		let text = key.text
 		let theme = key.theme
 		let fontSize = key.fontSize
-		let (footnotes, sections) = await Task.detached {
+		let (footnotes, citations, sections) = await Task.detached {
 			let footnotes = MarkdownFootnote.parse(from: text)
+			let citations = Citation.parse(from: text)
 			let withFootnotes = MarkdownFootnote.renderableContent(from: text, footnotes: footnotes)
-			let withSuperSub = SuperSubProcessor.process(withFootnotes)
+			let withCitations = Citation.renderableContent(from: withFootnotes, citations: citations)
+			let withSuperSub = SuperSubProcessor.process(withCitations)
 			let fullyProcessed = WikilinkProcessor.process(DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(withSuperSub))))
 			var checkboxOffset = 0
 			let sections = MarkdownSection.parse(from: fullyProcessed).map { section in
@@ -187,9 +205,10 @@ private struct FormattedMarkdownRenderModel {
 				checkboxOffset += Self.checkboxCount(in: blocks)
 				return RenderedMarkdownSection(id: section.id, blocks: blocks)
 			}
-			return (footnotes, sections)
+			return (footnotes, citations, sections)
 		}.value
 		self.footnotes = footnotes
+		self.citations = citations
 		self.sections = sections
 	}
 
