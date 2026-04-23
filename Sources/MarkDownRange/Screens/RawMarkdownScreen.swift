@@ -14,7 +14,7 @@ public struct RawMarkdownScreen: View {
 	var syncScrollFraction: Double?
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
-	var onCursorPositionChanged: ((Int, Int, Int) -> Void)?
+	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 
 	public init(
 		text: Binding<String>,
@@ -25,7 +25,7 @@ public struct RawMarkdownScreen: View {
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
-		onCursorPositionChanged: ((Int, Int, Int) -> Void)? = nil
+		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID

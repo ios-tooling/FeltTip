@@ -18,7 +18,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var syncScrollFraction: Double?
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
-	var onCursorPositionChanged: ((Int, Int, Int) -> Void)?
+	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 
 	public init(
 		text: Binding<String>,
@@ -29,7 +29,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
-		onCursorPositionChanged: ((Int, Int, Int) -> Void)? = nil
+		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -223,7 +223,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let insertion = range.location
 			let prefix = (textView.string as NSString).substring(to: min(insertion, (textView.string as NSString).length))
 			let lines = prefix.components(separatedBy: "\n")
-			parent.onCursorPositionChanged?(lines.count, (lines.last?.count ?? 0) + 1, range.length)
+			parent.onCursorPositionChanged?(lines.count, (lines.last?.count ?? 0) + 1, range.length, insertion)
 		}
 
 		private func centerCursor(in textView: NSTextView) {

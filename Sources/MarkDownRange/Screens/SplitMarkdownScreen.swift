@@ -12,9 +12,10 @@ public struct SplitMarkdownScreen: View {
 	let fontSize: CGFloat
 	var focusModeEnabled: Bool = false
 	var typewriterMode: Bool = false
-	var onCursorPositionChanged: ((Int, Int, Int) -> Void)?
+	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
+	@State private var highlightedSectionID: String?
 
 	public init(
 		text: Binding<String>,
@@ -23,7 +24,7 @@ public struct SplitMarkdownScreen: View {
 		fontSize: CGFloat,
 		focusModeEnabled: Bool = false,
 		typewriterMode: Bool = false,
-		onCursorPositionChanged: ((Int, Int, Int) -> Void)? = nil
+		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -49,7 +50,11 @@ public struct SplitMarkdownScreen: View {
 					syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
 					typewriterMode: typewriterMode,
 					theme: theme,
-					onCursorPositionChanged: onCursorPositionChanged
+					onCursorPositionChanged: { line, col, sel, charOffset in
+						onCursorPositionChanged?(line, col, sel, charOffset)
+						let heading = MarkdownHeading.heading(atCharacterOffset: charOffset, in: text)
+						highlightedSectionID = heading?.id ?? "preamble"
+					}
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
 				FormattedMarkdownScreen(
@@ -62,7 +67,8 @@ public struct SplitMarkdownScreen: View {
 					onScrollFractionChanged: { fraction in
 						scrollSource = .formatted
 						scrollFraction = fraction
-					}
+					},
+					highlightedSectionID: highlightedSectionID
 				)
 				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
 			}

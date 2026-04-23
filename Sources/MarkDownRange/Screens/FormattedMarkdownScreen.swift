@@ -22,6 +22,7 @@ public struct FormattedMarkdownScreen: View {
 	var syncScrollFraction: Double?
 	var focusModeEnabled: Bool = false
 	var onScrollFractionChanged: ((Double) -> Void)?
+	var highlightedSectionID: String?
 	@Environment(LinkDisplayState.self) var linkDisplay
 
 	public init(
@@ -33,7 +34,8 @@ public struct FormattedMarkdownScreen: View {
 		syncSectionID: String? = nil,
 		syncScrollFraction: Double? = nil,
 		focusModeEnabled: Bool = false,
-		onScrollFractionChanged: ((Double) -> Void)? = nil
+		onScrollFractionChanged: ((Double) -> Void)? = nil,
+		highlightedSectionID: String? = nil
 	) {
 		self.text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -44,6 +46,7 @@ public struct FormattedMarkdownScreen: View {
 		self.syncScrollFraction = syncScrollFraction
 		self.focusModeEnabled = focusModeEnabled
 		self.onScrollFractionChanged = onScrollFractionChanged
+		self.highlightedSectionID = highlightedSectionID
 	}
 
 	private var renderKey: FormattedMarkdownRenderModel.Key {
@@ -68,7 +71,7 @@ public struct FormattedMarkdownScreen: View {
 								.padding(.horizontal)
 								.background(
 									RoundedRectangle(cornerRadius: 4)
-										.fill(.tint.opacity(flashingID == section.id ? 0.15 : 0))
+										.fill(.tint.opacity(sectionBackgroundOpacity(for: section.id)))
 										.padding(.horizontal, 4)
 								)
 								.opacity(focusModeOpacity(for: section.id))
@@ -159,6 +162,12 @@ public struct FormattedMarkdownScreen: View {
 			linkDisplay.show(url: url.absoluteString)
 			return .systemAction
 		})
+	}
+
+	private func sectionBackgroundOpacity(for sectionID: String) -> Double {
+		if flashingID == sectionID { return 0.15 }
+		if highlightedSectionID == sectionID { return 0.08 }
+		return 0
 	}
 
 	private func focusModeOpacity(for sectionID: String) -> Double {
