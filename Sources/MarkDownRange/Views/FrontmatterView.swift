@@ -34,6 +34,7 @@ struct FrontmatterView: View {
 				.foregroundStyle(theme.secondaryColor)
 		}
 		.padding(8)
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(theme.codeBackground.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
 	}
 }
