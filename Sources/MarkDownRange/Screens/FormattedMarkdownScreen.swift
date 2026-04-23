@@ -88,9 +88,7 @@ public struct FormattedMarkdownScreen: View {
 						if let fraction = syncScrollFraction {
 							ScrollFractionReceiver(fraction: fraction)
 						}
-						if onScrollFractionChanged != nil {
-							ScrollFractionReporter(onChanged: onScrollFractionChanged!)
-						}
+						ScrollFractionReporter(onChanged: onScrollFractionChanged ?? { _ in })
 						#endif
 					}
 					.font(.system(size: fontSize))

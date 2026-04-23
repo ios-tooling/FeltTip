@@ -90,17 +90,30 @@ public struct ScrollFractionReporter: NSViewRepresentable {
 	public init(onChanged: @escaping (Double) -> Void) { self.onChanged = onChanged }
 
 	public func makeNSView(context: Context) -> NSView {
-		let view = NSView(frame: .zero)
+		let view = ScrollReporterView()
 		view.isHidden = true
-		DispatchQueue.main.async { context.coordinator.setup(from: view) }
+		view.coordinator = context.coordinator
 		return view
 	}
 
-	public func updateNSView(_ nsView: NSView, context: Context) {}
+	public func updateNSView(_ nsView: NSView, context: Context) {
+		context.coordinator.onChanged = onChanged
+	}
+
 	public func makeCoordinator() -> Coordinator { Coordinator(onChanged: onChanged) }
 
+	/// Custom NSView that hooks into viewDidMoveToWindow for reliable hierarchy detection.
+	class ScrollReporterView: NSView {
+		weak var coordinator: Coordinator?
+
+		override func viewDidMoveToWindow() {
+			super.viewDidMoveToWindow()
+			if window != nil { coordinator?.setup(from: self) }
+		}
+	}
+
 	public class Coordinator: NSObject {
-		let onChanged: (Double) -> Void
+		var onChanged: (Double) -> Void
 		weak var scrollView: NSScrollView?
 		var observer: Any?
 
@@ -113,7 +126,7 @@ public struct ScrollFractionReporter: NSViewRepresentable {
 				if let sv = v as? NSScrollView { scrollView = sv; break }
 				current = v.superview
 			}
-			guard let scrollView else { return }
+			guard let scrollView, observer == nil else { return }
 			scrollView.contentView.postsBoundsChangedNotifications = true
 			observer = NotificationCenter.default.addObserver(
 				forName: NSView.boundsDidChangeNotification,
