@@ -13,6 +13,10 @@ struct CodeBlockView: View {
 	var showLineNumbers: Bool = true
 	@State private var copied = false
 	@State private var highlightedText: Text?
+	@State private var isContentHovering = false
+	@State private var isButtonHovering = false
+
+	private var isHovering: Bool { isContentHovering || isButtonHovering }
 
 	private var trimmedCode: String { code.trimmingCharacters(in: .newlines) }
 	private var lineCount: Int { trimmedCode.components(separatedBy: .newlines).count }
@@ -45,17 +49,21 @@ struct CodeBlockView: View {
 				}
 			}
 
-			Button { copyToClipboard() } label: {
-				Image(systemName: copied ? "checkmark" : "doc.on.doc")
-					.font(.system(size: 12))
-					.foregroundStyle(copied ? .green : theme.secondaryColor)
-					.padding(6)
-					.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
-			}
-			.buttonStyle(.plain)
-			.padding(8)
+			MarkdownAccessoryButton(
+				systemImage: copied ? "checkmark" : "doc.on.doc",
+				tint: copied ? .green : nil,
+				theme: theme
+			) { copyToClipboard() }
+			.padding(12)
+			.opacity((isHovering || copied) ? 1 : 0)
+			.allowsHitTesting(isHovering || copied)
+			.onHover { isButtonHovering = $0 }
 		}
 		.background(theme.codeBackground, in: RoundedRectangle(cornerRadius: 8))
+		.contentShape(Rectangle())
+		.onHover { isContentHovering = $0 }
+		.animation(.easeInOut(duration: 0.15), value: isHovering)
+		.animation(.easeInOut(duration: 0.15), value: copied)
 		.task(id: trimmedCode) {
 			let code = trimmedCode
 			let text = await Task.detached { Tokenizer.highlightedText(code) }.value

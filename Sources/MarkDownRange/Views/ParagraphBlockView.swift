@@ -9,10 +9,18 @@ struct ParagraphBlockView: View {
 	let content: AttributedString
 	let links: [LinkInfo]
 	let onLinkHover: ((String?) -> Void)?
+	@Environment(\.markdownTextSelectionEnabled) private var selectionEnabled
+
+	@ViewBuilder private var textView: some View {
+		if selectionEnabled {
+			Text(content).textSelection(.enabled)
+		} else {
+			Text(content).textSelection(.disabled)
+		}
+	}
 
 	var body: some View {
-		Text(content)
-			.textSelection(.enabled)
+		textView
 			.onContinuousHover { phase in
 				guard let onLinkHover, !links.isEmpty else { return }
 				switch phase {
