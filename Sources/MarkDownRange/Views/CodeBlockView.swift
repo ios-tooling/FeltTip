@@ -52,7 +52,8 @@ struct CodeBlockView: View {
 			MarkdownAccessoryButton(
 				systemImage: copied ? "checkmark" : "doc.on.doc",
 				tint: copied ? .green : nil,
-				theme: theme
+				theme: theme,
+				label: copied ? "Copied" : "Copy \(language ?? "code")"
 			) { copyToClipboard() }
 			.padding(12)
 			.opacity((isHovering || copied) ? 1 : 0)

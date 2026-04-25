@@ -1,5 +1,5 @@
 {
-  "originHash" : "cc4906148355d93856a9e736a8a646e7e35853a10e6583a21bf884a0746a4ba7",
+  "originHash" : "d4fc36063171390e3fa22eaa00ecf169891f7649ebd5b4f8577dec0d8acaffe7",
   "pins" : [
     {
       "identity" : "chronicle",
@@ -26,6 +26,15 @@
       "state" : {
         "revision" : "e596c9f607cbba6c2fccf30ddda722c5cd5f1eb8",
         "version" : "1.0.16"
+      }
+    },
+    {
+      "identity" : "sharedsettings",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/SharedSettings",
+      "state" : {
+        "revision" : "9c0369eae628babd2910fc2aceb2b40250f4e023",
+        "version" : "1.0.8"
       }
     },
     {

@@ -21,6 +21,7 @@ struct HeadingBlockView: View {
 		VStack(alignment: .leading, spacing: 4) {
 			Text(styledContent)
 				.textSelection(.enabled)
+				.accessibilityAddTraits(.isHeader)
 
 			if level <= 2 {
 				Divider().foregroundStyle(theme.secondaryColor.opacity(0.3))

@@ -26,19 +26,7 @@ struct ListBlockView: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
 			ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-				HStack(alignment: .firstTextBaseline, spacing: 6) {
-					bulletOrCheckbox(index: index, item: item)
-						.frame(minWidth: 20, alignment: .trailing)
-
-					VStack(alignment: .leading, spacing: 4) {
-						ForEach(item.blocks) { block in
-							MarkdownContentView.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
-						}
-					}
-					.environment(\.markdownTextSelectionEnabled, item.checkbox == nil)
-					.contentShape(Rectangle())
-					.onTapGesture { toggleFromRow(item) }
-				}
+				row(for: item, index: index)
 			}
 		}
 		.padding(.leading, 8)
@@ -47,7 +35,7 @@ struct ListBlockView: View {
 		.onHover { isContentHovering = $0 }
 		.overlay(alignment: .topTrailing) {
 			if isChecklist, let onFocusChecklist {
-				MarkdownAccessoryButton(systemImage: "rectangle.compress.vertical", theme: theme) {
+				MarkdownAccessoryButton(systemImage: "rectangle.compress.vertical", theme: theme, label: "Focus checklist") {
 					onFocusChecklist(itemTexts())
 				}
 				.padding(12)
@@ -58,7 +46,7 @@ struct ListBlockView: View {
 		}
 		.overlay(alignment: .bottomTrailing) {
 			if isChecklist, let onAddChecklistItem {
-				MarkdownAccessoryButton(systemImage: "plus", theme: theme) {
+				MarkdownAccessoryButton(systemImage: "plus", theme: theme, label: "Add checklist item") {
 					onAddChecklistItem(itemTexts())
 				}
 				.padding(12)
@@ -68,6 +56,44 @@ struct ListBlockView: View {
 			}
 		}
 		.animation(.easeInOut(duration: 0.15), value: isHovering)
+	}
+
+	@ViewBuilder private func row(for item: ListItemContent, index: Int) -> some View {
+		if let checkbox = item.checkbox {
+			rowContent(for: item, index: index)
+				.accessibilityElement(children: .combine)
+				.accessibilityLabel(itemText(for: item))
+				.accessibilityValue(checkbox == .checked ? "checked" : "unchecked")
+				.accessibilityAddTraits(.isButton)
+				.accessibilityAction(.default) { toggleFromRow(item) }
+		} else {
+			rowContent(for: item, index: index)
+		}
+	}
+
+	@ViewBuilder private func rowContent(for item: ListItemContent, index: Int) -> some View {
+		HStack(alignment: .firstTextBaseline, spacing: 6) {
+			bulletOrCheckbox(index: index, item: item)
+				.frame(minWidth: 20, alignment: .trailing)
+
+			VStack(alignment: .leading, spacing: 4) {
+				ForEach(item.blocks) { block in
+					MarkdownContentView.blockView(for: block, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+				}
+			}
+			.environment(\.markdownTextSelectionEnabled, item.checkbox == nil)
+			.contentShape(Rectangle())
+			.onTapGesture { toggleFromRow(item) }
+		}
+	}
+
+	private func itemText(for item: ListItemContent) -> String {
+		for block in item.blocks {
+			if case .paragraph(let content, _, _) = block {
+				return String(content.characters)
+			}
+		}
+		return "List item"
 	}
 
 	private func toggleFromRow(_ item: ListItemContent) {

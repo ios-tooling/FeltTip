@@ -9,12 +9,14 @@ public struct MarkdownAccessoryButton: View {
 	let systemImage: String
 	let tint: Color?
 	let theme: MarkdownTheme
+	let label: String
 	let action: () -> Void
 
-	public init(systemImage: String, tint: Color? = nil, theme: MarkdownTheme, action: @escaping () -> Void) {
+	public init(systemImage: String, tint: Color? = nil, theme: MarkdownTheme, label: String = "", action: @escaping () -> Void) {
 		self.systemImage = systemImage
 		self.tint = tint
 		self.theme = theme
+		self.label = label
 		self.action = action
 	}
 
@@ -27,5 +29,6 @@ public struct MarkdownAccessoryButton: View {
 				.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
 		}
 		.buttonStyle(.plain)
+		.accessibilityLabel(label)
 	}
 }

@@ -51,6 +51,7 @@ struct TableBlockView: View {
 		.padding(8)
 		.frame(maxWidth: .infinity, alignment: .center)
 		.background(isHeader ? theme.codeBackground : .clear)
+		.accessibilityAddTraits(isHeader ? .isHeader : [])
 	}
 
 	@ViewBuilder private func tableCellImage(source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?) -> some View {
