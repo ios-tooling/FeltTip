@@ -22,8 +22,9 @@ struct ScaleDownImage: View {
 	var body: some View {
 		if isSVG {
 			#if os(macOS)
-			SVGImageView(url: url, maxWidth: htmlWidth ?? 400, maxHeight: htmlHeight ?? 200)
-				.frame(width: effectiveWidth ?? 200, height: effectiveHeight ?? 100)
+			let size = svgFrameSize()
+			SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
+				.frame(width: size.width, height: size.height)
 				.accessibilityLabel(alt.isEmpty ? "Image" : alt)
 				.task(id: url) { await measureSVG() }
 			#else
@@ -43,6 +44,26 @@ struct ScaleDownImage: View {
 
 	private var effectiveWidth: CGFloat? { htmlWidth ?? intrinsicSize?.width }
 	private var effectiveHeight: CGFloat? { htmlHeight ?? intrinsicSize?.height }
+
+	/// Treats `htmlWidth` / `htmlHeight` as max bounds and fits the natural
+	/// SVG aspect ratio inside them, so a wide-aspect logo with `width="350"
+	/// height="70"` doesn't get clipped vertically when its real aspect is taller
+	/// than 5:1.
+	private func svgFrameSize() -> CGSize {
+		let maxW = htmlWidth ?? 400
+		let maxH = htmlHeight ?? 200
+		guard let intrinsic = intrinsicSize, intrinsic.width > 0, intrinsic.height > 0 else {
+			return CGSize(width: maxW, height: maxH)
+		}
+		let aspect = intrinsic.width / intrinsic.height
+		var w = min(maxW, intrinsic.width)
+		var h = w / aspect
+		if h > maxH {
+			h = maxH
+			w = h * aspect
+		}
+		return CGSize(width: w, height: h)
+	}
 
 	private func measureRaster() async {
 		guard !isSVG, intrinsicSize == nil else { return }

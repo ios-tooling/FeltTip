@@ -85,19 +85,46 @@ enum HTMLInlineConverter {
 		var blocks: [MarkdownBlock] = []
 		let ns = html as NSString
 		var cursor = 0
+		var pending: [ImageRegions.Hit] = []
+
+		func flush() {
+			guard !pending.isEmpty else { return }
+			if pending.count == 1 {
+				blocks.append(pending[0].makeBlock(id: nextID()))
+			} else {
+				let items = pending.map { hit in
+					ImageRowItem(source: hit.src, alt: hit.alt,
+								 link: hit.link.flatMap { URL(string: $0) },
+								 width: hit.width, height: hit.height)
+				}
+				blocks.append(.imageRow(images: items, id: nextID()))
+			}
+			pending.removeAll()
+		}
 
 		for image in images {
 			if image.range.location > cursor {
 				let between = ns.substring(with: NSRange(location: cursor, length: image.range.location - cursor))
-				blocks.append(contentsOf: makeTextBlocks(between, nextID: nextID))
+				if !isWhitespaceOnly(between) {
+					flush()
+					blocks.append(contentsOf: makeTextBlocks(between, nextID: nextID))
+				}
 			}
-			blocks.append(image.makeBlock(id: nextID()))
+			pending.append(image)
 			cursor = image.range.location + image.range.length
 		}
+		flush()
+
 		if cursor < ns.length {
 			blocks.append(contentsOf: makeTextBlocks(ns.substring(from: cursor), nextID: nextID))
 		}
 		return blocks
+	}
+
+	private static func isWhitespaceOnly(_ html: String) -> Bool {
+		HTMLAttributeParser.decodeEntities(HTMLAttributeParser.stripTags(html))
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+			.isEmpty
 	}
 
 	// MARK: - Text segments
