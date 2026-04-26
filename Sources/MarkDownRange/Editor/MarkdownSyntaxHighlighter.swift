@@ -18,6 +18,13 @@ enum MarkdownSyntaxHighlighter {
 		let codeFenceRanges = matches(for: codeFencePattern, in: string)
 		apply(codeFenceRanges, color: theme.codeForeground, layoutManager: layoutManager)
 
+		// Color the entire heading line (text after the # markers) — applied
+		// before the marker pattern so the marker color overrides it.
+		for range in matches(for: headingLinePattern, in: string) {
+			guard !intersects(range, codeFenceRanges) else { continue }
+			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
+		}
+
 		let patterns: [(NSRegularExpression, Color)] = [
 			(headingMarkerPattern, theme.secondaryColor),
 			(boldPattern, theme.secondaryColor),
@@ -64,6 +71,8 @@ enum MarkdownSyntaxHighlighter {
 		pattern: "`[^`\\n]+`")
 	nonisolated(unsafe) private static let headingMarkerPattern = try! NSRegularExpression(
 		pattern: "^#{1,6}\\s", options: .anchorsMatchLines)
+	nonisolated(unsafe) private static let headingLinePattern = try! NSRegularExpression(
+		pattern: "^#{1,6}\\s.*$", options: .anchorsMatchLines)
 	nonisolated(unsafe) private static let boldPattern = try! NSRegularExpression(
 		pattern: "(\\*\\*|__)(.*?)(\\1)")
 	nonisolated(unsafe) private static let italicPattern = try! NSRegularExpression(

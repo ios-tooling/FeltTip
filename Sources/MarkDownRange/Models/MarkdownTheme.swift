@@ -12,6 +12,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 	public var codeForeground: Color
 	public var secondaryColor: Color
 	public var backgroundColor: Color
+	public var headingColor: Color
 
 	public init(
 		textColor: Color = .primary,
@@ -19,7 +20,8 @@ public struct MarkdownTheme: Equatable, Sendable {
 		codeBackground: Color = Color(.secondarySystemFill),
 		codeForeground: Color = .primary,
 		secondaryColor: Color = .secondary,
-		backgroundColor: Color = Color(.textBackgroundColor)
+		backgroundColor: Color = Color(.textBackgroundColor),
+		headingColor: Color? = nil
 	) {
 		self.textColor = textColor
 		self.linkColor = linkColor
@@ -27,6 +29,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		self.codeForeground = codeForeground
 		self.secondaryColor = secondaryColor
 		self.backgroundColor = backgroundColor
+		self.headingColor = headingColor ?? linkColor
 	}
 
 	public func headingFont(level: Int, base: CGFloat) -> Font {
