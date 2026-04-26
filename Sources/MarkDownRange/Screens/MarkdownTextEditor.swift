@@ -146,7 +146,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let target = fraction * max(0, docHeight - visibleHeight)
 			scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
-			context.coordinator.isSyncScroll = false
+			// Bounds-change observers queued on .main fire after this method
+			// returns. Hold the flag until the next main-queue tick so the
+			// echoed scroll is dropped instead of bouncing back as a fresh
+			// "user scrolled" event.
+			DispatchQueue.main.async { [weak coordinator = context.coordinator] in
+				coordinator?.isSyncScroll = false
+			}
 		}
 
 		if let offset = scrollToCharacterOffset, offset != context.coordinator.lastScrolledOffset {

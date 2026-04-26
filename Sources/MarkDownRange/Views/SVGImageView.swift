@@ -17,7 +17,7 @@ struct SVGImageView: NSViewRepresentable {
 		config.websiteDataStore = .nonPersistent()
 		let handler = context.coordinator
 		config.userContentController.add(handler, name: "size")
-		let webView = WKWebView(frame: .zero, configuration: config)
+		let webView = HitTestPassthroughWebView(frame: .zero, configuration: config)
 		webView.setValue(false, forKey: "drawsBackground")
 		loadSVG(in: webView)
 		return webView
@@ -43,6 +43,12 @@ struct SVGImageView: NSViewRepresentable {
 		<body><img src="\(escaped)" onload="webkit.messageHandlers.size.postMessage({w: this.naturalWidth, h: this.naturalHeight})"></body></html>
 		"""
 		webView.loadHTMLString(html, baseURL: url)
+	}
+
+	/// `WKWebView` that doesn't claim mouse events — lets a wrapping SwiftUI
+	/// `Link` (or any ancestor view) receive clicks instead of swallowing them.
+	private final class HitTestPassthroughWebView: WKWebView {
+		override func hitTest(_ point: NSPoint) -> NSView? { nil }
 	}
 
 	final class Coordinator: NSObject, WKScriptMessageHandler {

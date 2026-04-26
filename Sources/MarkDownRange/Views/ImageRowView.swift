@@ -7,6 +7,7 @@ import SwiftUI
 
 struct ImageRowView: View {
 	let images: [ImageRowItem]
+	var onLinkHover: ((String?) -> Void)? = nil
 
 	var body: some View {
 		HStack(spacing: 8) {
@@ -21,6 +22,9 @@ struct ImageRowView: View {
 			let image = ScaleDownImage(url: url, alt: item.alt, htmlWidth: item.width, htmlHeight: item.height)
 			if let link = item.link {
 				SwiftUI.Link(destination: link) { image }
+					.onHover { hovering in
+						onLinkHover?(hovering ? link.absoluteString : nil)
+					}
 			} else {
 				image
 			}

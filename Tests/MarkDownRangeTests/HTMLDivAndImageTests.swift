@@ -1,0 +1,117 @@
+import Testing
+@testable import MarkDownRange
+
+@Suite struct HTMLDivAndImageTests {
+	@Test func divWithCenteredImageEmitsImage() {
+		let md = """
+		<div align="center">
+			<img src="logo.png" alt="Logo" width="200" height="100">
+		</div>
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		#expect(!blocks.isEmpty)
+		// Either an aligned image or a plain image — both acceptable.
+		var found = false
+		for block in blocks {
+			if case .image(let src, let alt, let w, let h, _) = block {
+				#expect(src == "logo.png")
+				#expect(alt == "Logo")
+				#expect(w == 200)
+				#expect(h == 100)
+				found = true
+			}
+			if case .aligned(_, let inner, _) = block,
+			   case .image(let src, _, _, _, _) = inner {
+				#expect(src == "logo.png")
+				found = true
+			}
+		}
+		#expect(found, "Expected an image block somewhere in the output")
+	}
+
+	@Test func divWithMultipleImagesEmitsMultipleBlocks() {
+		let md = """
+		<div>
+			<img src="a.png" alt="A">
+			<img src="b.png" alt="B">
+			<img src="c.png" alt="C">
+		</div>
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		let imageSrcs: [String] = blocks.compactMap { block in
+			if case .image(let src, _, _, _, _) = block { return src }
+			if case .aligned(_, let inner, _) = block,
+			   case .image(let src, _, _, _, _) = inner { return src }
+			return nil
+		}
+		#expect(imageSrcs == ["a.png", "b.png", "c.png"])
+	}
+
+	@Test func anchorWrappingDivAndImagePreservesLink() {
+		let md = """
+		<a href="https://example.com">
+			<div>
+				<img src="thumb.png" alt="Thumb" width="120">
+			</div>
+		</a>
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		var foundLink = false
+		for block in blocks {
+			if case .imageRow(let images, _) = block, let img = images.first {
+				#expect(img.source == "thumb.png")
+				#expect(img.link?.absoluteString == "https://example.com")
+				foundLink = true
+			}
+			if case .aligned(_, let inner, _) = block,
+			   case .imageRow(let images, _) = inner, let img = images.first {
+				#expect(img.link?.absoluteString == "https://example.com")
+				foundLink = true
+			}
+		}
+		#expect(foundLink, "Expected an imageRow with a link preserved through the <div>")
+	}
+
+	@Test func mixedImageAndTextEmitsBoth() {
+		let md = """
+		<p>
+			<img src="banner.png" alt="Banner">
+			Some descriptive text here.
+		</p>
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		var hasImage = false
+		var hasText = false
+		for block in blocks {
+			let inner: MarkdownBlock = {
+				if case .aligned(_, let b, _) = block { return b }
+				return block
+			}()
+			if case .image = inner { hasImage = true }
+			if case .paragraph(let content, _, _) = inner,
+			   String(content.characters).contains("descriptive") { hasText = true }
+		}
+		#expect(hasImage)
+		#expect(hasText)
+	}
+
+	@Test func nbspInParagraphDecodes() {
+		let md = "<p>foo&nbsp;bar&nbsp;baz</p>"
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .paragraph(let content, _, _) = blocks.first else {
+			Issue.record("Expected paragraph, got \(blocks.first.debugDescription)")
+			return
+		}
+		#expect(String(content.characters).contains("foo\u{00A0}bar"))
+	}
+
+	@Test func plainDivWithoutImageOrAnchorStaysAsHTMLBlock() {
+		// Sanity: don't regress the existing fall-through behaviour.
+		let md = "<div class=\"note\">Just text</div>"
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .htmlBlock = blocks.first else {
+			Issue.record("Expected htmlBlock, got \(blocks.first.debugDescription)")
+			return
+		}
+	}
+}

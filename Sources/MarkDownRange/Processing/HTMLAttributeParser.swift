@@ -71,11 +71,67 @@ public enum HTMLAttributeParser {
 	}
 
 	static func decodeEntities(_ text: String) -> String {
-		text.replacingOccurrences(of: "&amp;", with: "&")
-			.replacingOccurrences(of: "&lt;", with: "<")
-			.replacingOccurrences(of: "&gt;", with: ">")
-			.replacingOccurrences(of: "&quot;", with: "\"")
-			.replacingOccurrences(of: "&#39;", with: "'")
+		var out = text
+		for (key, value) in namedEntities {
+			out = out.replacingOccurrences(of: key, with: value)
+		}
+		out = decodeNumericEntities(out)
+		// Decode &amp; last so we don't double-decode something like &amp;nbsp;
+		out = out.replacingOccurrences(of: "&amp;", with: "&")
+		return out
+	}
+
+	private static let namedEntities: [(String, String)] = [
+		("&nbsp;", "\u{00A0}"),
+		("&lt;", "<"),
+		("&gt;", ">"),
+		("&quot;", "\""),
+		("&apos;", "'"),
+		("&#39;", "'"),
+		("&copy;", "©"),
+		("&reg;", "®"),
+		("&trade;", "™"),
+		("&mdash;", "—"),
+		("&ndash;", "–"),
+		("&hellip;", "…"),
+		("&laquo;", "«"),
+		("&raquo;", "»"),
+		("&middot;", "·"),
+		("&bull;", "•"),
+		("&deg;", "°"),
+		("&times;", "×"),
+		("&divide;", "÷"),
+		("&plusmn;", "±"),
+		("&para;", "¶"),
+		("&sect;", "§"),
+		("&euro;", "€"),
+		("&pound;", "£"),
+		("&yen;", "¥"),
+		("&cent;", "¢"),
+	]
+
+	private static let numericEntityPattern = try! NSRegularExpression(
+		pattern: #"&#(x?)([0-9a-fA-F]+);"#, options: []
+	)
+
+	private static func decodeNumericEntities(_ text: String) -> String {
+		let ns = text as NSString
+		var result = ""
+		var cursor = 0
+		for match in numericEntityPattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+			result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+			let isHex = !ns.substring(with: match.range(at: 1)).isEmpty
+			let digits = ns.substring(with: match.range(at: 2))
+			if let scalar = UInt32(digits, radix: isHex ? 16 : 10),
+			   let unicode = Unicode.Scalar(scalar) {
+				result.append(Character(unicode))
+			} else {
+				result += ns.substring(with: match.range)
+			}
+			cursor = match.range.location + match.range.length
+		}
+		if cursor < ns.length { result += ns.substring(from: cursor) }
+		return result
 	}
 
 	static func collapseWhitespace(_ text: String) -> String {

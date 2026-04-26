@@ -90,7 +90,7 @@ public struct FormattedMarkdownScreen: View {
 									GeometryReader { geo in
 										Color.clear.preference(
 											key: VisibleSectionKey.self,
-											value: geo.frame(in: .named("formattedScroll")).minY < 60 && geo.frame(in: .named("formattedScroll")).maxY > 60 ? section.id : nil
+											value: VisibleSectionMark(id: section.id, minY: geo.frame(in: .named("formattedScroll")).minY)
 										)
 									}
 								)
@@ -99,17 +99,17 @@ public struct FormattedMarkdownScreen: View {
 						}
 						.padding(.vertical)
 						#if os(macOS)
-						if let fraction = syncScrollFraction {
-							ScrollFractionReceiver(fraction: fraction)
-						}
-						ScrollFractionReporter(onChanged: onScrollFractionChanged ?? { _ in })
+						ScrollFractionSyncer(
+							incoming: syncScrollFraction,
+							onChanged: onScrollFractionChanged ?? { _ in }
+						)
 						#endif
 					}
 					.coordinateSpace(name: "formattedScroll")
 					.font(.system(size: fontSize))
 					.background(theme.backgroundColor)
-					.onPreferenceChange(VisibleSectionKey.self) { sectionID in
-						if let sectionID { onVisibleSectionChanged?(sectionID) }
+					.onPreferenceChange(VisibleSectionKey.self) { mark in
+						if let mark { onVisibleSectionChanged?(mark.id) }
 					}
 					.onChange(of: selectedHeadingID) { _, raw in
 						guard let raw else { return }
@@ -260,9 +260,27 @@ private struct RenderedMarkdownSection: Identifiable {
 	let blocks: [MarkdownBlock]
 }
 
+struct VisibleSectionMark: Equatable {
+	let id: String
+	let minY: CGFloat
+}
+
 private struct VisibleSectionKey: PreferenceKey {
-	static let defaultValue: String? = nil
-	static func reduce(value: inout String?, nextValue: () -> String?) {
-		value = value ?? nextValue()
+	/// Indicator line in the scroll view's coordinate space. The "current"
+	/// section is the bottom-most one whose top has reached or moved above
+	/// this line — i.e., the section whose heading is currently sitting at
+	/// (or just above) the top of the visible area.
+	static let indicatorLine: CGFloat = 80
+
+	static let defaultValue: VisibleSectionMark? = nil
+
+	static func reduce(value: inout VisibleSectionMark?, nextValue: () -> VisibleSectionMark?) {
+		guard let next = nextValue() else { return }
+		// Sections are reported in document order, so minY is monotonically
+		// increasing at any given scroll position. The last one we see whose
+		// top has reached the indicator line is the one we're currently in.
+		if next.minY <= indicatorLine {
+			value = next
+		}
 	}
 }

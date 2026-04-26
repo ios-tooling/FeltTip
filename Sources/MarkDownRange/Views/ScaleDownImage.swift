@@ -15,9 +15,7 @@ struct ScaleDownImage: View {
 	var htmlWidth: CGFloat?
 	var htmlHeight: CGFloat?
 
-	private var isSVG: Bool {
-		url.pathExtension.lowercased() == "svg" || url.absoluteString.contains(".svg")
-	}
+	private var isSVG: Bool { url.isSVGImage }
 
 	@State private var intrinsicSize: CGSize?
 
@@ -25,7 +23,7 @@ struct ScaleDownImage: View {
 		if isSVG {
 			#if os(macOS)
 			SVGImageView(url: url, maxWidth: htmlWidth ?? 400, maxHeight: htmlHeight ?? 200)
-				.frame(width: effectiveWidth ?? 120, height: effectiveHeight ?? 20)
+				.frame(width: effectiveWidth ?? 200, height: effectiveHeight ?? 100)
 				.accessibilityLabel(alt.isEmpty ? "Image" : alt)
 				.task(id: url) { await measureSVG() }
 			#else
@@ -62,18 +60,6 @@ struct ScaleDownImage: View {
 		guard isSVG, intrinsicSize == nil else { return }
 		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
 		let text = String(data: data, encoding: .utf8) ?? ""
-		intrinsicSize = parseSVGDimensions(text) ?? CGSize(width: 120, height: 20)
-	}
-
-	private func parseSVGDimensions(_ svg: String) -> CGSize? {
-		let ns = svg as NSString
-		let widthPattern = try! NSRegularExpression(pattern: #"<svg[^>]*\bwidth="(\d+)"#, options: .caseInsensitive)
-		let heightPattern = try! NSRegularExpression(pattern: #"<svg[^>]*\bheight="(\d+)"#, options: .caseInsensitive)
-		guard let wMatch = widthPattern.firstMatch(in: svg, range: NSRange(location: 0, length: ns.length)),
-			  let hMatch = heightPattern.firstMatch(in: svg, range: NSRange(location: 0, length: ns.length)),
-			  let w = Double(ns.substring(with: wMatch.range(at: 1))),
-			  let h = Double(ns.substring(with: hMatch.range(at: 1)))
-		else { return nil }
-		return CGSize(width: w, height: h)
+		intrinsicSize = SVGDimensionParser.parse(text) ?? CGSize(width: 400, height: 200)
 	}
 }
