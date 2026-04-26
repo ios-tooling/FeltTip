@@ -41,6 +41,18 @@ import Testing
 		#expect(pairs[1].value == "[swift, markdown]")
 	}
 
+	@Test func frontmatterClosedWithDots() {
+		let md = "---\ntitle: Hello\nauthor: Ben\n...\n\n# Content"
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .frontmatter(let pairs, _) = blocks.first else {
+			Issue.record("Expected frontmatter, got \(blocks.first.debugDescription)"); return
+		}
+		#expect(pairs.count == 2)
+		#expect(pairs[0].key == "title")
+		#expect(pairs[1].key == "author")
+		if case .heading = blocks.dropFirst().first {} else { Issue.record("Body heading should follow frontmatter") }
+	}
+
 	@Test func frontmatterNotInMiddle() {
 		let md = "# Title\n\n---\ntitle: Not frontmatter\n---"
 		let blocks = MarkdownBlockParser.parse(md)

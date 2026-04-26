@@ -41,7 +41,8 @@ public enum MarkdownBlockParser {
 
 		var endIndex: Int?
 		for i in 1..<lines.count {
-			if lines[i].trimmingCharacters(in: .whitespaces) == "---" {
+			let line = lines[i].trimmingCharacters(in: .whitespaces)
+			if line == "---" || line == "..." {
 				endIndex = i; break
 			}
 		}
