@@ -18,7 +18,7 @@ struct HeadingBlockView: View {
 	}
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 4) {
+		VStack(alignment: .leading, spacing: 6) {
 			Text(styledContent)
 				.textSelection(.enabled)
 				.accessibilityAddTraits(.isHeader)
@@ -27,6 +27,24 @@ struct HeadingBlockView: View {
 				Divider().foregroundStyle(theme.secondaryColor.opacity(0.3))
 			}
 		}
-		.padding(.top, level == 1 ? 16 : 8)
+		.padding(.top, topPadding)
+		.padding(.bottom, bottomPadding)
+	}
+
+	private var topPadding: CGFloat {
+		switch level {
+		case 1: 24
+		case 2: 18
+		case 3: 14
+		default: 10
+		}
+	}
+
+	private var bottomPadding: CGFloat {
+		switch level {
+		case 1, 2: 8
+		case 3: 6
+		default: 4
+		}
 	}
 }

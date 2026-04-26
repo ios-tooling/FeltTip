@@ -42,7 +42,7 @@ public struct MarkdownContentView: View {
 	}
 
 	public var body: some View {
-		VStack(alignment: .leading, spacing: 8) {
+		VStack(alignment: .leading, spacing: 14) {
 			ForEach(blocks) { block in
 				blockView(for: block)
 			}
