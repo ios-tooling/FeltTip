@@ -76,6 +76,7 @@ struct InlineBuilder: MarkupWalker {
 		var str = AttributedString(code.code)
 		str.font = .system(size: fontSize, design: .monospaced)
 		str.foregroundColor = theme.codeForeground
+		str.inlineFontTraits = .monospaced
 		result += str
 		charOffset += code.code.count
 	}
@@ -188,6 +189,15 @@ struct InlineBuilder: MarkupWalker {
 		if superscript { str.baselineOffset = fontSize * 0.3 }
 		if subscript_ { str.baselineOffset = -(fontSize * 0.2) }
 		if highlight { str.backgroundColor = .yellow.opacity(0.3) }
+
+		// Mirror the inline traits in a custom attribute so the NSAttributedString
+		// converter can reconstruct an NSFont with matching traits — SwiftUI's
+		// Font is opaque, so we can't extract bold/italic from it directly.
+		var traits: InlineFontTraits = []
+		if bold { traits.insert(.bold) }
+		if italic { traits.insert(.italic) }
+		if kbd || inlineCode { traits.insert(.monospaced) }
+		if !traits.isEmpty { str.inlineFontTraits = traits }
 	}
 
 	private static let urlDetector: NSDataDetector? = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)

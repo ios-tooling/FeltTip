@@ -68,7 +68,9 @@ public struct FormattedMarkdownScreen: View {
 									theme: theme,
 									fontSize: fontSize,
 									baseURL: baseURL,
-									onLinkHover: { linkDisplay.displayedURL = $0 }
+									onLinkHover: { url in
+									if linkDisplay.displayedURL != url { linkDisplay.displayedURL = url }
+								}
 								)
 								.frame(maxWidth: .infinity, alignment: .leading)
 								.padding(.horizontal)
@@ -77,7 +79,6 @@ public struct FormattedMarkdownScreen: View {
 										.fill(.tint.opacity(sectionBackgroundOpacity(for: section.id)))
 										.padding(.horizontal, 4)
 								)
-								.opacity(focusModeOpacity(for: section.id))
 								.onContinuousHover { phase in
 									guard focusModeEnabled else { return }
 									switch phase {
@@ -90,7 +91,7 @@ public struct FormattedMarkdownScreen: View {
 									GeometryReader { geo in
 										Color.clear.preference(
 											key: VisibleSectionKey.self,
-											value: VisibleSectionMark(id: section.id, minY: geo.frame(in: .named("formattedScroll")).minY)
+											value: geo.frame(in: .named("formattedScroll")).minY <= VisibleSectionKey.indicatorLine ? section.id : nil
 										)
 									}
 								)
@@ -108,8 +109,8 @@ public struct FormattedMarkdownScreen: View {
 					.coordinateSpace(name: "formattedScroll")
 					.font(.system(size: fontSize))
 					.background(theme.backgroundColor)
-					.onPreferenceChange(VisibleSectionKey.self) { mark in
-						if let mark { onVisibleSectionChanged?(mark.id) }
+					.onPreferenceChange(VisibleSectionKey.self) { id in
+						if let id { onVisibleSectionChanged?(id) }
 					}
 					.onChange(of: selectedHeadingID) { _, raw in
 						guard let raw else { return }
@@ -260,11 +261,6 @@ private struct RenderedMarkdownSection: Identifiable {
 	let blocks: [MarkdownBlock]
 }
 
-struct VisibleSectionMark: Equatable {
-	let id: String
-	let minY: CGFloat
-}
-
 private struct VisibleSectionKey: PreferenceKey {
 	/// Indicator line in the scroll view's coordinate space. The "current"
 	/// section is the bottom-most one whose top has reached or moved above
@@ -272,15 +268,12 @@ private struct VisibleSectionKey: PreferenceKey {
 	/// (or just above) the top of the visible area.
 	static let indicatorLine: CGFloat = 80
 
-	static let defaultValue: VisibleSectionMark? = nil
+	static let defaultValue: String? = nil
 
-	static func reduce(value: inout VisibleSectionMark?, nextValue: () -> VisibleSectionMark?) {
-		guard let next = nextValue() else { return }
-		// Sections are reported in document order, so minY is monotonically
-		// increasing at any given scroll position. The last one we see whose
-		// top has reached the indicator line is the one we're currently in.
-		if next.minY <= indicatorLine {
-			value = next
-		}
+	// Each section emits its id only when above the indicator, so the reduced
+	// value changes only when crossing a section boundary — not every scroll
+	// tick. This keeps `onPreferenceChange` quiet during smooth scrolling.
+	static func reduce(value: inout String?, nextValue: () -> String?) {
+		if let next = nextValue() { value = next }
 	}
 }
