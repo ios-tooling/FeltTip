@@ -48,7 +48,7 @@ private struct CodeBlockContent: View {
 	private var lineCount: Int { code.components(separatedBy: .newlines).count }
 
 	var body: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
+		PassThroughHorizontalScroll {
 			HStack(alignment: .top, spacing: 0) {
 				if showLineNumbers {
 					VStack(alignment: .trailing, spacing: 0) {
