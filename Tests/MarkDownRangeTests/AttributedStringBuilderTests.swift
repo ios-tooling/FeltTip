@@ -4,7 +4,7 @@ import Foundation
 import AppKit
 @testable import MarkDownRange
 
-@Suite struct AttributedStringBuilderTests {
+@Suite @MainActor struct AttributedStringBuilderTests {
 	private func build(_ md: String) -> NSAttributedString {
 		let blocks = MarkdownBlockParser.parse(md)
 		return MarkdownAttributedStringBuilder.build(blocks: blocks, theme: .default, fontSize: 16)
@@ -52,10 +52,13 @@ import AppKit
 		#expect(ns.string.contains("2. second"))
 	}
 
-	@Test func codeBlockUsesMonospacedFont() {
+	@Test func codeBlockBecomesAttachment() {
+		// Phase 4 renders code blocks via an NSTextAttachment that hosts
+		// CodeBlockView; the syntax highlighting and monospacing live inside
+		// the SwiftUI view rather than as text-storage attributes.
 		let ns = build("```\nlet x = 1\n```")
-		let font = ns.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
-		#expect(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) == true)
+		let attachment = ns.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+		#expect(attachment is SwiftUIAttachment)
 	}
 
 	@Test func thematicBreakRendersAsLine() {

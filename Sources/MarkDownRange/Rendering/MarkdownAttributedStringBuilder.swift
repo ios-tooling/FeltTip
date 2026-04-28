@@ -12,9 +12,10 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 public enum MarkdownAttributedStringBuilder {
-	public static func build(blocks: [MarkdownBlock], theme: MarkdownTheme, fontSize: CGFloat) -> NSAttributedString {
-		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize)
+	public static func build(blocks: [MarkdownBlock], theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) -> NSAttributedString {
+		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL)
 		let result = NSMutableAttributedString()
 		for (index, block) in blocks.enumerated() {
 			append(block, to: result, context: context)
@@ -31,8 +32,6 @@ public enum MarkdownAttributedStringBuilder {
 			appendHeading(level: level, content: content, to: out, context: context)
 		case .paragraph(let content, _, _):
 			appendParagraph(content: content, to: out, context: context)
-		case .codeBlock(let code, _, _):
-			appendCodeBlock(code: code, to: out, context: context)
 		case .blockquote(let children, _):
 			appendBlockquote(children: children, to: out, context: context)
 		case .orderedList(let items, let start, _):
@@ -45,22 +44,14 @@ public enum MarkdownAttributedStringBuilder {
 			append(inner, to: out, context: context)
 		case .frontmatter(let pairs, _):
 			appendFrontmatter(pairs: pairs, to: out, context: context)
-		case .image(_, let alt, _, _, _):
-			appendPlaceholder("[image: \(alt)]", to: out, context: context)
-		case .imageRow(let images, _):
-			appendPlaceholder("[images: \(images.map(\.alt).joined(separator: ", "))]", to: out, context: context)
-		case .htmlBlock(let html, _):
-			appendPlaceholder(html, to: out, context: context)
-		case .table:
-			appendPlaceholder("[table]", to: out, context: context)
-		case .details(let summary, let children, _):
-			appendPlaceholder("▼ \(summary)", to: out, context: context)
-			for child in children { append(child, to: out, context: context) }
-		case .alert(let type, let children, _):
-			appendPlaceholder(type.label.uppercased(), to: out, context: context)
-			for child in children { append(child, to: out, context: context) }
 		case .definitionList(let items, _):
 			appendDefinitionList(items: items, to: out, context: context)
+		// Non-text blocks render via NSTextAttachment hosting the existing
+		// SwiftUI block view, giving us full visual fidelity (syntax
+		// highlighting, copy buttons, table layout, image fetching, etc.)
+		// inside the single-NSTextView path.
+		case .codeBlock, .image, .imageRow, .htmlBlock, .table, .details, .alert:
+			appendBlockAttachment(block, to: out, context: context)
 		}
 	}
 }
@@ -68,6 +59,7 @@ public enum MarkdownAttributedStringBuilder {
 struct MarkdownRenderContext {
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
+	let baseURL: URL?
 	var listDepth: Int = 0
 	var blockquoteDepth: Int = 0
 }

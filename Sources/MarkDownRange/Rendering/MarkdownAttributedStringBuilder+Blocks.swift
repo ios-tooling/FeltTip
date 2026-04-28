@@ -33,21 +33,31 @@ extension MarkdownAttributedStringBuilder {
 		out.append(NSAttributedString(string: "\n"))
 	}
 
-	static func appendCodeBlock(code: String, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
-		let trimmed = code.trimmingCharacters(in: .newlines)
-		let font = NSFont.monospacedSystemFont(ofSize: context.fontSize * 0.9, weight: .regular)
+	/// Render a non-text block as an NSTextAttachment that hosts the block's
+	/// existing SwiftUI view via NSHostingView. Each attachment occupies its
+	/// own line so it visually behaves like a block.
+	static func appendBlockAttachment(_ block: MarkdownBlock, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
+		let theme = context.theme
+		let fontSize = context.fontSize
+		let baseURL = context.baseURL
+		let attachment = SwiftUIAttachment {
+			AnyView(
+				MarkdownContentView.blockView(
+					for: block,
+					theme: theme,
+					fontSize: fontSize,
+					baseURL: baseURL,
+					onLinkHover: nil
+				)
+			)
+		}
 		let para = NSMutableParagraphStyle()
-		para.paragraphSpacingBefore = 4
-		para.paragraphSpacing = 4
-		para.firstLineHeadIndent = 12
-		para.headIndent = 12
-		let attrs: [NSAttributedString.Key: Any] = [
-			.font: font,
-			.foregroundColor: NSColor(context.theme.codeForeground),
-			.backgroundColor: NSColor(context.theme.codeBackground),
-			.paragraphStyle: para,
-		]
-		out.append(NSAttributedString(string: trimmed + "\n", attributes: attrs))
+		para.paragraphSpacingBefore = 6
+		para.paragraphSpacing = 6
+		let attachmentString = NSMutableAttributedString(attachment: attachment)
+		attachmentString.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: attachmentString.length))
+		out.append(attachmentString)
+		out.append(NSAttributedString(string: "\n"))
 	}
 
 	static func appendBlockquote(children: [MarkdownBlock], to out: NSMutableAttributedString, context: MarkdownRenderContext) {
