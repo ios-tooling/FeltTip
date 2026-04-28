@@ -1,0 +1,87 @@
+//
+//  ImageDimensionCache.swift
+//  MarkDownRange
+//
+//  Process-wide cache of remote image dimensions, used by the native
+//  renderer to size image attachments correctly on the first layout
+//  pass instead of measuring the placeholder and clipping the real
+//  image once it loads.
+//
+
+import Foundation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+final class ImageDimensionCache: @unchecked Sendable {
+	static let shared = ImageDimensionCache()
+
+	private let lock = NSLock()
+	private var sizes: [URL: CGSize] = [:]
+	private var inFlight: Set<URL> = []
+	private var subscribers: [UUID: @Sendable () -> Void] = [:]
+
+	func size(for url: URL) -> CGSize? {
+		lock.lock(); defer { lock.unlock() }
+		return sizes[url]
+	}
+
+	func record(_ size: CGSize, for url: URL) {
+		guard size.width > 0, size.height > 0 else { return }
+		lock.lock()
+		let changed = sizes[url] != size
+		sizes[url] = size
+		let callbacks = changed ? Array(subscribers.values) : []
+		lock.unlock()
+		guard !callbacks.isEmpty else { return }
+		DispatchQueue.main.async { callbacks.forEach { $0() } }
+	}
+
+	func subscribe(_ callback: @escaping @Sendable () -> Void) -> UUID {
+		let token = UUID()
+		lock.lock()
+		subscribers[token] = callback
+		lock.unlock()
+		return token
+	}
+
+	func unsubscribe(_ token: UUID) {
+		lock.lock()
+		subscribers.removeValue(forKey: token)
+		lock.unlock()
+	}
+
+	func prefetch(_ url: URL) {
+		guard claimInFlight(url) else { return }
+		Task {
+			let size = await Self.fetchSize(url)
+			self.releaseInFlight(url)
+			if let size { self.record(size, for: url) }
+		}
+	}
+
+	private func claimInFlight(_ url: URL) -> Bool {
+		lock.lock(); defer { lock.unlock() }
+		if sizes[url] != nil || inFlight.contains(url) { return false }
+		inFlight.insert(url)
+		return true
+	}
+
+	private func releaseInFlight(_ url: URL) {
+		lock.lock(); defer { lock.unlock() }
+		inFlight.remove(url)
+	}
+
+	private static func fetchSize(_ url: URL) async -> CGSize? {
+		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+		#if os(macOS)
+		guard let img = NSImage(data: data), img.size.width > 0 else { return nil }
+		return img.size
+		#else
+		guard let img = UIImage(data: data), img.size.width > 0 else { return nil }
+		return img.size
+		#endif
+	}
+}

@@ -14,8 +14,8 @@ import SwiftUI
 
 @MainActor
 public enum MarkdownAttributedStringBuilder {
-	public static func build(blocks: [MarkdownBlock], theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) -> NSAttributedString {
-		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL)
+	public static func build(blocks: [MarkdownBlock], theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, availableWidth: CGFloat? = nil) -> NSAttributedString {
+		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL, availableWidth: availableWidth)
 		let result = NSMutableAttributedString()
 		for (index, block) in blocks.enumerated() {
 			append(block, to: result, context: context)
@@ -60,6 +60,7 @@ struct MarkdownRenderContext {
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
 	let baseURL: URL?
+	var availableWidth: CGFloat?
 	var listDepth: Int = 0
 	var blockquoteDepth: Int = 0
 }

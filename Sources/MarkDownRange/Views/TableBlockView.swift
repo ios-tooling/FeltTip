@@ -11,24 +11,22 @@ struct TableBlockView: View {
 	let theme: MarkdownTheme
 
 	var body: some View {
-		ScrollView(.horizontal, showsIndicators: false) {
-			Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-				if !header.isEmpty {
-					GridRow {
-						ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
-							cellView(cell, isHeader: true)
-						}
+		Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+			if !header.isEmpty {
+				GridRow {
+					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
+						cellView(cell, isHeader: true)
 					}
 				}
+			}
 
-				ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-					GridRow {
-						ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-							cellView(cell, isHeader: false)
-						}
+			ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+				GridRow {
+					ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+						cellView(cell, isHeader: false)
 					}
-					Divider()
 				}
+				Divider()
 			}
 		}
 		.overlay(

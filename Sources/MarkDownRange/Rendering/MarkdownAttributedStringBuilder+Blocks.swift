@@ -40,7 +40,14 @@ extension MarkdownAttributedStringBuilder {
 		let theme = context.theme
 		let fontSize = context.fontSize
 		let baseURL = context.baseURL
-		let attachment = SwiftUIAttachment {
+		// Tables stretch to the available reading width; everything else
+		// uses the static measurement default.
+		let measurementWidth: CGFloat?
+		switch block {
+		case .table: measurementWidth = context.availableWidth
+		default: measurementWidth = nil
+		}
+		let attachment = SwiftUIAttachment(width: measurementWidth) {
 			AnyView(
 				MarkdownContentView.blockView(
 					for: block,

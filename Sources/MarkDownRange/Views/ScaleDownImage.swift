@@ -19,6 +19,19 @@ struct ScaleDownImage: View {
 
 	@State private var intrinsicSize: CGSize?
 
+	init(url: URL, alt: String, htmlWidth: CGFloat? = nil, htmlHeight: CGFloat? = nil) {
+		self.url = url
+		self.alt = alt
+		self.htmlWidth = htmlWidth
+		self.htmlHeight = htmlHeight
+		// Seed from the process-wide dimension cache so the SwiftUI
+		// frame is correct on the very first layout pass — important
+		// when the view is hosted as an NSTextAttachment, where the
+		// attachment bounds are measured upfront and don't grow when
+		// async content loads.
+		self._intrinsicSize = State(initialValue: ImageDimensionCache.shared.size(for: url))
+	}
+
 	var body: some View {
 		if isSVG {
 			#if os(macOS)
@@ -70,17 +83,21 @@ struct ScaleDownImage: View {
 		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
 		#if os(macOS)
 		guard let img = NSImage(data: data) else { return }
-		intrinsicSize = img.size
+		let size = img.size
 		#else
 		guard let img = UIImage(data: data) else { return }
-		intrinsicSize = img.size
+		let size = img.size
 		#endif
+		intrinsicSize = size
+		ImageDimensionCache.shared.record(size, for: url)
 	}
 
 	private func measureSVG() async {
 		guard isSVG, intrinsicSize == nil else { return }
 		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
 		let text = String(data: data, encoding: .utf8) ?? ""
-		intrinsicSize = SVGDimensionParser.parse(text) ?? CGSize(width: 400, height: 200)
+		let size = SVGDimensionParser.parse(text) ?? CGSize(width: 400, height: 200)
+		intrinsicSize = size
+		ImageDimensionCache.shared.record(size, for: url)
 	}
 }

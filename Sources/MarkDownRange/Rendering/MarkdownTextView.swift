@@ -77,34 +77,8 @@ public struct MarkdownTextView: NSViewRepresentable {
 		context.coordinator.parent = self
 		scrollView.backgroundColor = NSColor(theme.backgroundColor)
 		textView.backgroundColor = NSColor(theme.backgroundColor)
-
-		let key = RenderKey(text: text, themeID: theme.signature, fontSize: fontSize, headerToken: headerToken)
-		guard key != context.coordinator.lastRenderKey else { return }
-		context.coordinator.lastRenderKey = key
-
-		let blocks = MarkdownBlockParser.parse(text)
-		let body = MarkdownAttributedStringBuilder.build(blocks: blocks, theme: theme, fontSize: fontSize, baseURL: baseURL)
-		let attributed = NSMutableAttributedString()
-		if let header {
-			let attachment = SwiftUIAttachment { header }
-			attributed.append(NSAttributedString(attachment: attachment))
-			attributed.append(NSAttributedString(string: "\n"))
-		}
-		attributed.append(body)
-		textView.textStorage?.setAttributedString(attributed)
-
-		// TextKit 2 lays out attachments lazily as they scroll into view. On
-		// the first render the text view's frame may still be zero, so an
-		// immediate layout pass would lay out at 0×0. Defer to the next run
-		// loop tick so the scroll view has propagated its real width, then
-		// force a full-range layout + viewport pass to realise hosted views.
-		DispatchQueue.main.async {
-			if let layoutManager = textView.textLayoutManager {
-				layoutManager.ensureLayout(for: layoutManager.documentRange)
-				layoutManager.textViewportLayoutController.layoutViewport()
-			}
-			textView.needsDisplay = true
-		}
+		context.coordinator.attachFrameObserver(to: textView)
+		context.coordinator.render(into: textView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -114,8 +88,135 @@ public struct MarkdownTextView: NSViewRepresentable {
 		var parent: MarkdownTextView
 		weak var textView: NSTextView?
 		var lastRenderKey: RenderKey?
+		private var cacheToken: UUID?
+		private var rebuildTask: Task<Void, Never>?
+		private var lastObservedWidth: CGFloat = 0
+		private var frameObserver: NSObjectProtocol?
 
-		init(parent: MarkdownTextView) { self.parent = parent }
+		init(parent: MarkdownTextView) {
+			self.parent = parent
+			super.init()
+			cacheToken = ImageDimensionCache.shared.subscribe { [weak self] in
+				Task { @MainActor [weak self] in self?.scheduleRebuild() }
+			}
+		}
+
+		deinit {
+			if let cacheToken { ImageDimensionCache.shared.unsubscribe(cacheToken) }
+			// frameObserver block uses [weak self]; once we're gone, its
+			// callback no-ops. Skipping removeObserver here avoids a
+			// non-Sendable access in this nonisolated deinit.
+		}
+
+		func attachFrameObserver(to textView: NSTextView) {
+			guard frameObserver == nil else { return }
+			textView.postsFrameChangedNotifications = true
+			frameObserver = NotificationCenter.default.addObserver(
+				forName: NSView.frameDidChangeNotification,
+				object: textView,
+				queue: .main
+			) { [weak self] _ in
+				MainActor.assumeIsolated {
+					guard let self else { return }
+					let width = textView.bounds.width
+					guard abs(width - self.lastObservedWidth) > 0.5 else { return }
+					self.lastObservedWidth = width
+					self.scheduleRebuild()
+				}
+			}
+		}
+
+		func render(into textView: NSTextView, force: Bool = false) {
+			let key = RenderKey(text: parent.text, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken)
+			if !force, key == lastRenderKey { return }
+			lastRenderKey = key
+
+			let blocks = MarkdownBlockParser.parse(parent.text)
+			prefetchImages(in: blocks, baseURL: parent.baseURL)
+
+			let availableWidth = Self.availableContentWidth(in: textView)
+			let body = MarkdownAttributedStringBuilder.build(blocks: blocks, theme: parent.theme, fontSize: parent.fontSize, baseURL: parent.baseURL, availableWidth: availableWidth)
+			let attributed = NSMutableAttributedString()
+			if let header = parent.header {
+				let attachment = SwiftUIAttachment { header }
+				attributed.append(NSAttributedString(attachment: attachment))
+				attributed.append(NSAttributedString(string: "\n"))
+			}
+			attributed.append(body)
+			textView.textStorage?.setAttributedString(attributed)
+
+			// TextKit 2 lays out attachments lazily as they scroll into view. On
+			// the first render the text view's frame may still be zero, so an
+			// immediate layout pass would lay out at 0×0. Defer to the next run
+			// loop tick so the scroll view has propagated its real width, then
+			// force a full-range layout + viewport pass to realise hosted views.
+			DispatchQueue.main.async {
+				if let layoutManager = textView.textLayoutManager {
+					layoutManager.ensureLayout(for: layoutManager.documentRange)
+					layoutManager.textViewportLayoutController.layoutViewport()
+				}
+				textView.needsDisplay = true
+			}
+		}
+
+		// Image dimensions trickle in asynchronously; coalesce a few notifications
+		// into one rebuild so a page full of images doesn't thrash the layout.
+		private func scheduleRebuild() {
+			rebuildTask?.cancel()
+			rebuildTask = Task { @MainActor [weak self] in
+				try? await Task.sleep(for: .milliseconds(60))
+				guard !Task.isCancelled, let self, let textView else { return }
+				self.render(into: textView, force: true)
+			}
+		}
+
+		private func prefetchImages(in blocks: [MarkdownBlock], baseURL: URL?) {
+			for block in blocks {
+				switch block {
+				case .image(let source, _, _, _, _):
+					if let url = Self.resolve(source, baseURL: baseURL) {
+						ImageDimensionCache.shared.prefetch(url)
+					}
+				case .imageRow(let images, _):
+					for img in images {
+						if let url = Self.resolve(img.source, baseURL: baseURL) {
+							ImageDimensionCache.shared.prefetch(url)
+						}
+					}
+				case .blockquote(let children, _),
+					 .details(_, let children, _),
+					 .alert(_, let children, _):
+					prefetchImages(in: children, baseURL: baseURL)
+				case .aligned(_, let inner, _):
+					prefetchImages(in: [inner], baseURL: baseURL)
+				case .orderedList(let items, _, _), .unorderedList(let items, _):
+					for item in items {
+						prefetchImages(in: item.blocks, baseURL: baseURL)
+					}
+				default:
+					break
+				}
+			}
+		}
+
+		// Reading width inside the text container: textView width minus the
+		// horizontal text-container inset on each side and the line-fragment
+		// padding on each side. Falls back to nil before the view has laid
+		// out (so SwiftUIAttachment uses its default measurement width).
+		private static func availableContentWidth(in textView: NSTextView) -> CGFloat? {
+			let width = textView.bounds.width
+			guard width > 0 else { return nil }
+			let inset = textView.textContainerInset.width * 2
+			let padding = (textView.textContainer?.lineFragmentPadding ?? 0) * 2
+			let usable = width - inset - padding
+			return usable > 0 ? usable : nil
+		}
+
+		private static func resolve(_ source: String, baseURL: URL?) -> URL? {
+			if let url = URL(string: source), url.scheme != nil { return url }
+			if let base = baseURL, let url = URL(string: source, relativeTo: base) { return url }
+			return URL(string: source)
+		}
 
 		public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
 			let url: URL? = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))

@@ -30,7 +30,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// Caching here keeps the rendered content alive across re-creations.
 	fileprivate var cachedHost: NSHostingView<AnyView>?
 
-	public init(_ viewBuilder: @escaping () -> AnyView) {
+	public init(width: CGFloat? = nil, _ viewBuilder: @escaping () -> AnyView) {
 		self.viewBuilder = viewBuilder
 		super.init(data: nil, ofType: nil)
 		// Measure the view via NSHostingController to get our static bounds,
@@ -43,7 +43,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 		// glyph instead, which is also wrong. A transparent image at the
 		// correct size avoids both — the gap before loadView is just empty
 		// space, and the cached host eliminates re-entry flashes.
-		let measureWidth = Self.measurementWidth
+		let measureWidth = max(width ?? Self.measurementWidth, 1)
 		let controller = NSHostingController(
 			rootView: viewBuilder()
 				.frame(maxWidth: measureWidth, alignment: .leading)
