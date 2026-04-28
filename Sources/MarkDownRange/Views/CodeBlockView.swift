@@ -36,6 +36,7 @@ struct CodeBlockView: View {
 		.background(theme.codeBackground, in: RoundedRectangle(cornerRadius: 8))
 		.contentShape(Rectangle())
 		.onHover { isContentHovering = $0 }
+		.padding(.vertical, 4)
 	}
 }
 
@@ -56,7 +57,6 @@ private struct CodeBlockContent: View {
 							Text("\(num)")
 								.font(.system(size: 13, design: .monospaced))
 								.foregroundStyle(theme.secondaryColor.opacity(0.5))
-								.frame(height: 18.5)
 						}
 					}
 					.padding(.leading, 12)
