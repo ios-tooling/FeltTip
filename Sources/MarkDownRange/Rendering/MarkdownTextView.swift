@@ -143,6 +143,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 				attributed.append(NSAttributedString(string: "\n"))
 			}
 			attributed.append(body)
+
+			// Capture the current scroll fraction so a rebuild triggered by
+			// a window resize (or any other forced re-render) doesn't snap
+			// the user back to the top of the document.
+			let scrollFraction = currentScrollFraction(of: textView)
 			textView.textStorage?.setAttributedString(attributed)
 
 			// TextKit 2 lays out attachments lazily as they scroll into view. On
@@ -150,13 +155,37 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// immediate layout pass would lay out at 0×0. Defer to the next run
 			// loop tick so the scroll view has propagated its real width, then
 			// force a full-range layout + viewport pass to realise hosted views.
-			DispatchQueue.main.async {
+			DispatchQueue.main.async { [weak self] in
 				if let layoutManager = textView.textLayoutManager {
 					layoutManager.ensureLayout(for: layoutManager.documentRange)
 					layoutManager.textViewportLayoutController.layoutViewport()
 				}
 				textView.needsDisplay = true
+				if let scrollFraction { self?.restoreScrollFraction(scrollFraction, in: textView) }
+				// After scrolling to the user's previous position, re-run
+				// the viewport layout so attachments newly inside the
+				// visible area get their hosting views mounted.
+				textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
 			}
+		}
+
+		private func currentScrollFraction(of textView: NSTextView) -> CGFloat? {
+			guard let scrollView = textView.enclosingScrollView else { return nil }
+			let docHeight = textView.bounds.height
+			let visibleHeight = scrollView.contentView.bounds.height
+			let scrollable = max(docHeight - visibleHeight, 0)
+			guard scrollable > 0 else { return 0 }
+			return min(max(scrollView.contentView.bounds.origin.y / scrollable, 0), 1)
+		}
+
+		private func restoreScrollFraction(_ fraction: CGFloat, in textView: NSTextView) {
+			guard let scrollView = textView.enclosingScrollView else { return }
+			let docHeight = textView.bounds.height
+			let visibleHeight = scrollView.contentView.bounds.height
+			let scrollable = max(docHeight - visibleHeight, 0)
+			let y = scrollable * fraction
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
 		}
 
 		// Image dimensions trickle in asynchronously; coalesce a few notifications

@@ -9,9 +9,10 @@ struct TableBlockView: View {
 	let header: [TableCell]
 	let rows: [[TableCell]]
 	let theme: MarkdownTheme
+	@Environment(\.tableAlignment) private var tableAlignment
 
 	var body: some View {
-		Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+		let grid = Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
 			if !header.isEmpty {
 				GridRow {
 					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
@@ -33,10 +34,31 @@ struct TableBlockView: View {
 			RoundedRectangle(cornerRadius: 4)
 				.strokeBorder(theme.secondaryColor.opacity(0.2), lineWidth: 1)
 		)
+
+		switch tableAlignment {
+		case .fill:
+			grid
+		case .leading:
+			HStack(spacing: 0) {
+				grid
+				Spacer(minLength: 0)
+			}
+		case .center:
+			HStack(spacing: 0) {
+				Spacer(minLength: 0)
+				grid
+				Spacer(minLength: 0)
+			}
+		case .trailing:
+			HStack(spacing: 0) {
+				Spacer(minLength: 0)
+				grid
+			}
+		}
 	}
 
 	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool) -> some View {
-		Group {
+		let inner = Group {
 			switch cell {
 			case .text(let content):
 				Text(content)
@@ -47,9 +69,13 @@ struct TableBlockView: View {
 			}
 		}
 		.padding(8)
-		.frame(maxWidth: .infinity, alignment: .center)
 		.background(isHeader ? theme.codeBackground : .clear)
 		.accessibilityAddTraits(isHeader ? .isHeader : [])
+		if tableAlignment == .fill {
+			inner.frame(maxWidth: .infinity, alignment: .center)
+		} else {
+			inner
+		}
 	}
 
 	@ViewBuilder private func tableCellImage(source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?) -> some View {
