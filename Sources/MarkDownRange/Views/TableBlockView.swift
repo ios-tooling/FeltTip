@@ -61,9 +61,10 @@ struct TableBlockView: View {
 		let inner = Group {
 			switch cell {
 			case .text(let content):
-				Text(content)
+				Text(Self.charWrapped(content))
 					.textSelection(.enabled)
 					.font(isHeader ? .system(.body, weight: .semibold) : nil)
+					.fixedSize(horizontal: false, vertical: true)
 			case .image(let source, let alt, let link, let width, let height):
 				tableCellImage(source: source, alt: alt, link: link, width: width, height: height)
 			}
@@ -76,6 +77,19 @@ struct TableBlockView: View {
 		} else {
 			inner
 		}
+	}
+
+	/// Apply char-wrapping line break mode so long unbreakable tokens
+	/// (URLs, HTML, dotted identifiers) wrap at character boundaries
+	/// instead of pushing the table column wider than the available
+	/// reading width.
+	private static func charWrapped(_ content: AttributedString) -> AttributedString {
+		let nsAttr = NSMutableAttributedString(attributedString: NSAttributedString(content))
+		let para = NSMutableParagraphStyle()
+		para.lineBreakMode = .byCharWrapping
+		let range = NSRange(location: 0, length: nsAttr.length)
+		nsAttr.addAttribute(NSAttributedString.Key.paragraphStyle, value: para, range: range)
+		return AttributedString(nsAttr)
 	}
 
 	@ViewBuilder private func tableCellImage(source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?) -> some View {
