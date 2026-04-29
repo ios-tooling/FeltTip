@@ -19,6 +19,12 @@ import SwiftUI
 public final class SwiftUIAttachment: NSTextAttachment {
 	public let viewBuilder: () -> AnyView
 
+	/// True when this attachment should re-measure to whatever container
+	/// width the renderer passes in, instead of staying at its initial
+	/// fixed width. Used by tables so they grow and shrink as the text
+	/// view resizes.
+	public let usesContainerWidth: Bool
+
 	/// The width used for upfront measurement. The actual rendered width may
 	/// differ slightly; small differences cause text-wrap height variance but
 	/// are usually within tolerance for our use cases.
@@ -30,8 +36,9 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// Caching here keeps the rendered content alive across re-creations.
 	fileprivate var cachedHost: NSHostingView<AnyView>?
 
-	public init(width: CGFloat? = nil, _ viewBuilder: @escaping () -> AnyView) {
+	public init(width: CGFloat? = nil, usesContainerWidth: Bool = false, _ viewBuilder: @escaping () -> AnyView) {
 		self.viewBuilder = viewBuilder
+		self.usesContainerWidth = usesContainerWidth
 		super.init(data: nil, ofType: nil)
 		// Measure the view via NSHostingController to get our static bounds,
 		// then assign a transparent NSImage of that size as the placeholder.
@@ -56,6 +63,26 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	}
 
 	public required init?(coder: NSCoder) { nil }
+
+	/// Recompute bounds for a new container width. Used by the renderer
+	/// after the text view's frame changes so an existing attachment can
+	/// fit its new line-fragment width without rebuilding the entire
+	/// textStorage.
+	public func remeasure(at width: CGFloat) {
+		let measureWidth = max(width, 1)
+		let controller = NSHostingController(
+			rootView: viewBuilder()
+				.frame(maxWidth: measureWidth, alignment: .leading)
+				.fixedSize(horizontal: false, vertical: true)
+		)
+		let fitting = controller.sizeThatFits(in: CGSize(width: measureWidth, height: CGFloat.greatestFiniteMagnitude))
+		let size = CGSize(width: measureWidth, height: max(fitting.height, 24))
+		self.bounds = CGRect(origin: .zero, size: size)
+		self.image = Self.transparentImage(size: size)
+		// Drop the cached host so the next loadView produces a fresh
+		// NSHostingView sized to the new bounds.
+		self.cachedHost = nil
+	}
 
 	private static func transparentImage(size: CGSize) -> NSImage {
 		let image = NSImage(size: size)

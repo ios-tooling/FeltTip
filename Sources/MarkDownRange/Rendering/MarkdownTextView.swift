@@ -121,9 +121,30 @@ public struct MarkdownTextView: NSViewRepresentable {
 					let width = textView.bounds.width
 					guard abs(width - self.lastObservedWidth) > 0.5 else { return }
 					self.lastObservedWidth = width
-					self.scheduleRebuild()
+					self.handleWidthChange(in: textView)
 				}
 			}
+		}
+
+		// Remeasure container-width attachments (tables) in place rather
+		// than rebuilding the whole textStorage, which avoided the brief
+		// blank flash and lost-scroll-position when the user resizes the
+		// window.
+		private func handleWidthChange(in textView: NSTextView) {
+			guard let availableWidth = Self.availableContentWidth(in: textView),
+				  let storage = textView.textStorage,
+				  let layoutManager = textView.textLayoutManager else { return }
+			var didUpdate = false
+			let fullRange = NSRange(location: 0, length: storage.length)
+			storage.enumerateAttribute(NSAttributedString.Key.attachment, in: fullRange) { value, _, _ in
+				guard let attachment = value as? SwiftUIAttachment, attachment.usesContainerWidth else { return }
+				attachment.remeasure(at: availableWidth)
+				didUpdate = true
+			}
+			guard didUpdate else { return }
+			layoutManager.invalidateLayout(for: layoutManager.documentRange)
+			layoutManager.textViewportLayoutController.layoutViewport()
+			textView.needsDisplay = true
 		}
 
 		func render(into textView: NSTextView, force: Bool = false) {
