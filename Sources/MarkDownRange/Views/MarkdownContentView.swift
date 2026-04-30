@@ -86,9 +86,9 @@ public struct MarkdownContentView: View {
 		case .thematicBreak:
 			ThematicBreakView()
 		case .image(let source, let alt, let width, let height, _):
-			ImageBlockView(source: source, alt: alt, baseURL: baseURL, htmlWidth: width, htmlHeight: height)
+			ImageBlockView(source: source, alt: alt, theme: theme, baseURL: baseURL, htmlWidth: width, htmlHeight: height)
 		case .imageRow(let images, _):
-			ImageRowView(images: images, onLinkHover: onLinkHover)
+			ImageRowView(images: images, theme: theme, baseURL: baseURL, onLinkHover: onLinkHover)
 		case .htmlBlock(let content, _):
 			HTMLBlockView(html: content, theme: theme, fontSize: fontSize)
 		case .details(let summary, let children, _):

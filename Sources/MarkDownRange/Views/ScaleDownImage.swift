@@ -14,16 +14,18 @@ struct ScaleDownImage: View {
 	let alt: String
 	var htmlWidth: CGFloat?
 	var htmlHeight: CGFloat?
+	var allowUpscaling = false
 
 	private var isSVG: Bool { url.isSVGImage }
 
 	@State private var intrinsicSize: CGSize?
 
-	init(url: URL, alt: String, htmlWidth: CGFloat? = nil, htmlHeight: CGFloat? = nil) {
+	init(url: URL, alt: String, htmlWidth: CGFloat? = nil, htmlHeight: CGFloat? = nil, allowUpscaling: Bool = false) {
 		self.url = url
 		self.alt = alt
 		self.htmlWidth = htmlWidth
 		self.htmlHeight = htmlHeight
+		self.allowUpscaling = allowUpscaling
 		// Seed from the process-wide dimension cache so the SwiftUI
 		// frame is correct on the very first layout pass — important
 		// when the view is hosted as an NSTextAttachment, where the
@@ -35,7 +37,7 @@ struct ScaleDownImage: View {
 	var body: some View {
 		if isSVG {
 			#if os(macOS)
-			let size = svgFrameSize()
+			let size = displaySize ?? CGSize(width: 400, height: 200)
 			SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
 				.frame(width: size.width, height: size.height)
 				.accessibilityLabel(alt.isEmpty ? "Image" : alt)
@@ -50,37 +52,24 @@ struct ScaleDownImage: View {
 
 	private var rasterImage: some View {
 		CachedURLImage(url: url, contentMode: .fit, placeholder: Image(systemName: "photo"))
-			.frame(maxWidth: effectiveWidth ?? 24, maxHeight: effectiveHeight ?? 24)
+			.frame(maxWidth: displaySize?.width ?? 24, maxHeight: displaySize?.height ?? 24)
 			.accessibilityLabel(alt.isEmpty ? "Image" : alt)
 			.task(id: url) { await measureRaster() }
 	}
 
-	private var effectiveWidth: CGFloat? { htmlWidth ?? intrinsicSize?.width }
-	private var effectiveHeight: CGFloat? { htmlHeight ?? intrinsicSize?.height }
-
-	/// Treats `htmlWidth` / `htmlHeight` as max bounds and fits the natural
-	/// SVG aspect ratio inside them, so a wide-aspect logo with `width="350"
-	/// height="70"` doesn't get clipped vertically when its real aspect is taller
-	/// than 5:1.
-	private func svgFrameSize() -> CGSize {
-		let maxW = htmlWidth ?? 400
-		let maxH = htmlHeight ?? 200
-		guard let intrinsic = intrinsicSize, intrinsic.width > 0, intrinsic.height > 0 else {
-			return CGSize(width: maxW, height: maxH)
-		}
-		let aspect = intrinsic.width / intrinsic.height
-		var w = min(maxW, intrinsic.width)
-		var h = w / aspect
-		if h > maxH {
-			h = maxH
-			w = h * aspect
-		}
-		return CGSize(width: w, height: h)
+	private var displaySize: CGSize? {
+		MarkdownImageSizing.displayedSize(
+			intrinsic: intrinsicSize,
+			htmlWidth: htmlWidth,
+			htmlHeight: htmlHeight,
+			isSVG: isSVG,
+			allowUpscaling: allowUpscaling
+		)
 	}
 
 	private func measureRaster() async {
 		guard !isSVG, intrinsicSize == nil else { return }
-		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
+		guard let data = try? await ImageDataLoader.data(from: url) else { return }
 		#if os(macOS)
 		guard let img = NSImage(data: data) else { return }
 		let size = img.size
@@ -94,7 +83,7 @@ struct ScaleDownImage: View {
 
 	private func measureSVG() async {
 		guard isSVG, intrinsicSize == nil else { return }
-		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
+		guard let data = try? await ImageDataLoader.data(from: url) else { return }
 		let text = String(data: data, encoding: .utf8) ?? ""
 		let size = SVGDimensionParser.parse(text) ?? CGSize(width: 400, height: 200)
 		intrinsicSize = size

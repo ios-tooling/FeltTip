@@ -75,7 +75,11 @@ final class ImageDimensionCache: @unchecked Sendable {
 	}
 
 	private static func fetchSize(_ url: URL) async -> CGSize? {
-		guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+		guard let data = try? await ImageDataLoader.data(from: url) else { return nil }
+		if url.isSVGImage {
+			let text = String(data: data, encoding: .utf8) ?? ""
+			return SVGDimensionParser.parse(text)
+		}
 		#if os(macOS)
 		guard let img = NSImage(data: data), img.size.width > 0 else { return nil }
 		return img.size

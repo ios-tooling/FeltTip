@@ -9,6 +9,7 @@ import Convey
 struct ImageBlockView: View {
 	let source: String
 	let alt: String
+	let theme: MarkdownTheme
 	let baseURL: URL?
 	var htmlWidth: CGFloat?
 	var htmlHeight: CGFloat?
@@ -22,7 +23,15 @@ struct ImageBlockView: View {
 
 	var body: some View {
 		if let url = resolvedURL {
-			ScaleDownImage(url: url, alt: alt, htmlWidth: htmlWidth, htmlHeight: htmlHeight)
+			PopoutableImageView(
+				url: url,
+				alt: alt,
+				theme: theme,
+				htmlWidth: htmlWidth,
+				htmlHeight: htmlHeight
+			) {
+				ScaleDownImage(url: url, alt: alt, htmlWidth: htmlWidth, htmlHeight: htmlHeight)
+			}
 		} else {
 			Label(alt.isEmpty ? source : alt, systemImage: "photo")
 				.foregroundStyle(.secondary)
