@@ -34,26 +34,16 @@ struct TableBlockView: View {
 			RoundedRectangle(cornerRadius: 4)
 				.strokeBorder(theme.secondaryColor.opacity(0.2), lineWidth: 1)
 		)
+		.fixedSize(horizontal: false, vertical: true)
 
 		switch tableAlignment {
 		case .fill:
 			grid
-		case .leading:
-			HStack(spacing: 0) {
-				grid
-				Spacer(minLength: 0)
-			}
-		case .center:
-			HStack(spacing: 0) {
-				Spacer(minLength: 0)
-				grid
-				Spacer(minLength: 0)
-			}
-		case .trailing:
-			HStack(spacing: 0) {
-				Spacer(minLength: 0)
-				grid
-			}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.frame(maxWidth: .infinity, alignment: tableAlignment.frameAlignment)
+		case .leading, .center, .trailing:
+			grid
+				.frame(maxWidth: .infinity, alignment: tableAlignment.frameAlignment)
 		}
 	}
 
