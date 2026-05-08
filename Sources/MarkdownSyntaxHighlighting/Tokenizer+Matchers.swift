@@ -20,7 +20,7 @@ extension Tokenizer {
 			let text = String(s); s = s[s.endIndex...]
 			return Token(text: text, color: .gray)
 		}
-		let text = String(s[s.startIndex...endRange.upperBound])
+		let text = String(s[s.startIndex..<endRange.upperBound])
 		s = s[endRange.upperBound...]
 		return Token(text: text, color: .gray)
 	}
