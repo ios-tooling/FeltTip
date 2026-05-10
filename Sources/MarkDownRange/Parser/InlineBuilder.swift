@@ -205,15 +205,16 @@ struct InlineBuilder: MarkupWalker {
 	private mutating func linkifyBareURLs() {
 		let plainText = String(result.characters)
 		guard !plainText.isEmpty, plainText.contains("://"), let detector = Self.urlDetector else { return }
-		let matches = detector.matches(in: plainText, range: NSRange(location: 0, length: (plainText as NSString).length))
+		let fullRange = NSRange(plainText.startIndex..<plainText.endIndex, in: plainText)
+		let matches = detector.matches(in: plainText, range: fullRange)
 
 		for match in matches.reversed() {
-			guard let url = match.url else { continue }
-			let loc = match.range.location
-			let len = match.range.length
-
-			let start = attrIndex(at: loc)
-			let end = attrIndex(at: loc + len)
+			guard let url = match.url,
+				  let stringRange = Range(match.range, in: plainText) else { continue }
+			let startOffset = plainText.distance(from: plainText.startIndex, to: stringRange.lowerBound)
+			let endOffset = plainText.distance(from: plainText.startIndex, to: stringRange.upperBound)
+			let start = result.characters.index(result.startIndex, offsetBy: startOffset)
+			let end = result.characters.index(result.startIndex, offsetBy: endOffset)
 			let range = start..<end
 
 			// Skip runs that already have a link
@@ -225,11 +226,7 @@ struct InlineBuilder: MarkupWalker {
 
 			result[range].link = url
 			result[range].foregroundColor = theme.linkColor
-			links.append(LinkInfo(url: url.absoluteString, characterOffset: loc))
+			links.append(LinkInfo(url: url.absoluteString, characterOffset: startOffset))
 		}
-	}
-
-	private func attrIndex(at offset: Int) -> AttributedString.Index {
-		result.characters.index(result.startIndex, offsetBy: offset)
 	}
 }
