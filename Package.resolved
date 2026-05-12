@@ -1,5 +1,5 @@
 {
-  "originHash" : "d4fc36063171390e3fa22eaa00ecf169891f7649ebd5b4f8577dec0d8acaffe7",
+  "originHash" : "09a5dc260fa660800fb8dbc5954eca4c06c9977a35d920be9462ba49c85a1122",
   "pins" : [
     {
       "identity" : "chronicle",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "3bf3ad51c27f87c56ce1f4836379a34dab10982b",
         "version" : "3.2.6"
+      }
+    },
+    {
+      "identity" : "funnelvision",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/FunnelVision",
+      "state" : {
+        "branch" : "main",
+        "revision" : "a68e26ae1740196f666a93d05569777ffd8b3487"
       }
     },
     {
