@@ -18,6 +18,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 	var baseURL: URL?
 	var header: AnyView?
 	private let headerToken: AnyHashable?
+	@Environment(LinkDisplayState.self) private var linkDisplay
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -69,6 +70,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 
 		scrollView.documentView = textView
 		context.coordinator.textView = textView
+		textView.onLinkHover = { [linkDisplay] url in
+			if linkDisplay.displayedURL != url { linkDisplay.displayedURL = url }
+		}
 		return scrollView
 	}
 
@@ -284,9 +288,68 @@ public struct MarkdownTextView: NSViewRepresentable {
 	}
 }
 
-/// NSTextView subclass with no special behavior yet — placeholder for future
-/// hooks (focus mode shading, section flash highlights, etc.).
-final class MarkdownTextViewBacking: NSTextView {}
+/// NSTextView subclass that surfaces hovered link URLs through `onLinkHover`.
+/// macOS's built-in `.link` attribute already produces the hand cursor and a
+/// system tooltip; this adds a callback so we can also show the URL in our
+/// status bar.
+final class MarkdownTextViewBacking: NSTextView {
+	var onLinkHover: ((String?) -> Void)?
+	private var hoverTrackingArea: NSTrackingArea?
+	private var lastReportedURL: String?
+
+	override func updateTrackingAreas() {
+		super.updateTrackingAreas()
+		if let existing = hoverTrackingArea {
+			removeTrackingArea(existing)
+			hoverTrackingArea = nil
+		}
+		let area = NSTrackingArea(
+			rect: .zero,
+			options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+			owner: self,
+			userInfo: nil
+		)
+		addTrackingArea(area)
+		hoverTrackingArea = area
+	}
+
+	override func mouseMoved(with event: NSEvent) {
+		super.mouseMoved(with: event)
+		reportLink(at: convert(event.locationInWindow, from: nil))
+	}
+
+	override func mouseExited(with event: NSEvent) {
+		super.mouseExited(with: event)
+		clearReportedURL()
+	}
+
+	private func reportLink(at point: NSPoint) {
+		guard let storage = textStorage, storage.length > 0 else {
+			clearReportedURL(); return
+		}
+		let index = characterIndexForInsertion(at: point)
+		guard index >= 0, index < storage.length else {
+			clearReportedURL(); return
+		}
+		let attr = storage.attribute(.link, at: index, effectiveRange: nil)
+		let urlString: String?
+		switch attr {
+		case let url as URL: urlString = url.absoluteString
+		case let s as String: urlString = s
+		default: urlString = nil
+		}
+		if urlString != lastReportedURL {
+			lastReportedURL = urlString
+			onLinkHover?(urlString)
+		}
+	}
+
+	private func clearReportedURL() {
+		guard lastReportedURL != nil else { return }
+		lastReportedURL = nil
+		onLinkHover?(nil)
+	}
+}
 
 private extension MarkdownTheme {
 	/// Cheap identity key for memoizing renders. Theme is Equatable but using
