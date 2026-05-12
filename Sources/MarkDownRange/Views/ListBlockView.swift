@@ -157,7 +157,7 @@ struct ListBlockView: View {
 
 	private func checkboxImage(isChecked: Bool) -> some View {
 		Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-			.font(.system(size: fontSize * 0.85))
+			.font(.system(size: fontSize * 1.1))
 			.foregroundStyle(isChecked ? theme.linkColor : theme.secondaryColor)
 	}
 }
