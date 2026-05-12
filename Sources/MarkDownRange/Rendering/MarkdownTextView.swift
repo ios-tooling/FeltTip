@@ -55,6 +55,8 @@ public struct MarkdownTextView: NSViewRepresentable {
 		textView.isSelectable = true
 		textView.allowsUndo = false
 		textView.drawsBackground = false
+		textView.usesFindBar = true
+		textView.isIncrementalSearchingEnabled = true
 		// Keep horizontal inset for readable line length; let the SwiftUI parent
 		// own vertical spacing so it composes cleanly with surrounding chrome.
 		textView.textContainerInset = NSSize(width: 24, height: 0)
