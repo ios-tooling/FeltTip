@@ -16,15 +16,15 @@ struct TableBlockView: View {
 			if !header.isEmpty {
 				GridRow {
 					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: true)
+						cellView(cell, isHeader: true, rowBackground: theme.codeBackground)
 					}
 				}
 			}
 
-			ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
 				GridRow {
 					ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: false)
+						cellView(cell, isHeader: false, rowBackground: bodyRowBackground(at: rowIndex))
 					}
 				}
 				Divider()
@@ -47,7 +47,7 @@ struct TableBlockView: View {
 		}
 	}
 
-	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool) -> some View {
+	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool, rowBackground: Color) -> some View {
 		let inner = Group {
 			switch cell {
 			case .text(let content):
@@ -60,13 +60,20 @@ struct TableBlockView: View {
 			}
 		}
 		.padding(8)
-		.background(isHeader ? theme.codeBackground : .clear)
+		.background(rowBackground)
 		.accessibilityAddTraits(isHeader ? .isHeader : [])
 		if tableAlignment == .fill {
 			inner.frame(maxWidth: .infinity, alignment: .center)
 		} else {
 			inner
 		}
+	}
+
+	private func bodyRowBackground(at rowIndex: Int) -> Color {
+		guard rowIndex.isMultiple(of: 2) == false,
+			  let alternate = theme.alternateRowBackground
+		else { return .clear }
+		return alternate
 	}
 
 	/// Apply char-wrapping line break mode so long unbreakable tokens

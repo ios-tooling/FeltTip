@@ -13,6 +13,9 @@ public struct MarkdownTheme: Equatable, Sendable {
 	public var secondaryColor: Color
 	public var backgroundColor: Color
 	public var headingColor: Color
+	/// Background tint applied to every other body row in tables.
+	/// `nil` disables the stripe effect entirely.
+	public var alternateRowBackground: Color?
 
 	public init(
 		textColor: Color = .primary,
@@ -21,7 +24,8 @@ public struct MarkdownTheme: Equatable, Sendable {
 		codeForeground: Color = .primary,
 		secondaryColor: Color = .secondary,
 		backgroundColor: Color = Color(.textBackgroundColor),
-		headingColor: Color? = nil
+		headingColor: Color? = nil,
+		alternateRowBackground: Color? = nil
 	) {
 		self.textColor = textColor
 		self.linkColor = linkColor
@@ -30,6 +34,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		self.secondaryColor = secondaryColor
 		self.backgroundColor = backgroundColor
 		self.headingColor = headingColor ?? linkColor
+		self.alternateRowBackground = alternateRowBackground
 	}
 
 	public func headingFont(level: Int, base: CGFloat) -> Font {
@@ -53,7 +58,8 @@ public struct MarkdownTheme: Equatable, Sendable {
 		codeBackground: Color(red: 0.96, green: 0.97, blue: 0.98),
 		codeForeground: Color(red: 0.14, green: 0.16, blue: 0.19),
 		secondaryColor: Color(red: 0.34, green: 0.38, blue: 0.42),
-		backgroundColor: .white
+		backgroundColor: .white,
+		alternateRowBackground: Color(red: 0.97, green: 0.98, blue: 0.99)
 	)
 
 	public static let sepia = MarkdownTheme(
@@ -62,7 +68,8 @@ public struct MarkdownTheme: Equatable, Sendable {
 		codeBackground: Color(red: 0.93, green: 0.89, blue: 0.82),
 		codeForeground: Color(red: 0.30, green: 0.25, blue: 0.18),
 		secondaryColor: Color(red: 0.50, green: 0.43, blue: 0.33),
-		backgroundColor: Color(red: 0.97, green: 0.94, blue: 0.88)
+		backgroundColor: Color(red: 0.97, green: 0.94, blue: 0.88),
+		alternateRowBackground: Color(red: 0.95, green: 0.92, blue: 0.85)
 	)
 
 	public static let dark = MarkdownTheme(
@@ -71,6 +78,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		codeBackground: Color(red: 0.18, green: 0.18, blue: 0.20),
 		codeForeground: Color(red: 0.88, green: 0.88, blue: 0.90),
 		secondaryColor: Color(red: 0.60, green: 0.60, blue: 0.65),
-		backgroundColor: Color(red: 0.13, green: 0.13, blue: 0.15)
+		backgroundColor: Color(red: 0.13, green: 0.13, blue: 0.15),
+		alternateRowBackground: Color(red: 0.17, green: 0.17, blue: 0.19)
 	)
 }
