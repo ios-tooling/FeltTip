@@ -20,7 +20,26 @@ public enum HTMLAttributeParser {
 		let inner: String
 	}
 
+	struct LinkedImageInfo {
+		let href: String
+		let src: String
+		let alt: String
+		let width: CGFloat?
+		let height: CGFloat?
+	}
+
 	// MARK: - Extraction
+
+	static func extractLinkedImage(from html: String) -> LinkedImageInfo? {
+		let ns = html as NSString
+		let range = NSRange(location: 0, length: ns.length)
+		guard let match = Patterns.linkedImage.firstMatch(in: html, range: range) else { return nil }
+		let href = ns.substring(with: match.range(at: 1))
+		let src = ns.substring(with: match.range(at: 2))
+		let alt = extractAttribute("alt", from: html) ?? ""
+		let (w, h) = extractDimensions(from: html)
+		return LinkedImageInfo(href: href, src: src, alt: alt, width: w, height: h)
+	}
 
 	static func extractImage(from html: String) -> ImageInfo? {
 		let ns = html as NSString

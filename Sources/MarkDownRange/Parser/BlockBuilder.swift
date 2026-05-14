@@ -138,19 +138,58 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitTable(_ table: Markdown.Table) {
-		let headerCells = Array(table.head.cells).map { cell -> TableCell in
-			var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-			return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
-		}
+		let headerCells = Array(table.head.cells).map { makeCell($0) }
 		var rows: [[TableCell]] = []
 		for child in table.body.children {
 			guard let row = child as? Markdown.Table.Row else { continue }
-			rows.append(Array(row.cells).map { cell in
-				var builder = InlineBuilder(theme: theme, fontSize: fontSize)
-				return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
-			})
+			rows.append(Array(row.cells).map { makeCell($0) })
 		}
 		blocks.append(.table(header: headerCells, rows: rows, id: nextID()))
+	}
+
+	private func makeCell(_ cell: Markdown.Table.Cell) -> TableCell {
+		if let imageCell = imageOnlyTableCell(from: cell) { return imageCell }
+		var builder = InlineBuilder(theme: theme, fontSize: fontSize)
+		return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
+	}
+
+	/// If a table cell contains nothing but a single image (HTML <img> or
+	/// Markdown image syntax, optionally wrapped in a link), surface it as
+	/// an `.image` TableCell so it can render as an actual image instead
+	/// of degrading to its alt text.
+	private func imageOnlyTableCell(from cell: Markdown.Table.Cell) -> TableCell? {
+		// Single Markdown image (![alt](src)) — optionally wrapped in a link
+		let firstChild = cell.child(at: 0)
+		if cell.childCount == 1, let img = firstChild as? Markdown.Image {
+			return .image(source: img.source ?? "", alt: img.plainText, link: nil, width: nil, height: nil)
+		}
+		if cell.childCount == 1, let link = firstChild as? Markdown.Link,
+		   link.childCount == 1, let img = link.child(at: 0) as? Markdown.Image {
+			let dest = link.destination.flatMap { URL(string: $0) }
+			return .image(source: img.source ?? "", alt: img.plainText, link: dest, width: nil, height: nil)
+		}
+		// Inline HTML cell — concatenate raw HTML, reject if any non-whitespace
+		// text content sits beside the image markup.
+		var rawHTML = ""
+		for child in cell.children {
+			if let html = child as? InlineHTML {
+				rawHTML += html.rawHTML
+			} else if let text = child as? Markdown.Text {
+				if !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					return nil
+				}
+			} else {
+				return nil
+			}
+		}
+		guard !rawHTML.isEmpty else { return nil }
+		if let info = HTMLAttributeParser.extractLinkedImage(from: rawHTML) {
+			return .image(source: info.src, alt: info.alt, link: URL(string: info.href), width: info.width, height: info.height)
+		}
+		if let info = HTMLAttributeParser.extractImage(from: rawHTML) {
+			return .image(source: info.src, alt: info.alt, link: nil, width: info.width, height: info.height)
+		}
+		return nil
 	}
 
 	mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) {
