@@ -167,6 +167,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	public func makeCoordinator() -> Coordinator { Coordinator(self) }
 
 	private func updateRuler(scrollView: NSScrollView, textView: NSTextView) {
+		let hadRuler = scrollView.verticalRulerView != nil
 		if showLineNumbers {
 			if scrollView.verticalRulerView == nil {
 				let ruler = LineNumberRulerView(textView: textView)
@@ -183,6 +184,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			scrollView.hasVerticalRuler = false
 			scrollView.rulersVisible = false
 			scrollView.verticalRulerView = nil
+		}
+		// On first ruler attach (and on switch back), NSScrollView occasionally
+		// fails to re-tile, leaving the text view's leading edge under the
+		// ruler. Force a tile so the clip view's frame is recomputed before
+		// the first draw.
+		if hadRuler != (scrollView.verticalRulerView != nil) {
+			scrollView.tile()
 		}
 	}
 
