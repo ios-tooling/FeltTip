@@ -149,6 +149,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 			}
 			guard didUpdate else { return }
 			layoutManager.invalidateLayout(for: layoutManager.documentRange)
+			// Force layout fragments to recompute positions BEFORE the viewport
+			// pass, otherwise layoutViewport runs against stale positions and
+			// any attachment whose Y just shrank into the viewport (e.g. a
+			// second table that was below the visible area) doesn't get its
+			// hosting view mounted until the next scroll.
+			layoutManager.ensureLayout(for: layoutManager.documentRange)
 			layoutManager.textViewportLayoutController.layoutViewport()
 			textView.needsDisplay = true
 		}

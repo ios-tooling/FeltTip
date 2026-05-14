@@ -51,10 +51,10 @@ struct TableBlockView: View {
 	}
 
 	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool, rowBackground: Color) -> some View {
-		let inner = Group {
+		let content = Group {
 			switch cell {
-			case .text(let content):
-				Text(Self.charWrapped(content))
+			case .text(let str):
+				Text(Self.charWrapped(str))
 					.textSelection(.enabled)
 					.font(isHeader ? .system(.body, weight: .bold) : nil)
 					.foregroundStyle(isHeader ? theme.textColor : .primary)
@@ -63,15 +63,12 @@ struct TableBlockView: View {
 				tableCellImage(source: source, alt: alt, link: link, width: width, height: height)
 			}
 		}
-		.padding(.horizontal, 8)
-		.padding(.vertical, isHeader ? 10 : 8)
-		.background(rowBackground)
-		.accessibilityAddTraits(isHeader ? .isHeader : [])
-		if tableAlignment == .fill {
-			inner.frame(maxWidth: .infinity, alignment: .center)
-		} else {
-			inner
-		}
+		content
+			.padding(.horizontal, 8)
+			.padding(.vertical, isHeader ? 10 : 8)
+			.frame(maxWidth: .infinity, alignment: isHeader ? .center : .leading)
+			.background(rowBackground)
+			.accessibilityAddTraits(isHeader ? .isHeader : [])
 	}
 
 	private func bodyRowBackground(at rowIndex: Int) -> Color {
