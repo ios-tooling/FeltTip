@@ -16,9 +16,10 @@ struct TableBlockView: View {
 			if !header.isEmpty {
 				GridRow {
 					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: true, rowBackground: theme.codeBackground)
+						cellView(cell, isHeader: true)
 					}
 				}
+				.background(theme.codeBackground)
 				Rectangle()
 					.fill(theme.secondaryColor.opacity(0.35))
 					.frame(height: 1.5)
@@ -27,9 +28,10 @@ struct TableBlockView: View {
 			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
 				GridRow {
 					ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: false, rowBackground: bodyRowBackground(at: rowIndex))
+						cellView(cell, isHeader: false)
 					}
 				}
+				.background(bodyRowBackground(at: rowIndex))
 				Divider()
 			}
 		}
@@ -50,8 +52,8 @@ struct TableBlockView: View {
 		}
 	}
 
-	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool, rowBackground: Color) -> some View {
-		let content = Group {
+	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool) -> some View {
+		Group {
 			switch cell {
 			case .text(let str):
 				Text(Self.charWrapped(str))
@@ -63,12 +65,9 @@ struct TableBlockView: View {
 				tableCellImage(source: source, alt: alt, link: link, width: width, height: height)
 			}
 		}
-		content
-			.padding(.horizontal, 8)
-			.padding(.vertical, isHeader ? 10 : 8)
-			.frame(maxWidth: .infinity, alignment: isHeader ? .center : .leading)
-			.background(rowBackground)
-			.accessibilityAddTraits(isHeader ? .isHeader : [])
+		.padding(.horizontal, 8)
+		.padding(.vertical, isHeader ? 10 : 8)
+		.accessibilityAddTraits(isHeader ? .isHeader : [])
 	}
 
 	private func bodyRowBackground(at rowIndex: Int) -> Color {

@@ -15,7 +15,10 @@ extension MarkdownAttributedStringBuilder {
 	static func headingNSFont(level: Int, base: CGFloat, family: MarkdownFontFamily = .system) -> NSFont {
 		let scales: [CGFloat] = [2.0, 1.5, 1.25, 1.1, 1.0, 0.875]
 		let scale = scales[min(max(level - 1, 0), scales.count - 1)]
-		let weight: NSFont.Weight = level <= 2 ? .bold : .semibold
+		// Headings sit at a notch lighter than full bold so inline **emphasis**
+		// inside a heading (which adds the bold symbolic trait) renders one
+		// weight heavier and is visually distinguishable.
+		let weight: NSFont.Weight = level <= 2 ? .semibold : .medium
 		return designedFont(size: base * scale, weight: weight, family: family)
 	}
 
