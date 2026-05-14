@@ -21,15 +21,16 @@ extension MarkdownAttributedStringBuilder {
 	/// `inlineFontTraits` attribute and used to derive a font from `font`,
 	/// preserving the contextual size/weight (so e.g. bold inside a heading
 	/// stays heading-sized).
-	static func nsAttributedString(from inline: AttributedString, font: NSFont, defaultColor: NSColor) -> NSAttributedString {
+	static func nsAttributedString(from inline: AttributedString, font: NSFont, defaultColor: NSColor, boldColor: NSColor? = nil) -> NSAttributedString {
 		let result = NSMutableAttributedString()
 		for run in inline.runs {
 			let substring = String(inline[run.range].characters)
 			let traits = run.inlineFontTraits ?? []
 			let runFont = font.applyingInlineTraits(traits)
+			let baseColor = (boldColor != nil && traits.contains(.bold)) ? boldColor! : defaultColor
 			var attrs: [NSAttributedString.Key: Any] = [
 				.font: runFont,
-				.foregroundColor: defaultColor,
+				.foregroundColor: baseColor,
 			]
 			if let color = run.foregroundColor { attrs[.foregroundColor] = NSColor(color) }
 			if let bg = run.backgroundColor { attrs[.backgroundColor] = NSColor(bg) }

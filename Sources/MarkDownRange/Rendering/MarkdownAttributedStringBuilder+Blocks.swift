@@ -17,7 +17,7 @@ extension MarkdownAttributedStringBuilder {
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacingBefore = level <= 2 ? 12 : 8
 		para.paragraphSpacing = level <= 2 ? 4 : 3
-		let inner = nsAttributedString(from: content, font: font, defaultColor: color)
+		let inner = nsAttributedString(from: content, font: font, defaultColor: color, boldColor: NSColor(context.theme.textColor))
 		out.append(decorate(inner, paragraphStyle: para))
 		out.append(NSAttributedString(string: "\n"))
 	}
