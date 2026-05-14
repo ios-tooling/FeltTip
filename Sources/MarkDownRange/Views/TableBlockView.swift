@@ -19,6 +19,9 @@ struct TableBlockView: View {
 						cellView(cell, isHeader: true, rowBackground: theme.codeBackground)
 					}
 				}
+				Rectangle()
+					.fill(theme.secondaryColor.opacity(0.35))
+					.frame(height: 1.5)
 			}
 
 			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
@@ -53,13 +56,15 @@ struct TableBlockView: View {
 			case .text(let content):
 				Text(Self.charWrapped(content))
 					.textSelection(.enabled)
-					.font(isHeader ? .system(.body, weight: .semibold) : nil)
+					.font(isHeader ? .system(.body, weight: .bold) : nil)
+					.foregroundStyle(isHeader ? theme.textColor : .primary)
 					.fixedSize(horizontal: false, vertical: true)
 			case .image(let source, let alt, let link, let width, let height):
 				tableCellImage(source: source, alt: alt, link: link, width: width, height: height)
 			}
 		}
-		.padding(8)
+		.padding(.horizontal, 8)
+		.padding(.vertical, isHeader ? 10 : 8)
 		.background(rowBackground)
 		.accessibilityAddTraits(isHeader ? .isHeader : [])
 		if tableAlignment == .fill {
