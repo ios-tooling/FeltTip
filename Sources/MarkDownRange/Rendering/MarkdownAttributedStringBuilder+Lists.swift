@@ -11,7 +11,7 @@ extension MarkdownAttributedStringBuilder {
 	static func appendList(items: [ListItemContent], ordered: Bool, start: Int, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
 		var inner = context
 		inner.listDepth += 1
-		let bodyFont = bodyNSFont(size: context.fontSize)
+		let bodyFont = bodyNSFont(size: context.fontSize, family: context.theme.fontFamily)
 		let textColor = NSColor(context.theme.textColor)
 		let secondaryColor = NSColor(context.theme.secondaryColor)
 		let indent = CGFloat(inner.listDepth) * 18

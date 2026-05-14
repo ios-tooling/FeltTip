@@ -12,7 +12,7 @@ import SwiftUI
 
 extension MarkdownAttributedStringBuilder {
 	static func appendHeading(level: Int, content: AttributedString, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
-		let font = headingNSFont(level: level, base: context.fontSize)
+		let font = headingNSFont(level: level, base: context.fontSize, family: context.theme.fontFamily)
 		let color = NSColor(context.theme.headingColor)
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacingBefore = level <= 2 ? 24 : 16
@@ -23,7 +23,7 @@ extension MarkdownAttributedStringBuilder {
 	}
 
 	static func appendParagraph(content: AttributedString, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
-		let font = bodyNSFont(size: context.fontSize)
+		let font = bodyNSFont(size: context.fontSize, family: context.theme.fontFamily)
 		let color = NSColor(context.theme.textColor)
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacing = 10
@@ -91,7 +91,7 @@ extension MarkdownAttributedStringBuilder {
 		para.paragraphSpacingBefore = 16
 		para.paragraphSpacing = 16
 		let attrs: [NSAttributedString.Key: Any] = [
-			.font: bodyNSFont(size: context.fontSize),
+			.font: bodyNSFont(size: context.fontSize, family: context.theme.fontFamily),
 			.foregroundColor: NSColor(context.theme.secondaryColor),
 			.paragraphStyle: para,
 		]
@@ -112,7 +112,7 @@ extension MarkdownAttributedStringBuilder {
 	}
 
 	static func appendDefinitionList(items: [DefinitionItem], to out: NSMutableAttributedString, context: MarkdownRenderContext) {
-		let bodyFont = bodyNSFont(size: context.fontSize)
+		let bodyFont = bodyNSFont(size: context.fontSize, family: context.theme.fontFamily)
 		let textColor = NSColor(context.theme.textColor)
 		for item in items {
 			out.append(NSAttributedString(string: item.term + "\n", attributes: [.font: bodyFont, .foregroundColor: textColor]))
@@ -127,7 +127,7 @@ extension MarkdownAttributedStringBuilder {
 
 	static func appendPlaceholder(_ text: String, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
 		let attrs: [NSAttributedString.Key: Any] = [
-			.font: bodyNSFont(size: context.fontSize),
+			.font: bodyNSFont(size: context.fontSize, family: context.theme.fontFamily),
 			.foregroundColor: NSColor(context.theme.secondaryColor),
 		]
 		out.append(NSAttributedString(string: text + "\n", attributes: attrs))

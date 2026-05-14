@@ -8,15 +8,24 @@ import AppKit
 import SwiftUI
 
 extension MarkdownAttributedStringBuilder {
-	static func bodyNSFont(size: CGFloat) -> NSFont {
-		NSFont.systemFont(ofSize: size)
+	static func bodyNSFont(size: CGFloat, family: MarkdownFontFamily = .system) -> NSFont {
+		designedFont(size: size, weight: .regular, family: family)
 	}
 
-	static func headingNSFont(level: Int, base: CGFloat) -> NSFont {
+	static func headingNSFont(level: Int, base: CGFloat, family: MarkdownFontFamily = .system) -> NSFont {
 		let scales: [CGFloat] = [2.0, 1.5, 1.25, 1.1, 1.0, 0.875]
 		let scale = scales[min(max(level - 1, 0), scales.count - 1)]
 		let weight: NSFont.Weight = level <= 2 ? .bold : .semibold
-		return NSFont.systemFont(ofSize: base * scale, weight: weight)
+		return designedFont(size: base * scale, weight: weight, family: family)
+	}
+
+	private static func designedFont(size: CGFloat, weight: NSFont.Weight, family: MarkdownFontFamily) -> NSFont {
+		let base = NSFont.systemFont(ofSize: size, weight: weight)
+		guard family != .system,
+			  let descriptor = base.fontDescriptor.withDesign(family.systemDesign),
+			  let font = NSFont(descriptor: descriptor, size: size)
+		else { return base }
+		return font
 	}
 
 	/// Wrap an existing attributed string with a paragraph style, without

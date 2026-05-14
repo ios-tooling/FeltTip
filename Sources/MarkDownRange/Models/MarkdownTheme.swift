@@ -4,6 +4,36 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
+
+public enum MarkdownFontFamily: String, Codable, CaseIterable, Sendable {
+	case system
+	case serif
+	case rounded
+	case mono
+
+	public var label: String {
+		switch self {
+		case .system:  "System"
+		case .serif:   "Serif"
+		case .rounded: "Rounded"
+		case .mono:    "Mono"
+		}
+	}
+
+	#if os(macOS)
+	public var systemDesign: NSFontDescriptor.SystemDesign {
+		switch self {
+		case .system:  .default
+		case .serif:   .serif
+		case .rounded: .rounded
+		case .mono:    .monospaced
+		}
+	}
+	#endif
+}
 
 public struct MarkdownTheme: Equatable, Sendable {
 	public var textColor: Color
@@ -16,6 +46,9 @@ public struct MarkdownTheme: Equatable, Sendable {
 	/// Background tint applied to every other body row in tables.
 	/// `nil` disables the stripe effect entirely.
 	public var alternateRowBackground: Color?
+	/// Font family used for body and heading text in the rendered output.
+	/// Inline code and code blocks always use monospaced regardless of this.
+	public var fontFamily: MarkdownFontFamily
 
 	public init(
 		textColor: Color = .primary,
@@ -25,7 +58,8 @@ public struct MarkdownTheme: Equatable, Sendable {
 		secondaryColor: Color = .secondary,
 		backgroundColor: Color = Color(.textBackgroundColor),
 		headingColor: Color? = nil,
-		alternateRowBackground: Color? = nil
+		alternateRowBackground: Color? = nil,
+		fontFamily: MarkdownFontFamily = .system
 	) {
 		self.textColor = textColor
 		self.linkColor = linkColor
@@ -35,6 +69,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		self.backgroundColor = backgroundColor
 		self.headingColor = headingColor ?? linkColor
 		self.alternateRowBackground = alternateRowBackground
+		self.fontFamily = fontFamily
 	}
 
 	public func headingFont(level: Int, base: CGFloat) -> Font {
@@ -69,7 +104,8 @@ public struct MarkdownTheme: Equatable, Sendable {
 		codeForeground: Color(red: 0.30, green: 0.25, blue: 0.18),
 		secondaryColor: Color(red: 0.50, green: 0.43, blue: 0.33),
 		backgroundColor: Color(red: 0.97, green: 0.94, blue: 0.88),
-		alternateRowBackground: Color(red: 0.95, green: 0.92, blue: 0.85)
+		alternateRowBackground: Color(red: 0.95, green: 0.92, blue: 0.85),
+		fontFamily: .serif
 	)
 
 	public static let dark = MarkdownTheme(
