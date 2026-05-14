@@ -15,8 +15,8 @@ extension MarkdownAttributedStringBuilder {
 		let font = headingNSFont(level: level, base: context.fontSize)
 		let color = NSColor(context.theme.headingColor)
 		let para = NSMutableParagraphStyle()
-		para.paragraphSpacingBefore = level <= 2 ? 12 : 8
-		para.paragraphSpacing = level <= 2 ? 4 : 3
+		para.paragraphSpacingBefore = level <= 2 ? 24 : 16
+		para.paragraphSpacing = level <= 2 ? 12 : 8
 		let inner = nsAttributedString(from: content, font: font, defaultColor: color, boldColor: NSColor(context.theme.textColor))
 		out.append(decorate(inner, paragraphStyle: para))
 		out.append(NSAttributedString(string: "\n"))
@@ -26,8 +26,8 @@ extension MarkdownAttributedStringBuilder {
 		let font = bodyNSFont(size: context.fontSize)
 		let color = NSColor(context.theme.textColor)
 		let para = NSMutableParagraphStyle()
-		para.paragraphSpacing = 4
-		para.lineHeightMultiple = 1.2
+		para.paragraphSpacing = 10
+		para.lineHeightMultiple = 1.4
 		let inner = nsAttributedString(from: content, font: font, defaultColor: color)
 		out.append(decorate(inner, paragraphStyle: para))
 		out.append(NSAttributedString(string: "\n"))
@@ -65,8 +65,8 @@ extension MarkdownAttributedStringBuilder {
 			)
 		}
 		let para = NSMutableParagraphStyle()
-		para.paragraphSpacingBefore = 6
-		para.paragraphSpacing = 6
+		para.paragraphSpacingBefore = 14
+		para.paragraphSpacing = 14
 		let attachmentString = NSMutableAttributedString(attachment: attachment)
 		attachmentString.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: attachmentString.length))
 		out.append(attachmentString)
@@ -88,8 +88,8 @@ extension MarkdownAttributedStringBuilder {
 	static func appendThematicBreak(to out: NSMutableAttributedString, context: MarkdownRenderContext) {
 		let para = NSMutableParagraphStyle()
 		para.alignment = .center
-		para.paragraphSpacingBefore = 8
-		para.paragraphSpacing = 8
+		para.paragraphSpacingBefore = 16
+		para.paragraphSpacing = 16
 		let attrs: [NSAttributedString.Key: Any] = [
 			.font: bodyNSFont(size: context.fontSize),
 			.foregroundColor: NSColor(context.theme.secondaryColor),
@@ -101,7 +101,7 @@ extension MarkdownAttributedStringBuilder {
 	static func appendFrontmatter(pairs: [(key: String, value: String)], to out: NSMutableAttributedString, context: MarkdownRenderContext) {
 		let body = pairs.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
 		let para = NSMutableParagraphStyle()
-		para.paragraphSpacing = 4
+		para.paragraphSpacing = 8
 		let attrs: [NSAttributedString.Key: Any] = [
 			.font: NSFont.monospacedSystemFont(ofSize: context.fontSize * 0.9, weight: .regular),
 			.foregroundColor: NSColor(context.theme.secondaryColor),

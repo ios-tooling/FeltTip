@@ -16,11 +16,14 @@ extension MarkdownAttributedStringBuilder {
 		let secondaryColor = NSColor(context.theme.secondaryColor)
 		let indent = CGFloat(inner.listDepth) * 18
 
+		let isTopLevel = inner.listDepth == 1
 		for (offset, item) in items.enumerated() {
 			let marker = listMarker(ordered: ordered, index: start + offset, item: item)
 			let para = NSMutableParagraphStyle()
 			para.firstLineHeadIndent = indent - 14
 			para.headIndent = indent
+			para.paragraphSpacing = isTopLevel ? 6 : 3
+			para.lineHeightMultiple = 1.35
 			out.append(NSAttributedString(string: marker, attributes: [
 				.font: bodyFont,
 				.foregroundColor: secondaryColor,
