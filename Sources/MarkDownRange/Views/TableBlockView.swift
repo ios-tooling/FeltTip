@@ -11,28 +11,43 @@ struct TableBlockView: View {
 	let theme: MarkdownTheme
 	@Environment(\.tableAlignment) private var tableAlignment
 
+	@State private var headerHeight: CGFloat = 0
+	@State private var bodyRowHeights: [Int: CGFloat] = [:]
+
+	private static let headerDividerHeight: CGFloat = 1.5
+	private static let bodyDividerHeight: CGFloat = 1
+
 	var body: some View {
 		let grid = Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
 			if !header.isEmpty {
 				GridRow {
 					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: true, rowBackground: theme.codeBackground)
+						cellView(cell, isHeader: true)
 					}
 				}
+				.background(headerHeightProbe)
 				Rectangle()
 					.fill(theme.secondaryColor.opacity(0.35))
-					.frame(height: 1.5)
+					.frame(height: Self.headerDividerHeight)
 			}
 
 			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
 				GridRow {
 					ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: false, rowBackground: bodyRowBackground(at: rowIndex))
+						cellView(cell, isHeader: false)
 					}
 				}
-				Divider()
+				.background(bodyRowHeightProbe(index: rowIndex))
+				if rowIndex < rows.count - 1 {
+					Rectangle()
+						.fill(theme.secondaryColor.opacity(0.15))
+						.frame(height: Self.bodyDividerHeight)
+				}
 			}
 		}
+		.background(alignment: .top) { backgroundLayer }
+		.onPreferenceChange(HeaderHeightKey.self) { headerHeight = $0 }
+		.onPreferenceChange(BodyRowHeightsKey.self) { bodyRowHeights = $0 }
 		.overlay(
 			RoundedRectangle(cornerRadius: 4)
 				.strokeBorder(theme.secondaryColor.opacity(0.2), lineWidth: 1)
@@ -50,7 +65,36 @@ struct TableBlockView: View {
 		}
 	}
 
-	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool, rowBackground: Color) -> some View {
+	private var backgroundLayer: some View {
+		VStack(spacing: 0) {
+			if !header.isEmpty {
+				theme.codeBackground.frame(height: headerHeight)
+				Color.clear.frame(height: Self.headerDividerHeight)
+			}
+			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, _ in
+				bodyRowBackground(at: rowIndex)
+					.frame(height: bodyRowHeights[rowIndex] ?? 0)
+				if rowIndex < rows.count - 1 {
+					Color.clear.frame(height: Self.bodyDividerHeight)
+				}
+			}
+		}
+		.frame(maxWidth: .infinity)
+	}
+
+	private var headerHeightProbe: some View {
+		GeometryReader { geo in
+			Color.clear.preference(key: HeaderHeightKey.self, value: geo.size.height)
+		}
+	}
+
+	private func bodyRowHeightProbe(index: Int) -> some View {
+		GeometryReader { geo in
+			Color.clear.preference(key: BodyRowHeightsKey.self, value: [index: geo.size.height])
+		}
+	}
+
+	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool) -> some View {
 		Group {
 			switch cell {
 			case .text(let str):
@@ -65,9 +109,6 @@ struct TableBlockView: View {
 		}
 		.padding(.horizontal, 8)
 		.padding(.vertical, isHeader ? 10 : 8)
-		.frame(maxWidth: .infinity, alignment: isHeader ? .center : .leading)
-		.background(rowBackground)
-		.gridCellUnsizedAxes(.horizontal)
 		.accessibilityAddTraits(isHeader ? .isHeader : [])
 	}
 
@@ -111,5 +152,19 @@ struct TableBlockView: View {
 		} else {
 			image
 		}
+	}
+}
+
+private struct HeaderHeightKey: PreferenceKey {
+	static let defaultValue: CGFloat = 0
+	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+		value = max(value, nextValue())
+	}
+}
+
+private struct BodyRowHeightsKey: PreferenceKey {
+	static let defaultValue: [Int: CGFloat] = [:]
+	static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+		value.merge(nextValue(), uniquingKeysWith: { _, new in new })
 	}
 }
