@@ -126,6 +126,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			textView.string = text
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
+			// Force a full-document layout pass after loading new text so
+			// TextKit doesn't dribble out per-chunk relayouts as the user
+			// scrolls into previously unseen regions — the visible symptom
+			// was a fraction-of-second pause every screenful, even with
+			// syntax highlighting and line numbers disabled.
+			if let lm = textView.layoutManager {
+				lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+			}
 		}
 
 		if let raw = selectedHeadingID, raw != context.coordinator.lastScrolledID {
