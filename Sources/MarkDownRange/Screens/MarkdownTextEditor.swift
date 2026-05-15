@@ -175,8 +175,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				scrollView.verticalRulerView = ruler
 			}
 			if let ruler = scrollView.verticalRulerView as? LineNumberRulerView, let theme {
-				ruler.textColor = NSColor(theme.secondaryColor)
-				ruler.invalidateLineNumbers()
+				let newColor = NSColor(theme.secondaryColor)
+				if ruler.textColor != newColor {
+					ruler.textColor = newColor
+					ruler.needsDisplay = true
+				}
+				// Don't unconditionally call invalidateLineNumbers here —
+				// the scrollObserver and textDidChange already invalidate
+				// when state actually changes. Doing it on every
+				// updateNSView added a redundant redraw per tick (the
+				// session.currentSectionID flip from the scroll observer
+				// fires this code path mid-scroll).
 			}
 			scrollView.hasVerticalRuler = true
 			scrollView.rulersVisible = true

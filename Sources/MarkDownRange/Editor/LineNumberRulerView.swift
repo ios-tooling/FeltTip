@@ -81,7 +81,9 @@ final class LineNumberRulerView: NSRulerView {
 
 	private func lineCount() -> Int {
 		guard let string = textView?.string else { return 0 }
-		return string.components(separatedBy: "\n").count
+		var count = 1
+		for unit in string.utf8 where unit == 0x0A { count += 1 }
+		return count
 	}
 
 	private func numberFont() -> NSFont {

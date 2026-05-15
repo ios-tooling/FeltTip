@@ -52,10 +52,17 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 		var charOffset = 0
 		var lastHeading: MarkdownHeading?
 
-		for line in text.components(separatedBy: .newlines) {
+		// Walk the string manually instead of allocating a substring per line
+		// via components(separatedBy:). This runs on every scroll tick the
+		// document's visible heading changes, so the allocation pressure adds
+		// up.
+		var lineStart = text.startIndex
+		let end = text.endIndex
+		while lineStart <= end {
+			let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? end
+			let line = text[lineStart..<lineEnd]
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
-
 			if !inCodeBlock, let (level, headingText) = parseHeadingLine(trimmed) {
 				let heading = MarkdownHeading(id: "\(headingIndex)-\(headingText)", level: level, text: headingText)
 				if charOffset > offset { return lastHeading }
@@ -63,6 +70,8 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 				headingIndex += 1
 			}
 			charOffset += line.count + 1
+			if lineEnd == end { break }
+			lineStart = text.index(after: lineEnd)
 		}
 		return lastHeading
 	}
