@@ -47,20 +47,24 @@ extension MarkdownAttributedStringBuilder {
 extension NSFont {
 	/// Returns a variant of this font with the requested inline traits applied.
 	/// Monospaced switches to the system monospaced family at the same size;
-	/// bold/italic compose with whatever traits the receiver already has, so a
-	/// heading-weight font stays heading-weight when italicised.
+	/// bold and italic go through NSFontManager — descriptor-based
+	/// withSymbolicTraits silently no-ops on system fonts that already carry
+	/// an explicit weight attribute, which made **emphasis** invisible
+	/// inside headings (H3 at .medium got no weight bump from a "bold" trait).
 	func applyingInlineTraits(_ traits: InlineFontTraits) -> NSFont {
 		guard !traits.isEmpty else { return self }
 		var base: NSFont = self
 		if traits.contains(.monospaced) {
 			base = NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
 		}
-		var symbolic: NSFontDescriptor.SymbolicTraits = []
-		if traits.contains(.bold) { symbolic.insert(.bold) }
-		if traits.contains(.italic) { symbolic.insert(.italic) }
-		guard !symbolic.isEmpty else { return base }
-		let descriptor = base.fontDescriptor.withSymbolicTraits(symbolic)
-		return NSFont(descriptor: descriptor, size: base.pointSize) ?? base
+		let manager = NSFontManager.shared
+		if traits.contains(.bold) {
+			base = manager.convert(base, toHaveTrait: .boldFontMask)
+		}
+		if traits.contains(.italic) {
+			base = manager.convert(base, toHaveTrait: .italicFontMask)
+		}
+		return base
 	}
 }
 #endif
