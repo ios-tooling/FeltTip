@@ -24,7 +24,7 @@ enum MarkdownSyntaxHighlighter {
 		// pane. Monospaced bold has the same glyph metrics as regular, so
 		// line-wrap stays stable.
 		let basePointSize = textView.font?.pointSize ?? 13
-		let headingFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .semibold)
+		let headingFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .bold)
 		for range in matches(for: headingLinePattern, in: string) {
 			guard !intersects(range, codeFenceRanges) else { continue }
 			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
