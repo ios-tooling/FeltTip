@@ -50,7 +50,7 @@ final class LineNumberRulerView: NSRulerView {
 
 		var lineNumber = 1
 		var lastParaStart: Int = -1
-		layoutManager.enumerateLineFragments(forGlyphRange: allGlyphs) { fragmentRect, _, _, glyphRange, _ in
+		layoutManager.enumerateLineFragments(forGlyphRange: allGlyphs) { fragmentRect, _, _, glyphRange, stop in
 			let charIndex = layoutManager.characterIndexForGlyph(at: glyphRange.location)
 			let paraRange = string.paragraphRange(for: NSRange(location: charIndex, length: 0))
 			guard paraRange.location != lastParaStart else { return }
@@ -59,7 +59,14 @@ final class LineNumberRulerView: NSRulerView {
 			let docY = fragmentRect.origin.y + origin.y
 			let rulerY = docY - scrollOffset
 
-			guard rulerY + fragmentRect.height >= 0, rulerY < visibleHeight else {
+			if rulerY >= visibleHeight {
+				// Everything past here is below the visible window, so don't
+				// keep walking the rest of the document on every scroll tick.
+				stop.pointee = true
+				return
+			}
+
+			guard rulerY + fragmentRect.height >= 0 else {
 				lineNumber += 1
 				return
 			}
