@@ -197,9 +197,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	private func updateHighlighting(textView: NSTextView) {
 		if syntaxHighlightingEnabled, let theme {
 			MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme)
-		} else if !syntaxHighlightingEnabled, let lm = textView.layoutManager {
-			let full = NSRange(location: 0, length: (textView.string as NSString).length)
-			lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
+		} else if !syntaxHighlightingEnabled {
+			MarkdownSyntaxHighlighter.clearHighlighting(textView: textView)
 		}
 	}
 

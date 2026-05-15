@@ -8,27 +8,34 @@ import AppKit
 
 enum MarkdownSyntaxHighlighter {
 	static func highlight(textView: NSTextView, theme: MarkdownTheme) {
-		guard let layoutManager = textView.layoutManager else { return }
+		guard let layoutManager = textView.layoutManager,
+			  let textStorage = textView.textStorage else { return }
 		let string = textView.string
 		let fullRange = NSRange(location: 0, length: (string as NSString).length)
 		guard fullRange.length > 0 else { return }
 
+		let basePointSize = textView.font?.pointSize ?? 13
+		let regularFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .regular)
+		let headingFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .bold)
+
+		// Font has to live in textStorage (it affects layout, so it's not a
+		// valid NSLayoutManager temporary attribute key). Wrap in begin/end
+		// to coalesce the per-range updates into a single layout pass.
+		textStorage.beginEditing()
+		textStorage.addAttribute(.font, value: regularFont, range: fullRange)
+
 		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
-		layoutManager.removeTemporaryAttribute(.font, forCharacterRange: fullRange)
 
 		let codeFenceRanges = matches(for: codeFencePattern, in: string)
 		apply(codeFenceRanges, color: theme.codeForeground, layoutManager: layoutManager)
 
-		// Color the entire heading line (text after the # markers) and bump
-		// its weight so the source still reads like a heading in the raw
-		// pane. Monospaced bold has the same glyph metrics as regular, so
-		// line-wrap stays stable.
-		let basePointSize = textView.font?.pointSize ?? 13
-		let headingFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .bold)
+		// Color and embolden the entire heading line so the source still
+		// reads like a heading in the raw pane. Monospaced bold shares
+		// metrics with monospaced regular, so line-wrap is unaffected.
 		for range in matches(for: headingLinePattern, in: string) {
 			guard !intersects(range, codeFenceRanges) else { continue }
 			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
-			layoutManager.addTemporaryAttribute(.font, value: headingFont, forCharacterRange: range)
+			textStorage.addAttribute(.font, value: headingFont, range: range)
 		}
 
 		let patterns: [(NSRegularExpression, Color)] = [
@@ -49,6 +56,22 @@ enum MarkdownSyntaxHighlighter {
 				layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(color), forCharacterRange: range)
 			}
 		}
+
+		textStorage.endEditing()
+	}
+
+	/// Clear any styling this highlighter added. Used when syntax highlighting
+	/// is toggled off so the heading weight + colors don't linger.
+	static func clearHighlighting(textView: NSTextView) {
+		guard let layoutManager = textView.layoutManager,
+			  let textStorage = textView.textStorage else { return }
+		let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+		guard fullRange.length > 0 else { return }
+		let regularFont = NSFont.monospacedSystemFont(ofSize: textView.font?.pointSize ?? 13, weight: .regular)
+		textStorage.beginEditing()
+		textStorage.addAttribute(.font, value: regularFont, range: fullRange)
+		textStorage.endEditing()
+		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
 	}
 
 	private static func apply(_ ranges: [NSRange], color: Color, layoutManager: NSLayoutManager) {
