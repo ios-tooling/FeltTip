@@ -119,7 +119,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if textView.font != expectedFont { textView.font = expectedFont }
 		applyTheme(to: textView, scrollView: scrollView)
 		updateRuler(scrollView: scrollView, textView: textView)
-		updateHighlighting(textView: textView)
+		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
 		if textView.string != text {
 			let sel = textView.selectedRange()
@@ -202,6 +202,25 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 	}
 
+	/// Skip the textStorage rewrite when nothing that affects highlighting has
+	/// actually changed. updateNSView gets called on every state tick (cursor
+	/// reports, etc.) and the per-keystroke textStorage edit was making
+	/// scrolling juddery because each call invalidated layout for the entire
+	/// document.
+	private func updateHighlightingIfNeeded(textView: NSTextView, coordinator: Coordinator) {
+		if textView.string == coordinator.lastHighlightedText,
+		   fontSize == coordinator.lastHighlightedFontSize,
+		   syntaxHighlightingEnabled == coordinator.lastHighlightedSyntaxEnabled,
+		   theme == coordinator.lastHighlightedTheme {
+			return
+		}
+		coordinator.lastHighlightedText = textView.string
+		coordinator.lastHighlightedFontSize = fontSize
+		coordinator.lastHighlightedSyntaxEnabled = syntaxHighlightingEnabled
+		coordinator.lastHighlightedTheme = theme
+		updateHighlighting(textView: textView)
+	}
+
 	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView) {
 		guard let theme else { return }
 		let bg = NSColor(theme.backgroundColor)
@@ -223,6 +242,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrolledOffset: Int = -1
 		var isSyncScroll = false
 		var isUpdatingFromSwiftUI = false
+		var lastHighlightedText: String?
+		var lastHighlightedFontSize: CGFloat = 0
+		var lastHighlightedSyntaxEnabled: Bool = false
+		var lastHighlightedTheme: MarkdownTheme?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
 		deinit { if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) } }
 
@@ -234,6 +257,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if parent.syntaxHighlightingEnabled, let theme = parent.theme {
 				MarkdownSyntaxHighlighter.highlight(textView: tv, theme: theme)
 			}
+			// Sync the cache so the next updateNSView (triggered by the
+			// parent.text assignment above) doesn't redundantly re-highlight.
+			lastHighlightedText = tv.string
+			lastHighlightedFontSize = parent.fontSize
+			lastHighlightedSyntaxEnabled = parent.syntaxHighlightingEnabled
+			lastHighlightedTheme = parent.theme
 		}
 
 		public func textViewDidChangeSelection(_ notification: Notification) {
