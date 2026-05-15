@@ -16,10 +16,9 @@ struct TableBlockView: View {
 			if !header.isEmpty {
 				GridRow {
 					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: true)
+						cellView(cell, isHeader: true, rowBackground: theme.codeBackground)
 					}
 				}
-				.background(theme.codeBackground)
 				Rectangle()
 					.fill(theme.secondaryColor.opacity(0.35))
 					.frame(height: 1.5)
@@ -28,10 +27,9 @@ struct TableBlockView: View {
 			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
 				GridRow {
 					ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: false)
+						cellView(cell, isHeader: false, rowBackground: bodyRowBackground(at: rowIndex))
 					}
 				}
-				.background(bodyRowBackground(at: rowIndex))
 				Divider()
 			}
 		}
@@ -52,7 +50,7 @@ struct TableBlockView: View {
 		}
 	}
 
-	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool) -> some View {
+	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool, rowBackground: Color) -> some View {
 		Group {
 			switch cell {
 			case .text(let str):
@@ -67,6 +65,9 @@ struct TableBlockView: View {
 		}
 		.padding(.horizontal, 8)
 		.padding(.vertical, isHeader ? 10 : 8)
+		.frame(maxWidth: .infinity, alignment: isHeader ? .center : .leading)
+		.background(rowBackground)
+		.gridCellUnsizedAxes(.horizontal)
 		.accessibilityAddTraits(isHeader ? .isHeader : [])
 	}
 
