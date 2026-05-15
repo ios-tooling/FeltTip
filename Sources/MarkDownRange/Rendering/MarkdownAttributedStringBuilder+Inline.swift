@@ -46,25 +46,47 @@ extension MarkdownAttributedStringBuilder {
 
 extension NSFont {
 	/// Returns a variant of this font with the requested inline traits applied.
-	/// Monospaced switches to the system monospaced family at the same size;
-	/// bold and italic go through NSFontManager — descriptor-based
-	/// withSymbolicTraits silently no-ops on system fonts that already carry
-	/// an explicit weight attribute, which made **emphasis** invisible
-	/// inside headings (H3 at .medium got no weight bump from a "bold" trait).
+	/// Both the symbolic-trait route and NSFontManager are unreliable for SF
+	/// System fonts that already carry an explicit weight attribute — the
+	/// existing weight wins over a requested "bold" trait, leaving emphasis
+	/// invisible inside a heading. Building a fresh system font at an
+	/// explicitly heavier weight via NSFont.systemFont(ofSize:weight:) is the
+	/// only deterministic approach.
 	func applyingInlineTraits(_ traits: InlineFontTraits) -> NSFont {
 		guard !traits.isEmpty else { return self }
-		var base: NSFont = self
-		if traits.contains(.monospaced) {
-			base = NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
+		let originalWeight = resolvedWeight
+		let wantsBold = traits.contains(.bold)
+		let wantsItalic = traits.contains(.italic)
+		let wantsMono = traits.contains(.monospaced)
+		let targetWeight: NSFont.Weight = wantsBold ? nextBolderWeight(from: originalWeight) : originalWeight
+
+		var base: NSFont
+		if wantsMono {
+			base = NSFont.monospacedSystemFont(ofSize: pointSize, weight: targetWeight)
+		} else {
+			base = NSFont.systemFont(ofSize: pointSize, weight: targetWeight)
 		}
-		let manager = NSFontManager.shared
-		if traits.contains(.bold) {
-			base = manager.convert(base, toHaveTrait: .boldFontMask)
+
+		if wantsItalic {
+			let italicDescriptor = base.fontDescriptor.withSymbolicTraits(.italic)
+			if let italicFont = NSFont(descriptor: italicDescriptor, size: pointSize) {
+				base = italicFont
+			}
 		}
-		if traits.contains(.italic) {
-			base = manager.convert(base, toHaveTrait: .italicFontMask)
-		}
+
 		return base
 	}
+
+	fileprivate var resolvedWeight: NSFont.Weight {
+		let traits = fontDescriptor.fontAttributes[.traits] as? [NSFontDescriptor.TraitKey: Any]
+		let raw = (traits?[.weight] as? CGFloat) ?? 0
+		return NSFont.Weight(rawValue: raw)
+	}
+}
+
+private func nextBolderWeight(from current: NSFont.Weight) -> NSFont.Weight {
+	if current.rawValue < NSFont.Weight.bold.rawValue { return .bold }
+	if current.rawValue < NSFont.Weight.heavy.rawValue { return .heavy }
+	return .black
 }
 #endif
