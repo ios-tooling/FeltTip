@@ -14,15 +14,21 @@ enum MarkdownSyntaxHighlighter {
 		guard fullRange.length > 0 else { return }
 
 		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+		layoutManager.removeTemporaryAttribute(.font, forCharacterRange: fullRange)
 
 		let codeFenceRanges = matches(for: codeFencePattern, in: string)
 		apply(codeFenceRanges, color: theme.codeForeground, layoutManager: layoutManager)
 
-		// Color the entire heading line (text after the # markers) — applied
-		// before the marker pattern so the marker color overrides it.
+		// Color the entire heading line (text after the # markers) and bump
+		// its weight so the source still reads like a heading in the raw
+		// pane. Monospaced bold has the same glyph metrics as regular, so
+		// line-wrap stays stable.
+		let basePointSize = textView.font?.pointSize ?? 13
+		let headingFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .semibold)
 		for range in matches(for: headingLinePattern, in: string) {
 			guard !intersects(range, codeFenceRanges) else { continue }
 			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
+			layoutManager.addTemporaryAttribute(.font, value: headingFont, forCharacterRange: range)
 		}
 
 		let patterns: [(NSRegularExpression, Color)] = [
