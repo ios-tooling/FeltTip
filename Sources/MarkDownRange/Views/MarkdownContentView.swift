@@ -82,7 +82,7 @@ public struct MarkdownContentView: View {
 		case .unorderedList(let items, _):
 			ListBlockView(items: items, ordered: false, start: 1, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
 		case .table(let header, let rows, _):
-			TableBlockView(header: header, rows: rows, theme: theme)
+			TableBlockView(header: header, rows: rows, theme: theme, fontSize: fontSize)
 		case .thematicBreak:
 			ThematicBreakView()
 		case .image(let source, let alt, let width, let height, _):

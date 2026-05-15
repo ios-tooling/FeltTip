@@ -9,6 +9,7 @@ struct TableBlockView: View {
 	let header: [TableCell]
 	let rows: [[TableCell]]
 	let theme: MarkdownTheme
+	let fontSize: CGFloat
 	@Environment(\.tableAlignment) private var tableAlignment
 
 	@State private var headerHeight: CGFloat = 0
@@ -100,7 +101,7 @@ struct TableBlockView: View {
 			case .text(let str):
 				Text(Self.charWrapped(str))
 					.textSelection(.enabled)
-					.font(isHeader ? .system(.body, weight: .bold) : nil)
+					.font(isHeader ? .system(size: fontSize, weight: .bold) : .system(size: fontSize))
 					.foregroundStyle(isHeader ? theme.textColor : .primary)
 					.fixedSize(horizontal: false, vertical: true)
 			case .image(let source, let alt, let link, let width, let height):
