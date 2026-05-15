@@ -87,22 +87,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
 
 			guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
-			let now = CFAbsoluteTimeGetCurrent()
-			guard now - coordinator.lastScrollTime > 0.15 else { return }
-			coordinator.lastScrollTime = now
 
-			guard let layoutManager = textView.layoutManager,
-				  let textContainer = textView.textContainer else { return }
-			let origin = textView.textContainerOrigin
-			let point = NSPoint(x: 0, y: max(0, textView.visibleRect.minY - origin.y))
-			let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
-			guard glyphIndex < layoutManager.numberOfGlyphs else { return }
-			let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-			let heading = MarkdownHeading.heading(atCharacterOffset: charIndex, in: textView.string)
-
-			if heading?.id != coordinator.lastReportedHeading {
-				coordinator.lastReportedHeading = heading?.id
-				coordinator.parent.onVisibleHeadingChanged?(heading?.id)
+			// Debounce the heading lookup + callback: any new scroll event
+			// cancels the pending timer and re-arms it. The heading therefore
+			// only updates once the user has stopped scrolling for a beat,
+			// keeping the SwiftUI invalidation chain
+			// (session.setCurrentSection → OutlineSidebar.body) entirely off
+			// the active-scroll hot path.
+			coordinator.headingDebounceTimer?.invalidate()
+			coordinator.headingDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak coordinator, weak textView] _ in
+				guard let coordinator, let textView else { return }
+				coordinator.computeAndReportHeading(textView: textView)
 			}
 		}
 
@@ -263,8 +258,31 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
 		var lastHighlightedTheme: MarkdownTheme?
+		var headingDebounceTimer: Timer?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
-		deinit { if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) } }
+
+		/// Runs once scrolling has been quiet for the debounce window. Reads
+		/// the visible-top heading and reports it to the parent. Kept off the
+		/// scroll observer's hot path so active scrolling doesn't fire
+		/// SwiftUI invalidations through onVisibleHeadingChanged.
+		fileprivate func computeAndReportHeading(textView: NSTextView) {
+			guard let layoutManager = textView.layoutManager,
+				  let textContainer = textView.textContainer else { return }
+			let origin = textView.textContainerOrigin
+			let point = NSPoint(x: 0, y: max(0, textView.visibleRect.minY - origin.y))
+			let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+			guard glyphIndex < layoutManager.numberOfGlyphs else { return }
+			let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+			let heading = MarkdownHeading.heading(atCharacterOffset: charIndex, in: textView.string)
+			if heading?.id != lastReportedHeading {
+				lastReportedHeading = heading?.id
+				parent.onVisibleHeadingChanged?(heading?.id)
+			}
+		}
+		deinit {
+			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
+			headingDebounceTimer?.invalidate()
+		}
 
 		public func textDidChange(_ notification: Notification) {
 			guard let tv = notification.object as? NSTextView else { return }
