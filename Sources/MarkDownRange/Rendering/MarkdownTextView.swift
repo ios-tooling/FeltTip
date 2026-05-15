@@ -361,9 +361,12 @@ final class MarkdownTextViewBacking: NSTextView {
 
 private extension MarkdownTheme {
 	/// Cheap identity key for memoizing renders. Theme is Equatable but using
-	/// a tag avoids comparing Color values per scroll.
+	/// a tag avoids comparing Color values per scroll. Must include every
+	/// field that influences the produced NSAttributedString, otherwise an
+	/// edit that only changes that field (e.g. fontFamily in the Theme
+	/// Builder) gets short-circuited by the render cache.
 	var signature: String {
-		"\(textColor.hashValue)|\(linkColor.hashValue)|\(codeBackground.hashValue)|\(codeForeground.hashValue)|\(secondaryColor.hashValue)|\(backgroundColor.hashValue)|\(headingColor.hashValue)"
+		"\(textColor.hashValue)|\(linkColor.hashValue)|\(codeBackground.hashValue)|\(codeForeground.hashValue)|\(secondaryColor.hashValue)|\(backgroundColor.hashValue)|\(headingColor.hashValue)|\(alternateRowBackground?.hashValue ?? 0)|\(fontFamily.rawValue)"
 	}
 }
 #endif
