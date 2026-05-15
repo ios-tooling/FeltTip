@@ -182,7 +182,10 @@ struct InlineBuilder: MarkupWalker {
 			if bold { font = font.bold() }
 			if italic { font = font.italic() }
 			str.font = font
-			str.foregroundColor = theme.textColor
+			// Intentionally NOT setting str.foregroundColor here. Pre-painting
+			// every run with theme.textColor caused the consuming appender's
+			// defaultColor (e.g. headingColor for headings) to be overridden,
+			// which made bold-in-heading color and heading accent invisible.
 		}
 		if underline { str.underlineStyle = .single }
 		if strikethrough { str.strikethroughStyle = .single }
