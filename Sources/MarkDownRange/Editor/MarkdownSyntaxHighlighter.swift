@@ -58,6 +58,12 @@ enum MarkdownSyntaxHighlighter {
 		}
 
 		textStorage.endEditing()
+
+		// The textStorage edits above invalidate layout for everything they
+		// touched. Without forcing layout here, TextKit recomputes each
+		// chunk lazily as it scrolls into view, producing a noticeable
+		// per-screen pause for monospaced docs with bolded headings.
+		layoutManager.ensureLayout(forCharacterRange: fullRange)
 	}
 
 	/// Clear any styling this highlighter added. Used when syntax highlighting
@@ -72,6 +78,7 @@ enum MarkdownSyntaxHighlighter {
 		textStorage.addAttribute(.font, value: regularFont, range: fullRange)
 		textStorage.endEditing()
 		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+		layoutManager.ensureLayout(forCharacterRange: fullRange)
 	}
 
 	private static func apply(_ ranges: [NSRange], color: Color, layoutManager: NSLayoutManager) {
