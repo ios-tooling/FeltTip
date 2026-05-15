@@ -21,12 +21,12 @@ extension MarkdownAttributedStringBuilder {
 	/// `inlineFontTraits` attribute and used to derive a font from `font`,
 	/// preserving the contextual size/weight (so e.g. bold inside a heading
 	/// stays heading-sized).
-	static func nsAttributedString(from inline: AttributedString, font: NSFont, defaultColor: NSColor, boldColor: NSColor? = nil) -> NSAttributedString {
+	static func nsAttributedString(from inline: AttributedString, font: NSFont, defaultColor: NSColor, boldColor: NSColor? = nil, fontFamily: MarkdownFontFamily = .system) -> NSAttributedString {
 		let result = NSMutableAttributedString()
 		for run in inline.runs {
 			let substring = String(inline[run.range].characters)
 			let traits = run.inlineFontTraits ?? []
-			let runFont = font.applyingInlineTraits(traits)
+			let runFont = font.applyingInlineTraits(traits, family: fontFamily)
 			let baseColor = (boldColor != nil && traits.contains(.bold)) ? boldColor! : defaultColor
 			var attrs: [NSAttributedString.Key: Any] = [
 				.font: runFont,
@@ -52,7 +52,7 @@ extension NSFont {
 	/// invisible inside a heading. Building a fresh system font at an
 	/// explicitly heavier weight via NSFont.systemFont(ofSize:weight:) is the
 	/// only deterministic approach.
-	func applyingInlineTraits(_ traits: InlineFontTraits) -> NSFont {
+	func applyingInlineTraits(_ traits: InlineFontTraits, family: MarkdownFontFamily = .system) -> NSFont {
 		guard !traits.isEmpty else { return self }
 		let originalWeight = resolvedWeight
 		let wantsBold = traits.contains(.bold)
@@ -65,6 +65,13 @@ extension NSFont {
 			base = NSFont.monospacedSystemFont(ofSize: pointSize, weight: targetWeight)
 		} else {
 			base = NSFont.systemFont(ofSize: pointSize, weight: targetWeight)
+			// Re-apply the theme's system design (serif/rounded/etc.) so an
+			// emphasized run inside a designed-font heading keeps the design.
+			if family != .system,
+			   let designed = base.fontDescriptor.withDesign(family.systemDesign),
+			   let designedFont = NSFont(descriptor: designed, size: pointSize) {
+				base = designedFont
+			}
 		}
 
 		if wantsItalic {
