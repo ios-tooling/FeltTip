@@ -68,7 +68,7 @@ struct TableBlockView: View {
 	private var backgroundLayer: some View {
 		VStack(spacing: 0) {
 			if !header.isEmpty {
-				theme.codeBackground.frame(height: headerHeight)
+				theme.secondaryColor.opacity(0.15).frame(height: headerHeight)
 				Color.clear.frame(height: Self.headerDividerHeight)
 			}
 			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, _ in
