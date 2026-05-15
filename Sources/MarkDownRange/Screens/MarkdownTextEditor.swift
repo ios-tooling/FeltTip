@@ -88,17 +88,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 			guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
 
-			// Debounce the heading lookup + callback: any new scroll event
-			// cancels the pending timer and re-arms it. The heading therefore
-			// only updates once the user has stopped scrolling for a beat,
-			// keeping the SwiftUI invalidation chain
-			// (session.setCurrentSection → OutlineSidebar.body) entirely off
-			// the active-scroll hot path.
-			coordinator.headingDebounceTimer?.invalidate()
-			coordinator.headingDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak coordinator, weak textView] _ in
-				guard let coordinator, let textView else { return }
-				coordinator.computeAndReportHeading(textView: textView)
-			}
+			// Throttle the heading lookup: at most one fire per ~150ms during
+			// continuous scroll so the OutlineSidebar's highlight tracks live
+			// without redundantly invalidating downstream views on every
+			// boundsDidChange tick. The sidebar's auto-scroll is debounced
+			// separately (in OutlineSidebar) so it only fires once after
+			// scroll quiets.
+			let now = CFAbsoluteTimeGetCurrent()
+			guard now - coordinator.lastScrollTime > 0.15 else { return }
+			coordinator.lastScrollTime = now
+			coordinator.computeAndReportHeading(textView: textView)
 		}
 
 		return scrollView
@@ -258,7 +257,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
 		var lastHighlightedTheme: MarkdownTheme?
-		var headingDebounceTimer: Timer?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
 
 		/// Runs once scrolling has been quiet for the debounce window. Reads
@@ -279,10 +277,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				parent.onVisibleHeadingChanged?(heading?.id)
 			}
 		}
-		deinit {
-			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
-			headingDebounceTimer?.invalidate()
-		}
+		deinit { if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) } }
 
 		public func textDidChange(_ notification: Notification) {
 			guard let tv = notification.object as? NSTextView else { return }
