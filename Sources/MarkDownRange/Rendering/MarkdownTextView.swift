@@ -18,13 +18,22 @@ public struct MarkdownTextView: NSViewRepresentable {
 	var baseURL: URL?
 	var header: AnyView?
 	private let headerToken: AnyHashable?
+	/// Maximum width of the rendered text column. The scroll view still fills
+	/// the parent (so its scroller stays at the window edge); the inset of
+	/// the underlying NSTextView is adjusted to center the text within this
+	/// width. `nil` means no constraint (text fills the available width).
+	public var contentMaxWidth: CGFloat?
+	/// Minimum horizontal inset to keep around the text column even when the
+	/// content has no width constraint. Default 24.
+	public var minimumHorizontalInset: CGFloat = 24
 	@Environment(LinkDisplayState.self) private var linkDisplay
 
-	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
+	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, contentMaxWidth: CGFloat? = nil) {
 		self.text = text
 		self.theme = theme
 		self.fontSize = fontSize
 		self.baseURL = baseURL
+		self.contentMaxWidth = contentMaxWidth
 		self.header = nil
 		self.headerToken = nil
 	}
@@ -58,9 +67,10 @@ public struct MarkdownTextView: NSViewRepresentable {
 		textView.drawsBackground = false
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
-		// Keep horizontal inset for readable line length; let the SwiftUI parent
-		// own vertical spacing so it composes cleanly with surrounding chrome.
-		textView.textContainerInset = NSSize(width: 24, height: 0)
+		// The actual horizontal inset is set by Coordinator.applyHorizontalInset
+		// based on contentMaxWidth; this initial value just avoids a zero-inset
+		// flash before the first updateNSView pass.
+		textView.textContainerInset = NSSize(width: minimumHorizontalInset, height: 0)
 		textView.delegate = context.coordinator
 		textView.isVerticallyResizable = true
 		textView.isHorizontallyResizable = false
@@ -84,6 +94,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		scrollView.backgroundColor = NSColor(theme.backgroundColor)
 		textView.backgroundColor = NSColor(theme.backgroundColor)
 		context.coordinator.attachFrameObserver(to: textView)
+		context.coordinator.applyHorizontalInset(to: textView)
 		context.coordinator.render(into: textView)
 	}
 
@@ -127,8 +138,33 @@ public struct MarkdownTextView: NSViewRepresentable {
 					let width = textView.bounds.width
 					guard abs(width - self.lastObservedWidth) > 0.5 else { return }
 					self.lastObservedWidth = width
+					self.applyHorizontalInset(to: textView)
 					self.handleWidthChange(in: textView)
 				}
+			}
+		}
+
+		/// Sets the text view's horizontal container inset so the rendered text
+		/// column is centered within `parent.contentMaxWidth` (when set), while
+		/// the surrounding NSScrollView keeps its full width. This is what keeps
+		/// the vertical scroller at the window edge rather than next to the
+		/// content column.
+		func applyHorizontalInset(to textView: NSTextView) {
+			let width = textView.bounds.width
+			guard width > 0 else { return }
+			let minInset = parent.minimumHorizontalInset
+			let inset: CGFloat
+			if let maxW = parent.contentMaxWidth, width > maxW {
+				inset = max(minInset, (width - maxW) / 2)
+			} else {
+				inset = minInset
+			}
+			let changed = abs(textView.textContainerInset.width - inset) > 0.5
+			textView.textContainerInset = NSSize(width: inset, height: 0)
+			if changed {
+				// availableContentWidth depends on the inset, so container-width
+				// attachments (tables) need to re-measure when the inset shifts.
+				handleWidthChange(in: textView)
 			}
 		}
 
