@@ -12,6 +12,7 @@ let package = Package(
 	dependencies: [
 		.package(url: "https://github.com/swiftlang/swift-markdown", from: "0.4.0"),
 		.package(url: "https://github.com/ios-tooling/Convey", from: "3.0.0"),
+		.package(url: "https://github.com/ios-tooling/JohnnyCache.git", from: "1.0.14"),
 		.package(url: "https://github.com/ios-tooling/SharedSettings", from: "1.0.7"),
 		.package(url: "https://github.com/ios-tooling/FunnelVision", branch: "main"),
 	],
@@ -23,6 +24,7 @@ let package = Package(
 				"MarkdownSyntaxHighlighting",
 				.product(name: "Markdown", package: "swift-markdown"),
 				.product(name: "Convey", package: "Convey"),
+				.product(name: "JohnnyCache", package: "JohnnyCache"),
 				.product(name: "SharedSettings", package: "SharedSettings"),
 				.product(name: "FunnelVision", package: "FunnelVision"),
 			],

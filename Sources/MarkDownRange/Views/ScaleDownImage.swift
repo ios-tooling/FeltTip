@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Convey
+import JohnnyCache
 
 /// Renders an image at its intrinsic size (or smaller to fit the container),
 /// never scaling up beyond the natural dimensions. SVGs are rendered via
@@ -19,19 +20,23 @@ struct ScaleDownImage: View {
 	private var isSVG: Bool { url.isSVGImage }
 
 	@State private var intrinsicSize: CGSize?
+	@State private var loadedImage: PlatformImage?
 
+	@MainActor
 	init(url: URL, alt: String, htmlWidth: CGFloat? = nil, htmlHeight: CGFloat? = nil, allowUpscaling: Bool = false) {
 		self.url = url
 		self.alt = alt
 		self.htmlWidth = htmlWidth
 		self.htmlHeight = htmlHeight
 		self.allowUpscaling = allowUpscaling
-		// Seed from the process-wide dimension cache so the SwiftUI
-		// frame is correct on the very first layout pass — important
-		// when the view is hosted as an NSTextAttachment, where the
-		// attachment bounds are measured upfront and don't grow when
-		// async content loads.
+		// Seed both pieces of state from the process-wide caches so the
+		// SwiftUI frame is correct on the very first layout pass and the
+		// image is already drawn if previously fetched. Important when the
+		// view is hosted as an NSTextAttachment, where the attachment
+		// bounds are measured upfront and don't grow when async content
+		// loads.
 		self._intrinsicSize = State(initialValue: ImageDimensionCache.shared.size(for: url))
+		self._loadedImage = State(initialValue: sharedImagesCache[url])
 	}
 
 	var body: some View {
@@ -51,10 +56,22 @@ struct ScaleDownImage: View {
 	}
 
 	private var rasterImage: some View {
-		CachedURLImage(url: url, contentMode: .fit, placeholder: Image(systemName: "photo"))
-			.frame(maxWidth: displaySize?.width ?? 24, maxHeight: displaySize?.height ?? 24)
-			.accessibilityLabel(alt.isEmpty ? "Image" : alt)
-			.task(id: url) { await measureRaster() }
+		ZStack {
+			if let loadedImage {
+				#if os(macOS)
+				Image(nsImage: loadedImage)
+					.resizable()
+					.aspectRatio(contentMode: .fit)
+				#else
+				Image(uiImage: loadedImage)
+					.resizable()
+					.aspectRatio(contentMode: .fit)
+				#endif
+			}
+		}
+		.frame(maxWidth: displaySize?.width ?? 24, maxHeight: displaySize?.height ?? 24)
+		.accessibilityLabel(alt.isEmpty ? "Image" : alt)
+		.task(id: url) { await loadRaster() }
 	}
 
 	private var displaySize: CGSize? {
@@ -67,18 +84,15 @@ struct ScaleDownImage: View {
 		)
 	}
 
-	private func measureRaster() async {
-		guard !isSVG, intrinsicSize == nil else { return }
-		guard let data = try? await ImageDataLoader.data(from: url) else { return }
-		#if os(macOS)
-		guard let img = NSImage(data: data) else { return }
-		let size = img.size
-		#else
-		guard let img = UIImage(data: data) else { return }
-		let size = img.size
-		#endif
-		intrinsicSize = size
-		ImageDimensionCache.shared.record(size, for: url)
+	@MainActor
+	private func loadRaster() async {
+		guard !isSVG, loadedImage == nil else { return }
+		guard let image = try? await sharedImagesCache[async: url] else { return }
+		loadedImage = image
+		if intrinsicSize == nil, image.size.width > 0, image.size.height > 0 {
+			intrinsicSize = image.size
+			ImageDimensionCache.shared.record(image.size, for: url)
+		}
 	}
 
 	private func measureSVG() async {

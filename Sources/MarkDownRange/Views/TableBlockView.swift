@@ -134,24 +134,17 @@ struct TableBlockView: View {
 	}
 
 	@ViewBuilder private func tableCellImage(source: String, alt: String, link: URL?, width: CGFloat?, height: CGFloat?) -> some View {
-		let image = AsyncImage(url: URL(string: source)) { phase in
-			switch phase {
-			case .success(let img):
-				img.resizable().aspectRatio(contentMode: .fit)
-			case .failure:
-				Text(alt.isEmpty ? "Image" : alt)
-					.font(.caption)
-					.foregroundStyle(theme.secondaryColor)
-			default:
-				ProgressView().controlSize(.small)
+		if let url = URL(string: source) {
+			let image = ScaleDownImage(url: url, alt: alt, htmlWidth: width, htmlHeight: height)
+			if let link {
+				SwiftUI.Link(destination: link) { image }
+			} else {
+				image
 			}
-		}
-		.frame(maxWidth: width ?? 160, maxHeight: height ?? 80)
-
-		if let link {
-			SwiftUI.Link(destination: link) { image }
 		} else {
-			image
+			Text(alt.isEmpty ? "Image" : alt)
+				.font(.caption)
+				.foregroundStyle(theme.secondaryColor)
 		}
 	}
 }

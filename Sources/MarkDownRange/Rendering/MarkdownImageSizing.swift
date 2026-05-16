@@ -78,6 +78,13 @@ enum MarkdownImageSizing {
 			return fit(intrinsic, within: CGSize(width: maxWidth, height: maxHeight))
 		case (nil, let width?, let height?):
 			return CGSize(width: width, height: height)
+		case (nil, let width?, nil):
+			// Cold cache: assume a square placeholder so the layout reserves a
+			// column of roughly the right width. The view will reflow once the
+			// intrinsic size lands in the cache.
+			return CGSize(width: width, height: width)
+		case (nil, nil, let height?):
+			return CGSize(width: height, height: height)
 		default:
 			return nil
 		}

@@ -281,6 +281,19 @@ public struct MarkdownTextView: NSViewRepresentable {
 							ImageDimensionCache.shared.prefetch(url)
 						}
 					}
+				case .table(let header, let rows, _):
+					for cell in header {
+						if let url = imageURL(from: cell, baseURL: baseURL) {
+							ImageDimensionCache.shared.prefetch(url)
+						}
+					}
+					for row in rows {
+						for cell in row {
+							if let url = imageURL(from: cell, baseURL: baseURL) {
+								ImageDimensionCache.shared.prefetch(url)
+							}
+						}
+					}
 				case .blockquote(let children, _),
 					 .details(_, let children, _),
 					 .alert(_, let children, _):
@@ -295,6 +308,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 					break
 				}
 			}
+		}
+
+		private func imageURL(from cell: TableCell, baseURL: URL?) -> URL? {
+			guard case let .image(source, _, _, _, _) = cell else { return nil }
+			return Self.resolve(source, baseURL: baseURL)
 		}
 
 		// Reading width inside the text container: textView width minus the
