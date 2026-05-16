@@ -224,8 +224,15 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// immediate layout pass would lay out at 0×0. Defer to the next run
 			// loop tick so the scroll view has propagated its real width, then
 			// force a full-range layout + viewport pass to realise hosted views.
+			//
+			// `invalidateLayout` before `ensureLayout` matches what
+			// `handleWidthChange` does and is required after a textStorage
+			// swap — without it, the layout manager can serve stale fragment
+			// positions and the very first attachment (typically a table)
+			// fails to mount until the next user scroll forces a re-layout.
 			DispatchQueue.main.async { [weak self] in
 				if let layoutManager = textView.textLayoutManager {
+					layoutManager.invalidateLayout(for: layoutManager.documentRange)
 					layoutManager.ensureLayout(for: layoutManager.documentRange)
 					layoutManager.textViewportLayoutController.layoutViewport()
 				}
@@ -235,6 +242,17 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// the viewport layout so attachments newly inside the
 				// visible area get their hosting views mounted.
 				textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+			}
+			// Belt-and-suspenders: TextKit's first viewport pass can still
+			// race with the run loop on cold launches and miss the topmost
+			// attachment. Run the layout once more on a later tick — cheap
+			// when there's nothing to update, and catches the first table
+			// when it has been missed.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak textView] in
+				guard let textView, let layoutManager = textView.textLayoutManager else { return }
+				layoutManager.ensureLayout(for: layoutManager.documentRange)
+				layoutManager.textViewportLayoutController.layoutViewport()
+				textView.needsDisplay = true
 			}
 		}
 
