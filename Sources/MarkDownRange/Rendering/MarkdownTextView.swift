@@ -85,6 +85,18 @@ public struct MarkdownTextView: NSViewRepresentable {
 		textView.onLinkHover = { [linkDisplay] url in
 			if linkDisplay.displayedURL != url { linkDisplay.displayedURL = url }
 		}
+		// AppKit fires this after the text view has been laid out inside the
+		// scroll view's clip view — the only reliably-non-zero moment we
+		// have to mount any attachments TextKit skipped because the earlier
+		// dispatch ran while bounds were still zero.
+		textView.onDidLayout = { [weak textView] in
+			guard let textView,
+				  textView.window != nil,
+				  textView.bounds.width > 0,
+				  let layoutManager = textView.textLayoutManager
+			else { return }
+			layoutManager.textViewportLayoutController.layoutViewport()
+		}
 		return scrollView
 	}
 
@@ -275,14 +287,19 @@ public struct MarkdownTextView: NSViewRepresentable {
 			scrollView.reflectScrolledClipView(scrollView.contentView)
 		}
 
-		// Image dimensions trickle in asynchronously; coalesce a few notifications
-		// into one rebuild so a page full of images doesn't thrash the layout.
+		// Image dimensions trickle in asynchronously. Rather than rebuilding
+		// the entire textStorage — which tears down the first table's
+		// already-mounted NSHostingView and frequently fails to remount it
+		// without a user scroll — we remeasure container-width attachments
+		// in place (the same path `handleWidthChange` uses). Coalesce a
+		// few notifications into a single pass so a page full of images
+		// doesn't thrash the layout.
 		private func scheduleRebuild() {
 			rebuildTask?.cancel()
 			rebuildTask = Task { @MainActor [weak self] in
-				try? await Task.sleep(for: .milliseconds(60))
+				try? await Task.sleep(for: .milliseconds(120))
 				guard !Task.isCancelled, let self, let textView else { return }
-				self.render(into: textView, force: true)
+				self.handleWidthChange(in: textView)
 			}
 		}
 
@@ -374,8 +391,21 @@ public struct MarkdownTextView: NSViewRepresentable {
 /// status bar.
 final class MarkdownTextViewBacking: NSTextView {
 	var onLinkHover: ((String?) -> Void)?
+	/// Fired after AppKit lays out the text view. The coordinator uses this
+	/// to run an additional viewport-layout pass — TextKit 2's
+	/// `layoutViewport()` invoked from the deferred dispatch right after
+	/// `setAttributedString` can miss the topmost attachment when the text
+	/// view's frame is still settling. Hooking AppKit's layout cycle
+	/// guarantees we get a pass at a moment when the view actually has a
+	/// valid frame in a window.
+	var onDidLayout: (() -> Void)?
 	private var hoverTrackingArea: NSTrackingArea?
 	private var lastReportedURL: String?
+
+	override func layout() {
+		super.layout()
+		onDidLayout?()
+	}
 
 	override func updateTrackingAreas() {
 		super.updateTrackingAreas()
