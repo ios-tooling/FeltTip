@@ -59,4 +59,53 @@ import Testing
 		let hasFrontmatter = blocks.contains { if case .frontmatter = $0 { return true }; return false }
 		#expect(!hasFrontmatter, "--- in the middle should not be parsed as frontmatter")
 	}
+
+	/// sample.md opens with `---\n__Advertisement :)__\n…\n---`. That's prose
+	/// flanked by thematic breaks, not YAML frontmatter. The old detector
+	/// greedily ate the whole intro because lines happened to contain a colon.
+	@Test func proseBetweenDashesIsNotFrontmatter() {
+		let md = """
+		---
+		__Advertisement :)__
+
+		- [pica](https://example.com)
+		---
+
+		# Heading
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		let hasFrontmatter = blocks.contains { if case .frontmatter = $0 { return true }; return false }
+		#expect(!hasFrontmatter, "Prose between --- fences should not be parsed as frontmatter")
+	}
+
+	@Test func indentedContinuationAccepted() {
+		let md = """
+		---
+		tags:
+		  - swift
+		  - ios
+		title: Post
+		---
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .frontmatter(let pairs, _) = blocks.first else {
+			Issue.record("Expected frontmatter"); return
+		}
+		#expect(pairs.count == 2)
+		#expect(pairs[0].key == "tags")
+		#expect(pairs[1].key == "title")
+	}
+
+	@Test func emptyFenceRejected() {
+		let blocks = MarkdownBlockParser.parse("---\n\n---")
+		let hasFrontmatter = blocks.contains { if case .frontmatter = $0 { return true }; return false }
+		#expect(!hasFrontmatter)
+	}
+
+	@Test func keyMustStartWithLetter() {
+		let md = "---\n__weird__: value\n---"
+		let blocks = MarkdownBlockParser.parse(md)
+		let hasFrontmatter = blocks.contains { if case .frontmatter = $0 { return true }; return false }
+		#expect(!hasFrontmatter)
+	}
 }

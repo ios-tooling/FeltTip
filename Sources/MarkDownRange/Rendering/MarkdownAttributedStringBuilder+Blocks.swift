@@ -98,19 +98,6 @@ extension MarkdownAttributedStringBuilder {
 		out.append(NSAttributedString(string: "─────\n", attributes: attrs))
 	}
 
-	static func appendFrontmatter(pairs: [(key: String, value: String)], to out: NSMutableAttributedString, context: MarkdownRenderContext) {
-		let body = pairs.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
-		let para = NSMutableParagraphStyle()
-		para.paragraphSpacing = 8
-		let attrs: [NSAttributedString.Key: Any] = [
-			.font: NSFont.monospacedSystemFont(ofSize: context.fontSize * 0.9, weight: .regular),
-			.foregroundColor: NSColor(context.theme.secondaryColor),
-			.backgroundColor: NSColor(context.theme.codeBackground),
-			.paragraphStyle: para,
-		]
-		out.append(NSAttributedString(string: body + "\n", attributes: attrs))
-	}
-
 	static func appendDefinitionList(items: [DefinitionItem], to out: NSMutableAttributedString, context: MarkdownRenderContext) {
 		let bodyFont = bodyNSFont(size: context.fontSize, family: context.theme.fontFamily)
 		let textColor = NSColor(context.theme.textColor)

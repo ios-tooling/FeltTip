@@ -48,19 +48,32 @@ public enum MarkdownBlockParser {
 		}
 		guard let end = endIndex, end > 1 else { return (nil, markdown) }
 
+		// Strict check: every non-blank line in the fenced block must look like
+		// a YAML key:value pair (or an indented continuation). Without this,
+		// any document that opens with `---` followed by prose is silently
+		// devoured as "frontmatter" up to the next `---`.
 		var pairs: [(key: String, value: String)] = []
 		for i in 1..<end {
 			let line = lines[i]
-			if let colonIdx = line.firstIndex(of: ":") {
-				let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
-				let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
-				if !key.isEmpty { pairs.append((key, value)) }
-			}
+			let stripped = line.trimmingCharacters(in: .whitespaces)
+			if stripped.isEmpty { continue }
+			if line.first?.isWhitespace == true, !pairs.isEmpty { continue }
+			guard let colonIdx = line.firstIndex(of: ":") else { return (nil, markdown) }
+			let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
+			guard isValidFrontmatterKey(key) else { return (nil, markdown) }
+			let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+			pairs.append((key, value))
 		}
+		guard !pairs.isEmpty else { return (nil, markdown) }
 
 		let body = lines[(end + 1)...].joined(separator: "\n")
 		let block = MarkdownBlock.frontmatter(pairs: pairs, id: "frontmatter")
 		return (block, body)
+	}
+
+	private static func isValidFrontmatterKey(_ key: String) -> Bool {
+		guard let first = key.first, first.isLetter else { return false }
+		return key.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." }
 	}
 
 	/// Groups consecutive blocks between <details> and </details> HTML blocks

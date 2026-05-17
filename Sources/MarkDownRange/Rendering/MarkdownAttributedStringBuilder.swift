@@ -42,15 +42,13 @@ public enum MarkdownAttributedStringBuilder {
 			appendThematicBreak(to: out, context: context)
 		case .aligned(_, let inner, _):
 			append(inner, to: out, context: context)
-		case .frontmatter(let pairs, _):
-			appendFrontmatter(pairs: pairs, to: out, context: context)
 		case .definitionList(let items, _):
 			appendDefinitionList(items: items, to: out, context: context)
 		// Non-text blocks render via NSTextAttachment hosting the existing
 		// SwiftUI block view, giving us full visual fidelity (syntax
 		// highlighting, copy buttons, table layout, image fetching, etc.)
 		// inside the single-NSTextView path.
-		case .codeBlock, .image, .imageRow, .htmlBlock, .table, .details, .alert:
+		case .codeBlock, .image, .imageRow, .htmlBlock, .table, .details, .alert, .frontmatter:
 			appendBlockAttachment(block, to: out, context: context)
 		}
 	}
