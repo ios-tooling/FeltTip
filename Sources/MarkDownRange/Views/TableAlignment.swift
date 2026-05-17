@@ -26,3 +26,29 @@ public enum TableAlignment: Sendable {
 extension EnvironmentValues {
 	@Entry public var tableAlignment: TableAlignment = .leading
 }
+
+/// Column-level alignment parsed from GFM table delimiter rows
+/// (`:---`, `:---:`, `---:`). One value per column; unspecified columns use
+/// `.default`, which defers to the consumer's natural alignment for the cell.
+public enum TableColumnAlignment: Sendable {
+	case `default`
+	case left
+	case center
+	case right
+
+	public var textAlignment: TextAlignment {
+		switch self {
+		case .left, .default: .leading
+		case .center: .center
+		case .right: .trailing
+		}
+	}
+
+	public var frameAlignment: Alignment {
+		switch self {
+		case .left, .default: .leading
+		case .center: .center
+		case .right: .trailing
+		}
+	}
+}

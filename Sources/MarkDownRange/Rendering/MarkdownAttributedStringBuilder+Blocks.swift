@@ -78,11 +78,14 @@ extension MarkdownAttributedStringBuilder {
 		inner.blockquoteDepth += 1
 		let start = out.length
 		for child in children { append(child, to: out, context: inner) }
+		let range = NSRange(location: start, length: out.length - start)
 		let para = NSMutableParagraphStyle()
 		para.firstLineHeadIndent = CGFloat(inner.blockquoteDepth) * 16
 		para.headIndent = CGFloat(inner.blockquoteDepth) * 16
-		applyParagraphStyle(para, to: out, range: NSRange(location: start, length: out.length - start))
-		applyForegroundColor(NSColor(context.theme.secondaryColor), to: out, range: NSRange(location: start, length: out.length - start))
+		applyParagraphStyle(para, to: out, range: range)
+		applyForegroundColor(NSColor(context.theme.secondaryColor), to: out, range: range)
+		applyItalic(to: out, range: range)
+		out.addAttribute(.markdownBlockquoteDepth, value: inner.blockquoteDepth, range: range)
 	}
 
 	static func appendThematicBreak(to out: NSMutableAttributedString, context: MarkdownRenderContext) {

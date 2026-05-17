@@ -105,6 +105,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 		context.coordinator.parent = self
 		scrollView.backgroundColor = NSColor(theme.backgroundColor)
 		textView.backgroundColor = NSColor(theme.backgroundColor)
+		if let backing = textView as? MarkdownTextViewBacking {
+			backing.blockquoteBarColor = NSColor(theme.linkColor)
+		}
 		context.coordinator.attachFrameObserver(to: textView)
 		context.coordinator.applyHorizontalInset(to: textView)
 		context.coordinator.render(into: textView)
@@ -180,10 +183,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 			}
 		}
 
-		// Remeasure container-width attachments (tables) in place rather
-		// than rebuilding the whole textStorage, which avoided the brief
-		// blank flash and lost-scroll-position when the user resizes the
-		// window.
+		// Remeasure attachments (tables grow with container; images that just
+		// learned their intrinsic size grow to fit it) in place rather than
+		// rebuilding the whole textStorage — which avoids the blank flash
+		// and lost scroll position when the user resizes the window or an
+		// async image dimension lands in the cache.
 		private func handleWidthChange(in textView: NSTextView) {
 			guard let availableWidth = Self.availableContentWidth(in: textView),
 				  let storage = textView.textStorage,
@@ -191,9 +195,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 			var didUpdate = false
 			let fullRange = NSRange(location: 0, length: storage.length)
 			storage.enumerateAttribute(NSAttributedString.Key.attachment, in: fullRange) { value, _, _ in
-				guard let attachment = value as? SwiftUIAttachment, attachment.usesContainerWidth else { return }
-				attachment.remeasure(at: availableWidth)
-				didUpdate = true
+				guard let attachment = value as? SwiftUIAttachment else { return }
+				let target = attachment.usesContainerWidth ? availableWidth : attachment.bounds.size.width
+				let previousHeight = attachment.bounds.size.height
+				attachment.remeasure(at: target)
+				if attachment.bounds.size.height != previousHeight || attachment.usesContainerWidth { didUpdate = true }
 			}
 			guard didUpdate else { return }
 			layoutManager.invalidateLayout(for: layoutManager.documentRange)
@@ -308,23 +314,27 @@ public struct MarkdownTextView: NSViewRepresentable {
 				switch block {
 				case .image(let source, _, _, _, _):
 					if let url = Self.resolve(source, baseURL: baseURL) {
+						ImageDimensionCache.shared.prefetchSyncIfLocal(url)
 						ImageDimensionCache.shared.prefetch(url)
 					}
 				case .imageRow(let images, _):
 					for img in images {
 						if let url = Self.resolve(img.source, baseURL: baseURL) {
+							ImageDimensionCache.shared.prefetchSyncIfLocal(url)
 							ImageDimensionCache.shared.prefetch(url)
 						}
 					}
-				case .table(let header, let rows, _):
+				case .table(let header, let rows, _, _):
 					for cell in header {
 						if let url = imageURL(from: cell, baseURL: baseURL) {
+							ImageDimensionCache.shared.prefetchSyncIfLocal(url)
 							ImageDimensionCache.shared.prefetch(url)
 						}
 					}
 					for row in rows {
 						for cell in row {
 							if let url = imageURL(from: cell, baseURL: baseURL) {
+								ImageDimensionCache.shared.prefetchSyncIfLocal(url)
 								ImageDimensionCache.shared.prefetch(url)
 							}
 						}
@@ -372,8 +382,38 @@ public struct MarkdownTextView: NSViewRepresentable {
 		public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
 			let url: URL? = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
 			guard let url else { return false }
+			if handleFootnoteJump(url: url, in: textView) { return true }
 			NSWorkspace.shared.open(url)
 			return true
+		}
+
+		/// Footnotes link both directions: `footnote://id` (the reference)
+		/// jumps to `footnote-anchor://id` (the body opener), and
+		/// `footnote-back://id` (the trailing ↩) jumps back to the reference.
+		/// Returns true when the URL was a footnote link we handled.
+		private func handleFootnoteJump(url: URL, in textView: NSTextView) -> Bool {
+			guard let scheme = url.scheme, let host = url.host else { return false }
+			let targetScheme: String
+			switch scheme {
+			case "footnote":      targetScheme = "footnote-anchor"
+			case "footnote-back": targetScheme = "footnote"
+			default: return false
+			}
+			guard let target = locationOfLink(scheme: targetScheme, host: host, in: textView) else { return true }
+			textView.scrollRangeToVisible(NSRange(location: target, length: 0))
+			return true
+		}
+
+		private func locationOfLink(scheme: String, host: String, in textView: NSTextView) -> Int? {
+			guard let storage = textView.textStorage else { return nil }
+			var found: Int?
+			storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+				let url: URL? = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
+				guard let url, url.scheme == scheme, url.host == host else { return }
+				found = range.location
+				stop.pointee = true
+			}
+			return found
 		}
 	}
 
@@ -399,12 +439,57 @@ final class MarkdownTextViewBacking: NSTextView {
 	/// guarantees we get a pass at a moment when the view actually has a
 	/// valid frame in a window.
 	var onDidLayout: (() -> Void)?
+	/// Tint used for the blockquote indicator bar. Set by the coordinator
+	/// from the active theme so the bar matches link/accent colour rather
+	/// than the secondary text tone.
+	var blockquoteBarColor: NSColor = NSColor.controlAccentColor
 	private var hoverTrackingArea: NSTrackingArea?
 	private var lastReportedURL: String?
 
 	override func layout() {
 		super.layout()
 		onDidLayout?()
+	}
+
+	override func drawBackground(in rect: NSRect) {
+		super.drawBackground(in: rect)
+		drawBlockquoteBars(in: rect)
+	}
+
+	private func drawBlockquoteBars(in rect: NSRect) {
+		guard let storage = textStorage,
+			  let layoutManager = textLayoutManager,
+			  let contentManager = layoutManager.textContentManager,
+			  storage.length > 0 else { return }
+
+		let insetX = textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0)
+		let fullRange = NSRange(location: 0, length: storage.length)
+		storage.enumerateAttribute(.markdownBlockquoteDepth, in: fullRange) { value, range, _ in
+			guard let depth = value as? Int, depth > 0,
+				  let textRange = self.textRange(for: range, in: contentManager) else { return }
+
+			let barWidth: CGFloat = 4
+			let barSpacing: CGFloat = 16
+			let barX = insetX + CGFloat(depth - 1) * barSpacing
+			layoutManager.enumerateTextLayoutFragments(from: textRange.location, options: []) { fragment in
+				guard fragment.rangeInElement.intersection(textRange) != nil else {
+					return fragment.rangeInElement.endLocation.compare(textRange.endLocation) == .orderedAscending
+				}
+				let frame = fragment.layoutFragmentFrame
+				let barRect = NSRect(x: barX, y: frame.minY, width: barWidth, height: frame.height)
+				if barRect.intersects(rect) {
+					self.blockquoteBarColor.withAlphaComponent(0.65).setFill()
+					NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5).fill()
+				}
+				return fragment.rangeInElement.endLocation.compare(textRange.endLocation) == .orderedAscending
+			}
+		}
+	}
+
+	private func textRange(for nsRange: NSRange, in contentManager: NSTextContentManager) -> NSTextRange? {
+		guard let start = contentManager.location(contentManager.documentRange.location, offsetBy: nsRange.location),
+			  let end = contentManager.location(start, offsetBy: nsRange.length) else { return nil }
+		return NSTextRange(location: start, end: end)
 	}
 
 	override func updateTrackingAreas() {

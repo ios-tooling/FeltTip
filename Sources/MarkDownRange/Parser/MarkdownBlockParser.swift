@@ -21,9 +21,7 @@ public enum MarkdownBlockParser {
 		if preprocessed {
 			processed = body
 		} else {
-			let citations = Citation.parse(from: body)
-			let withCitations = Citation.renderableContent(from: body, citations: citations)
-			processed = WikilinkProcessor.process(DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(withCitations))))
+			processed = MarkdownPreprocessor.process(body)
 		}
 		let document = Document(parsing: processed)
 		let counter = CheckboxCounter(checkboxOffset)
@@ -169,7 +167,8 @@ public enum MarkdownBlockParser {
 				  html.lowercased().contains("<table"),
 				  let parsed = HTMLTableParser.parse(html: html)
 			else { return block }
-			return .table(header: parsed.header, rows: parsed.rows, id: id)
+			let alignments = parsed.columnAlignments
+			return .table(header: parsed.header, rows: parsed.rows, columnAlignments: alignments, id: id)
 		}
 	}
 

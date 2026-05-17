@@ -226,8 +226,7 @@ private struct FormattedMarkdownRenderModel {
 			let citations = Citation.parse(from: text)
 			let withFootnotes = MarkdownFootnote.renderableContent(from: text, footnotes: footnotes)
 			let withCitations = Citation.renderableContent(from: withFootnotes, citations: citations)
-			let withSuperSub = SuperSubProcessor.process(withCitations)
-			let fullyProcessed = WikilinkProcessor.process(DefinitionListProcessor.process(HighlightSyntax.process(EmojiShortcodes.process(withSuperSub))))
+			let fullyProcessed = MarkdownPreprocessor.common(after: withCitations)
 			var checkboxOffset = 0
 			let sections = MarkdownSection.parse(from: fullyProcessed).map { section in
 				let blocks = MarkdownBlockParser.parse(section.content, theme: theme, fontSize: fontSize, checkboxOffset: checkboxOffset, preprocessed: true)

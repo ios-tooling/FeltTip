@@ -37,7 +37,7 @@ struct MarkdownMetaWalker {
 		case .orderedList(let items, _, _), .unorderedList(let items, _):
 			for item in items { walk(item.blocks) }
 
-		case .table(let header, let rows, _):
+		case .table(let header, let rows, _, _):
 			for cell in header { collectLinks(in: cell) }
 			for row in rows { for cell in row { collectLinks(in: cell) } }
 

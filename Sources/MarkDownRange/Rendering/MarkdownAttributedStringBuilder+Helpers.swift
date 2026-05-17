@@ -58,5 +58,27 @@ extension MarkdownAttributedStringBuilder {
 			if existing == nil { out.addAttribute(.foregroundColor, value: color, range: subRange) }
 		}
 	}
+
+	/// Force italic on every text run by toggling the italic trait on whatever
+	/// font is already in place. Used by blockquotes so the indicator shows up
+	/// even when the user has overridden the body font.
+	static func applyItalic(to out: NSMutableAttributedString, range: NSRange) {
+		guard range.length > 0 else { return }
+		out.enumerateAttribute(.font, in: range, options: []) { value, subRange, _ in
+			let base = (value as? NSFont) ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+			var traits = base.fontDescriptor.symbolicTraits
+			traits.insert(.italic)
+			let descriptor = base.fontDescriptor.withSymbolicTraits(traits)
+			let italic = NSFont(descriptor: descriptor, size: base.pointSize) ?? base
+			out.addAttribute(.font, value: italic, range: subRange)
+		}
+	}
+}
+
+extension NSAttributedString.Key {
+	/// Tags a run as part of a blockquote at the given depth (Int). The text
+	/// view subclass uses this to draw the left indicator bar that fenced
+	/// blockquote text apart from surrounding prose.
+	public static let markdownBlockquoteDepth = NSAttributedString.Key("markdownBlockquoteDepth")
 }
 #endif

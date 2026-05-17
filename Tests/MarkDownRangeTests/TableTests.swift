@@ -11,7 +11,7 @@ import Foundation
 		| Bob | 25 |
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .table(let header, let rows, _) = blocks.first else {
+		guard case .table(let header, let rows, _, _) = blocks.first else {
 			Issue.record("Expected table"); return
 		}
 		#expect(header.count == 2)
@@ -27,7 +27,7 @@ import Foundation
 		| **Bold** | *Done* |
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .table(_, let rows, _) = blocks.first else {
+		guard case .table(_, let rows, _, _) = blocks.first else {
 			Issue.record("Expected table"); return
 		}
 		let firstCell = String(rows[0][0].characters)
@@ -42,7 +42,7 @@ import Foundation
 		| Two |
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .table(let header, let rows, _) = blocks.first else {
+		guard case .table(let header, let rows, _, _) = blocks.first else {
 			Issue.record("Expected table"); return
 		}
 		#expect(header.count == 1)
@@ -56,7 +56,7 @@ import Foundation
 		| Google | [link](https://google.com) |
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .table(_, let rows, _) = blocks.first else {
+		guard case .table(_, let rows, _, _) = blocks.first else {
 			Issue.record("Expected table"); return
 		}
 		let cell = String(rows[0][1].characters)

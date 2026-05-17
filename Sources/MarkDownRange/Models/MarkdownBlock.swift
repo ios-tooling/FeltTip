@@ -59,7 +59,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 	case blockquote(children: [MarkdownBlock], id: String)
 	case orderedList(items: [ListItemContent], start: Int, id: String)
 	case unorderedList(items: [ListItemContent], id: String)
-	case table(header: [TableCell], rows: [[TableCell]], id: String)
+	case table(header: [TableCell], rows: [[TableCell]], columnAlignments: [TableColumnAlignment], id: String)
 	case thematicBreak(id: String)
 	case image(source: String, alt: String, width: CGFloat? = nil, height: CGFloat? = nil, id: String)
 	case imageRow(images: [ImageRowItem], id: String)
@@ -74,7 +74,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 		switch self {
 		case .heading(_, _, let id), .paragraph(_, _, let id), .codeBlock(_, _, let id),
 			  .blockquote(_, let id), .orderedList(_, _, let id), .unorderedList(_, let id),
-			  .table(_, _, let id), .thematicBreak(let id), .image(_, _, _, _, let id),
+			  .table(_, _, _, let id), .thematicBreak(let id), .image(_, _, _, _, let id),
 			  .imageRow(_, let id), .htmlBlock(_, let id), .details(_, _, let id),
 			  .alert(_, _, let id), .frontmatter(_, let id), .aligned(_, _, let id),
 			  .definitionList(_, let id):

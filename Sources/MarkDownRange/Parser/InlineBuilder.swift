@@ -36,6 +36,8 @@ struct InlineBuilder: MarkupWalker {
 	private var currentLinkURL: URL?
 	private var linkStartIndex: AttributedString.Index?
 	private var linkStartChar: Int = 0
+	private var currentAbbrTitle: String?
+	private var abbrStartIndex: AttributedString.Index?
 
 	mutating func build(from markup: Markup, linkifyURLs: Bool = true) -> InlineResult {
 		for child in markup.children { visit(child) }
@@ -126,6 +128,26 @@ struct InlineBuilder: MarkupWalker {
 			currentLinkURL = url
 			linkStartIndex = result.endIndex
 			linkStartChar = charOffset
+			return
+		}
+
+		// <abbr title="..."> — start tracking abbreviation tooltip
+		if tag.hasPrefix("<abbr") {
+			currentAbbrTitle = HTMLAttributeParser.extractAttribute("title", from: raw)
+			abbrStartIndex = result.endIndex
+			return
+		}
+
+		// </abbr> — finalize the abbreviation by applying underline + tooltip
+		if tag == "</abbr>" {
+			if let title = currentAbbrTitle, let start = abbrStartIndex, start < result.endIndex {
+				result[start..<result.endIndex].underlineStyle = .single
+				#if canImport(AppKit)
+				result[start..<result.endIndex].toolTip = title
+				#endif
+			}
+			currentAbbrTitle = nil
+			abbrStartIndex = nil
 			return
 		}
 

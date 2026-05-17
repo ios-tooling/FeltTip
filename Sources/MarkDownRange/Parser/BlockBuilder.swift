@@ -144,7 +144,17 @@ struct BlockBuilder: MarkupWalker {
 			guard let row = child as? Markdown.Table.Row else { continue }
 			rows.append(Array(row.cells).map { makeCell($0) })
 		}
-		blocks.append(.table(header: headerCells, rows: rows, id: nextID()))
+		let alignments = table.columnAlignments.map { Self.convert($0) }
+		blocks.append(.table(header: headerCells, rows: rows, columnAlignments: alignments, id: nextID()))
+	}
+
+	private static func convert(_ alignment: Markdown.Table.ColumnAlignment?) -> TableColumnAlignment {
+		switch alignment {
+		case .left: .left
+		case .center: .center
+		case .right: .right
+		case nil: .default
+		}
 	}
 
 	private func makeCell(_ cell: Markdown.Table.Cell) -> TableCell {

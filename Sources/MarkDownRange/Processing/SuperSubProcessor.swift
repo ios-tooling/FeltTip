@@ -5,21 +5,97 @@
 
 import Foundation
 
-/// Converts ^text^ (superscript) and ~text~ (subscript) markers to Unicode equivalents
-/// where all characters in the content have a Unicode mapping.
+/// Converts `^text^` (superscript) and `~text~` (subscript) into Unicode where
+/// every character maps cleanly, and falls back to `<sup>`/`<sub>` HTML tags
+/// when any character is unmappable so the inline builder can render them via
+/// baseline-offset styling. Skips fenced code blocks, inline code spans, and
+/// `~~strikethrough~~` pairs so GFM extensions keep working.
 public enum SuperSubProcessor {
 
 	public static func process(_ text: String) -> String {
-		var result = text
-		result = result.replacing(/\^([^^]+)\^/) { match in
-			let content = String(match.1)
-			return convert(content, map: superMap) ?? "^\(content)^"
+		var output: [String] = []
+		var inFence = false
+		for line in text.components(separatedBy: "\n") {
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+				inFence.toggle()
+				output.append(line); continue
+			}
+			if inFence { output.append(line); continue }
+			output.append(processLine(line))
 		}
-		result = result.replacing(/~([^~]+)~/) { match in
-			let content = String(match.1)
-			return convert(content, map: subMap) ?? "~\(content)~"
+		return output.joined(separator: "\n")
+	}
+
+	private static func processLine(_ line: String) -> String {
+		var pieces: [String] = []
+		var pending = ""
+		var i = line.startIndex
+		while i < line.endIndex {
+			let ch = line[i]
+			if ch == "`" {
+				if let close = line[line.index(after: i)...].firstIndex(of: "`") {
+					if !pending.isEmpty { pieces.append(applyMarkers(pending)); pending = "" }
+					pieces.append(String(line[i...close]))
+					i = line.index(after: close); continue
+				}
+			}
+			pending.append(ch)
+			i = line.index(after: i)
+		}
+		if !pending.isEmpty { pieces.append(applyMarkers(pending)) }
+		return pieces.joined()
+	}
+
+	private static func applyMarkers(_ segment: String) -> String {
+		applySingleCharMarker(in: applySingleCharMarker(in: segment, marker: "^", map: superMap, tag: "sup"),
+							  marker: "~", map: subMap, tag: "sub")
+	}
+
+	/// Walk `segment`, replacing isolated `<marker>text<marker>` pairs while
+	/// leaving doubled markers (`^^` / `~~`) and code spans alone — Swift's
+	/// `Regex` doesn't support lookbehind, so the manual scan is the only
+	/// way to skip strikethrough's `~~` without splitting it open.
+	private static func applySingleCharMarker(in segment: String, marker: Character, map: [Character: Character], tag: String) -> String {
+		var result = ""
+		var i = segment.startIndex
+		while i < segment.endIndex {
+			let ch = segment[i]
+			guard ch == marker else {
+				result.append(ch); i = segment.index(after: i); continue
+			}
+			let next = segment.index(after: i)
+			// Doubled marker (strikethrough or `^^`): preserve verbatim.
+			if next < segment.endIndex, segment[next] == marker {
+				result.append(ch); result.append(segment[next])
+				i = segment.index(after: next); continue
+			}
+			// Opening marker must be followed by a non-space, non-marker char.
+			guard next < segment.endIndex,
+				  !segment[next].isWhitespace,
+				  segment[next] != marker,
+				  let close = findClosingMarker(marker, after: next, in: segment) else {
+				result.append(ch); i = next; continue
+			}
+			let content = String(segment[next..<close])
+			result.append(convert(content, map: map) ?? "<\(tag)>\(content)</\(tag)>")
+			i = segment.index(after: close)
 		}
 		return result
+	}
+
+	private static func findClosingMarker(_ marker: Character, after start: String.Index, in segment: String) -> String.Index? {
+		var j = start
+		while j < segment.endIndex {
+			let ch = segment[j]
+			if ch == marker {
+				let after = segment.index(after: j)
+				if after < segment.endIndex, segment[after] == marker { return nil } // hit a `~~`/`^^`, bail
+				return j
+			}
+			j = segment.index(after: j)
+		}
+		return nil
 	}
 
 	private static func convert(_ text: String, map: [Character: Character]) -> String? {

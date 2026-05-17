@@ -16,6 +16,7 @@ public enum EmojiShortcodes {
 	// Common emoji shortcodes (GitHub/Slack compatible subset)
 	static let lookup: [String: String] = [
 		"smile": "😄", "laughing": "😆", "blush": "😊", "smiley": "😃",
+		"yum": "😋", "stuck_out_tongue": "😛", "stuck_out_tongue_winking_eye": "😜",
 		"grinning": "😀", "wink": "😉", "heart_eyes": "😍", "kissing_heart": "😘",
 		"joy": "😂", "rofl": "🤣", "thinking": "🤔", "sunglasses": "😎",
 		"cry": "😢", "sob": "😭", "angry": "😠", "rage": "🤬",

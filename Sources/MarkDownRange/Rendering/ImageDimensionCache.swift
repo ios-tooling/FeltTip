@@ -62,6 +62,29 @@ final class ImageDimensionCache: @unchecked Sendable {
 		}
 	}
 
+	/// Load dimensions synchronously for file URLs so the first measurement
+	/// pass — particularly the one in QuickLook where async loads may not
+	/// finish before the preview is dismissed — already has the real size.
+	/// No-op for non-file URLs and for URLs that are already cached.
+	func prefetchSyncIfLocal(_ url: URL) {
+		guard url.isFileURL else { return }
+		if size(for: url) != nil { return }
+		guard let data = try? Data(contentsOf: url) else { return }
+		let measured: CGSize?
+		if url.isSVGImage {
+			let text = String(data: data, encoding: .utf8) ?? ""
+			measured = SVGDimensionParser.parse(text)
+		} else {
+			#if os(macOS)
+			measured = NSImage(data: data)?.size
+			#else
+			measured = UIImage(data: data)?.size
+			#endif
+		}
+		guard let measured, measured.width > 0, measured.height > 0 else { return }
+		record(measured, for: url)
+	}
+
 	private func claimInFlight(_ url: URL) -> Bool {
 		lock.lock(); defer { lock.unlock() }
 		if sizes[url] != nil || inFlight.contains(url) { return false }

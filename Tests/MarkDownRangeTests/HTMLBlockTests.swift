@@ -40,7 +40,7 @@ import Testing
 		</table>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .table(let header, let rows, _) = blocks.first else {
+		guard case .table(let header, let rows, _, _) = blocks.first else {
 			Issue.record("Expected table, got \(blocks.first.debugDescription)"); return
 		}
 		#expect(header.count == 2)
@@ -60,7 +60,7 @@ import Testing
 		</table>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .table(_, let rows, _) = blocks.first else {
+		guard case .table(_, let rows, _, _) = blocks.first else {
 			Issue.record("Expected table"); return
 		}
 		#expect(rows.count == 1)

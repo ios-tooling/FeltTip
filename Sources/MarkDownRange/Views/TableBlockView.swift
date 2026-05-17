@@ -8,6 +8,7 @@ import SwiftUI
 struct TableBlockView: View {
 	let header: [TableCell]
 	let rows: [[TableCell]]
+	let columnAlignments: [TableColumnAlignment]
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
 	@Environment(\.tableAlignment) private var tableAlignment
@@ -18,12 +19,17 @@ struct TableBlockView: View {
 	private static let headerDividerHeight: CGFloat = 1.5
 	private static let bodyDividerHeight: CGFloat = 1
 
+	private func alignment(for column: Int) -> TableColumnAlignment {
+		guard column < columnAlignments.count else { return .default }
+		return columnAlignments[column]
+	}
+
 	var body: some View {
 		let grid = Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
 			if !header.isEmpty {
 				GridRow {
-					ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: true)
+					ForEach(Array(header.enumerated()), id: \.offset) { column, cell in
+						cellView(cell, isHeader: true, alignment: alignment(for: column))
 					}
 				}
 				.background(headerHeightProbe)
@@ -34,8 +40,8 @@ struct TableBlockView: View {
 
 			ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
 				GridRow {
-					ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-						cellView(cell, isHeader: false)
+					ForEach(Array(row.enumerated()), id: \.offset) { column, cell in
+						cellView(cell, isHeader: false, alignment: alignment(for: column))
 					}
 				}
 				.background(bodyRowHeightProbe(index: rowIndex))
@@ -95,7 +101,7 @@ struct TableBlockView: View {
 		}
 	}
 
-	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool) -> some View {
+	@ViewBuilder private func cellView(_ cell: TableCell, isHeader: Bool, alignment: TableColumnAlignment) -> some View {
 		Group {
 			switch cell {
 			case .text(let str):
@@ -103,9 +109,12 @@ struct TableBlockView: View {
 					.textSelection(.enabled)
 					.font(isHeader ? .system(size: fontSize, weight: .bold) : .system(size: fontSize))
 					.foregroundStyle(isHeader ? theme.textColor : .primary)
+					.multilineTextAlignment(alignment.textAlignment)
 					.fixedSize(horizontal: false, vertical: true)
+					.frame(maxWidth: .infinity, alignment: alignment.frameAlignment)
 			case .image(let source, let alt, let link, let width, let height):
 				tableCellImage(source: source, alt: alt, link: link, width: width, height: height)
+					.frame(maxWidth: .infinity, alignment: alignment.frameAlignment)
 			}
 		}
 		.padding(.horizontal, 8)
