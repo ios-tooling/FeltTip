@@ -263,6 +263,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedTheme: MarkdownTheme?
 		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
+		var highlightDebounceTimer: Timer?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
 
 		/// Runs once scrolling has been quiet for the debounce window. Reads
@@ -286,6 +287,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		deinit {
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
 			headingDebounceTimer?.invalidate()
+			highlightDebounceTimer?.invalidate()
 		}
 
 		public func textDidChange(_ notification: Notification) {
@@ -293,16 +295,27 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			parent.text = tv.string
 			if parent.typewriterMode { centerCursor(in: tv) }
 			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
-			if parent.syntaxHighlightingEnabled, let theme = parent.theme {
-				MarkdownSyntaxHighlighter.highlight(textView: tv, theme: theme, options: parent.markdownOptions)
-			}
-			// Sync the cache so the next updateNSView (triggered by the
-			// parent.text assignment above) doesn't redundantly re-highlight.
+			// Defer the re-highlight off the keystroke hot path: running 9
+			// regexes + a font rewrite on every character was the dominant
+			// source of typing lag. The cache is synced up front so that the
+			// updateNSView triggered by `parent.text = tv.string` skips its
+			// own highlight pass; the debounced timer below catches up after
+			// the user stops typing for a beat.
 			lastHighlightedText = tv.string
 			lastHighlightedFontSize = parent.fontSize
 			lastHighlightedSyntaxEnabled = parent.syntaxHighlightingEnabled
 			lastHighlightedTheme = parent.theme
 			lastHighlightedOptions = parent.markdownOptions
+			scheduleDebouncedHighlight(in: tv)
+		}
+
+		private func scheduleDebouncedHighlight(in textView: NSTextView) {
+			guard parent.syntaxHighlightingEnabled, parent.theme != nil else { return }
+			highlightDebounceTimer?.invalidate()
+			highlightDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self, weak textView] _ in
+				guard let self, let textView, let theme = self.parent.theme else { return }
+				MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme, options: self.parent.markdownOptions)
+			}
 		}
 
 		public func textViewDidChangeSelection(_ notification: Notification) {

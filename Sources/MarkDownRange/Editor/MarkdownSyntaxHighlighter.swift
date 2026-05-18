@@ -60,12 +60,12 @@ enum MarkdownSyntaxHighlighter {
 		}
 
 		textStorage.endEditing()
-
-		// The textStorage edits above invalidate layout for everything they
-		// touched. Without forcing layout here, TextKit recomputes each
-		// chunk lazily as it scrolls into view, producing a noticeable
-		// per-screen pause for monospaced docs with bolded headings.
-		layoutManager.ensureLayout(forCharacterRange: fullRange)
+		// Skip the full-document `ensureLayout` here. It was added to avoid
+		// per-screen layout pauses while scrolling, but running it on every
+		// keystroke forces TextKit to lay out the entire document up-front
+		// each time and is the single biggest source of typing latency.
+		// TextKit lays out lazily as content scrolls into view, which is the
+		// right trade-off for the edit hot path.
 	}
 
 	/// Clear any styling this highlighter added. Used when syntax highlighting
@@ -80,7 +80,6 @@ enum MarkdownSyntaxHighlighter {
 		textStorage.addAttribute(.font, value: regularFont, range: fullRange)
 		textStorage.endEditing()
 		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
-		layoutManager.ensureLayout(forCharacterRange: fullRange)
 	}
 
 	private static func apply(_ ranges: [NSRange], color: Color, layoutManager: NSLayoutManager) {
