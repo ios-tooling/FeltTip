@@ -13,7 +13,8 @@ public enum MarkdownBlockParser {
 		fontSize: CGFloat = 16,
 		checkboxOffset: Int = 0,
 		preprocessed: Bool = false,
-		linkifyURLs: Bool = true
+		linkifyURLs: Bool = true,
+		options: MarkdownOptions = .default
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body) = extractFrontmatter(markdown)
@@ -21,7 +22,7 @@ public enum MarkdownBlockParser {
 		if preprocessed {
 			processed = body
 		} else {
-			processed = MarkdownPreprocessor.process(body)
+			processed = MarkdownPreprocessor.process(body, options: options)
 		}
 		let document = Document(parsing: processed)
 		let counter = CheckboxCounter(checkboxOffset)

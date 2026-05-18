@@ -14,6 +14,10 @@ private struct SyntaxHighlightingEnabledKey: EnvironmentKey {
 	nonisolated(unsafe) static let defaultValue: Bool = false
 }
 
+private struct MarkdownOptionsKey: EnvironmentKey {
+	nonisolated(unsafe) static let defaultValue: MarkdownOptions = .default
+}
+
 public extension EnvironmentValues {
 	var showLineNumbers: Bool {
 		get { self[ShowLineNumbersKey.self] }
@@ -23,6 +27,11 @@ public extension EnvironmentValues {
 	var syntaxHighlightingEnabled: Bool {
 		get { self[SyntaxHighlightingEnabledKey.self] }
 		set { self[SyntaxHighlightingEnabledKey.self] = newValue }
+	}
+
+	var markdownOptions: MarkdownOptions {
+		get { self[MarkdownOptionsKey.self] }
+		set { self[MarkdownOptionsKey.self] = newValue }
 	}
 }
 #endif

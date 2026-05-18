@@ -11,13 +11,13 @@ import Foundation
 /// which has to invoke the processors directly so it can keep references to
 /// the parsed citations and footnotes for side panels.
 public enum MarkdownPreprocessor {
-	public static func process(_ body: String) -> String {
+	public static func process(_ body: String, options: MarkdownOptions = .default) -> String {
 		let citations = Citation.parse(from: body)
 		let withCitations = Citation.renderableContent(from: body, citations: citations)
 		let footnotes = MarkdownFootnote.parse(from: withCitations)
 		let withFootnotes = MarkdownFootnote.renderableContent(from: withCitations, footnotes: footnotes)
 		let withAppendedNotes = appendFootnoteSection(to: withFootnotes, footnotes: footnotes)
-		return common(after: withAppendedNotes)
+		return common(after: withAppendedNotes, options: options)
 	}
 
 	/// Appends footnote bodies as a trailing section so renderers that don't
@@ -45,8 +45,11 @@ public enum MarkdownPreprocessor {
 
 	/// Step shared with `FormattedMarkdownScreen`, which parses citations and
 	/// footnotes itself so it can keep handles on them.
-	public static func common(after withFootnotes: String) -> String {
-		let withAbbreviations = AbbreviationProcessor.process(withFootnotes)
+	public static func common(after withFootnotes: String, options: MarkdownOptions = .default) -> String {
+		let withHeadings = options.headingsRequireSpaceAfterHash
+			? withFootnotes
+			: HeadingSpaceInjector.process(withFootnotes)
+		let withAbbreviations = AbbreviationProcessor.process(withHeadings)
 		let withContainers = CustomContainerProcessor.process(withAbbreviations)
 		let withSuperSub = SuperSubProcessor.process(withContainers)
 		let withInserted = InsertedTextProcessor.process(withSuperSub)

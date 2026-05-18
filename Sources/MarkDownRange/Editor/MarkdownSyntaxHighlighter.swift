@@ -7,7 +7,7 @@
 import AppKit
 
 enum MarkdownSyntaxHighlighter {
-	static func highlight(textView: NSTextView, theme: MarkdownTheme) {
+	static func highlight(textView: NSTextView, theme: MarkdownTheme, options: MarkdownOptions = .default) {
 		guard let layoutManager = textView.layoutManager,
 			  let textStorage = textView.textStorage else { return }
 		let string = textView.string
@@ -32,14 +32,16 @@ enum MarkdownSyntaxHighlighter {
 		// Color and embolden the entire heading line so the source still
 		// reads like a heading in the raw pane. Monospaced bold shares
 		// metrics with monospaced regular, so line-wrap is unaffected.
-		for range in matches(for: headingLinePattern, in: string) {
+		let lineRegex = headingLinePattern(for: options)
+		let markerRegex = headingMarkerPattern(for: options)
+		for range in matches(for: lineRegex, in: string) {
 			guard !intersects(range, codeFenceRanges) else { continue }
 			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
 			textStorage.addAttribute(.font, value: headingFont, range: range)
 		}
 
 		let patterns: [(NSRegularExpression, Color)] = [
-			(headingMarkerPattern, theme.secondaryColor),
+			(markerRegex, theme.secondaryColor),
 			(boldPattern, theme.secondaryColor),
 			(italicPattern, theme.secondaryColor),
 			(inlineCodePattern, theme.codeForeground),
@@ -105,10 +107,28 @@ enum MarkdownSyntaxHighlighter {
 		pattern: "^```[^\\n]*\\n[\\s\\S]*?^```", options: [.anchorsMatchLines])
 	nonisolated(unsafe) private static let inlineCodePattern = try! NSRegularExpression(
 		pattern: "`[^`\\n]+`")
-	nonisolated(unsafe) private static let headingMarkerPattern = try! NSRegularExpression(
+
+	// Strict CommonMark: require a space after the final `#`.
+	nonisolated(unsafe) private static let strictHeadingMarkerPattern = try! NSRegularExpression(
 		pattern: "^#{1,6}\\s", options: .anchorsMatchLines)
-	nonisolated(unsafe) private static let headingLinePattern = try! NSRegularExpression(
+	nonisolated(unsafe) private static let strictHeadingLinePattern = try! NSRegularExpression(
 		pattern: "^#{1,6}\\s.*$", options: .anchorsMatchLines)
+	// Lenient: 1–6 `#` followed by anything that isn't another `#`. The
+	// negative lookahead `(?!#)` rules out `#######` runs (CommonMark caps
+	// headings at six). The marker variant also greedily eats a trailing
+	// space when present so `## Heading` still highlights `## ` as marker.
+	nonisolated(unsafe) private static let lenientHeadingMarkerPattern = try! NSRegularExpression(
+		pattern: "^#{1,6}(?!#)\\s?", options: .anchorsMatchLines)
+	nonisolated(unsafe) private static let lenientHeadingLinePattern = try! NSRegularExpression(
+		pattern: "^#{1,6}(?!#).*$", options: .anchorsMatchLines)
+
+	private static func headingMarkerPattern(for options: MarkdownOptions) -> NSRegularExpression {
+		options.headingsRequireSpaceAfterHash ? strictHeadingMarkerPattern : lenientHeadingMarkerPattern
+	}
+
+	private static func headingLinePattern(for options: MarkdownOptions) -> NSRegularExpression {
+		options.headingsRequireSpaceAfterHash ? strictHeadingLinePattern : lenientHeadingLinePattern
+	}
 	nonisolated(unsafe) private static let boldPattern = try! NSRegularExpression(
 		pattern: "(\\*\\*|__)(.*?)(\\1)")
 	nonisolated(unsafe) private static let italicPattern = try! NSRegularExpression(

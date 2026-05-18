@@ -12,6 +12,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	@Binding var selectedHeadingID: String?
 	@Environment(\.showLineNumbers) var showLineNumbers
 	@Environment(\.syntaxHighlightingEnabled) var syntaxHighlightingEnabled
+	@Environment(\.markdownOptions) var markdownOptions
 	var fontSize: CGFloat = 13
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
@@ -208,7 +209,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	private func updateHighlighting(textView: NSTextView) {
 		if syntaxHighlightingEnabled, let theme {
-			MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme)
+			MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme, options: markdownOptions)
 		} else if !syntaxHighlightingEnabled {
 			MarkdownSyntaxHighlighter.clearHighlighting(textView: textView)
 		}
@@ -223,13 +224,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if textView.string == coordinator.lastHighlightedText,
 		   fontSize == coordinator.lastHighlightedFontSize,
 		   syntaxHighlightingEnabled == coordinator.lastHighlightedSyntaxEnabled,
-		   theme == coordinator.lastHighlightedTheme {
+		   theme == coordinator.lastHighlightedTheme,
+		   markdownOptions == coordinator.lastHighlightedOptions {
 			return
 		}
 		coordinator.lastHighlightedText = textView.string
 		coordinator.lastHighlightedFontSize = fontSize
 		coordinator.lastHighlightedSyntaxEnabled = syntaxHighlightingEnabled
 		coordinator.lastHighlightedTheme = theme
+		coordinator.lastHighlightedOptions = markdownOptions
 		updateHighlighting(textView: textView)
 	}
 
@@ -258,6 +261,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
 		var lastHighlightedTheme: MarkdownTheme?
+		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
 
@@ -290,7 +294,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if parent.typewriterMode { centerCursor(in: tv) }
 			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
 			if parent.syntaxHighlightingEnabled, let theme = parent.theme {
-				MarkdownSyntaxHighlighter.highlight(textView: tv, theme: theme)
+				MarkdownSyntaxHighlighter.highlight(textView: tv, theme: theme, options: parent.markdownOptions)
 			}
 			// Sync the cache so the next updateNSView (triggered by the
 			// parent.text assignment above) doesn't redundantly re-highlight.
@@ -298,6 +302,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			lastHighlightedFontSize = parent.fontSize
 			lastHighlightedSyntaxEnabled = parent.syntaxHighlightingEnabled
 			lastHighlightedTheme = parent.theme
+			lastHighlightedOptions = parent.markdownOptions
 		}
 
 		public func textViewDidChangeSelection(_ notification: Notification) {
