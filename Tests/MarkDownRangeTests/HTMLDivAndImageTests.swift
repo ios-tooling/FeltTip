@@ -127,4 +127,32 @@ import Testing
 			return
 		}
 	}
+
+	@Test func brBetweenImages_splitsRow() {
+		// `<br>` is the canonical README-author way to break a long badge row
+		// into two visual rows. Each side of the break should become its own
+		// `.imageRow`.
+		let md = """
+		<p align="center">
+		  <img src="a.png">
+		  <img src="b.png">
+		  <br>
+		  <img src="c.png">
+		  <img src="d.png">
+		</p>
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		// Aligned wrappers are fine — we just want the inner shape.
+		let imageRows: [[String]] = blocks.compactMap { block -> [String]? in
+			let inner: MarkdownBlock = {
+				if case .aligned(_, let b, _) = block { return b }
+				return block
+			}()
+			if case .imageRow(let images, _) = inner {
+				return images.map(\.source)
+			}
+			return nil
+		}
+		#expect(imageRows == [["a.png", "b.png"], ["c.png", "d.png"]])
+	}
 }
