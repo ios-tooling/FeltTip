@@ -5,6 +5,17 @@
 
 import SwiftUI
 
+private struct ListNestingDepthKey: EnvironmentKey {
+	nonisolated(unsafe) static let defaultValue: Int = 0
+}
+
+extension EnvironmentValues {
+	var listNestingDepth: Int {
+		get { self[ListNestingDepthKey.self] }
+		set { self[ListNestingDepthKey.self] = newValue }
+	}
+}
+
 struct ListBlockView: View {
 	let items: [ListItemContent]
 	let ordered: Bool
@@ -16,6 +27,7 @@ struct ListBlockView: View {
 	@Environment(\.onCheckboxToggle) private var onCheckboxToggle
 	@Environment(\.onFocusChecklist) private var onFocusChecklist
 	@Environment(\.onAddChecklistItem) private var onAddChecklistItem
+	@Environment(\.listNestingDepth) private var nestingDepth
 	@State private var isContentHovering = false
 	@State private var isTopButtonHovering = false
 	@State private var isBottomButtonHovering = false
@@ -23,14 +35,21 @@ struct ListBlockView: View {
 	private var isHovering: Bool { isContentHovering || isTopButtonHovering || isBottomButtonHovering }
 	private var isChecklist: Bool { items.contains { $0.checkbox != nil } }
 
+	/// Outermost lists get a small breathing-room indent; every nested level
+	/// gets a wider indent so the hierarchy is visible at a glance. The
+	/// previous flat 8pt indent at every level made nested children look like
+	/// siblings of their parent in narrow windows.
+	private var leadingIndent: CGFloat { nestingDepth == 0 ? 8 : 24 }
+
 	var body: some View {
 		let content = VStack(alignment: .leading, spacing: 4) {
 			ForEach(Array(items.enumerated()), id: \.offset) { index, item in
 				row(for: item, index: index)
 			}
 		}
-		.padding(.leading, 8)
+		.padding(.leading, leadingIndent)
 		.frame(maxWidth: .infinity, alignment: .leading)
+		.environment(\.listNestingDepth, nestingDepth + 1)
 
 		// Only attach hover tracking + animation for checklists, where the hover
 		// state actually drives accessory buttons. For plain bullet/ordered lists
