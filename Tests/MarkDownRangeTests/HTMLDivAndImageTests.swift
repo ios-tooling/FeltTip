@@ -38,11 +38,24 @@ import Testing
 		</div>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		let imageSrcs: [String] = blocks.compactMap { block in
-			if case .image(let src, _, _, _, _) = block { return src }
-			if case .aligned(_, let inner, _) = block,
-			   case .image(let src, _, _, _, _) = inner { return src }
-			return nil
+		// Consecutive `<img>` siblings may be emitted either as separate `.image`
+		// blocks or grouped into a single `.imageRow` (the current side-by-side
+		// rendering path). Both forms are spec-equivalent for this test: what
+		// matters is that all three sources survive in order.
+		var imageSrcs: [String] = []
+		for block in blocks {
+			let inner: MarkdownBlock = {
+				if case .aligned(_, let b, _) = block { return b }
+				return block
+			}()
+			switch inner {
+			case .image(let src, _, _, _, _):
+				imageSrcs.append(src)
+			case .imageRow(let images, _):
+				imageSrcs.append(contentsOf: images.map(\.source))
+			default:
+				break
+			}
 		}
 		#expect(imageSrcs == ["a.png", "b.png", "c.png"])
 	}
