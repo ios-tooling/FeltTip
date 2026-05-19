@@ -128,10 +128,13 @@ import Testing
 		}
 	}
 
-	@Test func brBetweenImages_splitsRow() {
-		// `<br>` is the canonical README-author way to break a long badge row
-		// into two visual rows. Each side of the break should become its own
-		// `.imageRow`.
+	@Test func brBetweenImages_keepsThemInOneRow() {
+		// `<br>` between badges in a `<p align="center">` block used to split
+		// the row into two `.imageRow` blocks, which put each row in its own
+		// VStack child with a fixed parent spacing. The flow layout in
+		// ImageRowView now handles wrapping itself, so all images stay in a
+		// single `.imageRow` and the inter-row gap is controlled by
+		// `FlowLayout.verticalSpacing`.
 		let md = """
 		<p align="center">
 		  <img src="a.png">
@@ -142,7 +145,6 @@ import Testing
 		</p>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		// Aligned wrappers are fine — we just want the inner shape.
 		let imageRows: [[String]] = blocks.compactMap { block -> [String]? in
 			let inner: MarkdownBlock = {
 				if case .aligned(_, let b, _) = block { return b }
@@ -153,6 +155,6 @@ import Testing
 			}
 			return nil
 		}
-		#expect(imageRows == [["a.png", "b.png"], ["c.png", "d.png"]])
+		#expect(imageRows == [["a.png", "b.png", "c.png", "d.png"]])
 	}
 }

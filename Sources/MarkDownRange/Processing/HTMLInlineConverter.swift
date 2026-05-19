@@ -105,16 +105,16 @@ enum HTMLInlineConverter {
 		for image in images {
 			if image.range.location > cursor {
 				let between = ns.substring(with: NSRange(location: cursor, length: image.range.location - cursor))
-				let hasLineBreak = containsLineBreak(between)
-				// `<br>` between two images is an explicit row break — flush the
-				// pending group so the next image starts a fresh `.imageRow`.
-				// Without this, badge rows that the author split with `<br>` (a
-				// common README pattern) get packed into one overflowing row.
+				// `<br>` between images used to split the row into separate
+				// `.imageRow` blocks, but that put each row in its own
+				// MarkdownContentView VStack child with a 14pt spacing the
+				// inner FlowLayout couldn't influence. The flow layout now
+				// handles wrapping natively, so leave all images in one row
+				// and let it wrap based on width — the inter-row gap then
+				// follows `FlowLayout.verticalSpacing`.
 				if !isWhitespaceOnly(between) {
 					flush()
 					blocks.append(contentsOf: makeTextBlocks(between, nextID: nextID))
-				} else if hasLineBreak {
-					flush()
 				}
 			}
 			pending.append(image)
@@ -132,11 +132,6 @@ enum HTMLInlineConverter {
 		HTMLAttributeParser.decodeEntities(HTMLAttributeParser.stripTags(html))
 			.trimmingCharacters(in: .whitespacesAndNewlines)
 			.isEmpty
-	}
-
-	private static func containsLineBreak(_ html: String) -> Bool {
-		let lower = html.lowercased()
-		return lower.contains("<br>") || lower.contains("<br/>") || lower.contains("<br />")
 	}
 
 	// MARK: - Text segments
