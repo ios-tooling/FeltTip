@@ -12,7 +12,7 @@ struct ImageRowView: View {
 	var onLinkHover: ((String?) -> Void)? = nil
 
 	var body: some View {
-		HStack(spacing: 8) {
+		FlowLayout(horizontalSpacing: 8, verticalSpacing: 8, alignment: .center) {
 			ForEach(Array(images.enumerated()), id: \.offset) { _, item in
 				imageCell(item)
 			}

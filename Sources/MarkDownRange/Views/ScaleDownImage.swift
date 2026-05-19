@@ -21,6 +21,14 @@ struct ScaleDownImage: View {
 
 	@State private var intrinsicSize: CGSize?
 	@State private var loadedImage: PlatformImage?
+	/// Flips to `true` when the raster load fails — typically because the
+	/// server returned SVG or another format `NSImage` can't decode even
+	/// though the URL didn't look like SVG (e.g. badgesize.io endpoints
+	/// whose path ends in `.js`). Forces the view through the SVG/WebKit
+	/// path, which can render whatever the server actually sends.
+	@State private var rasterLoadFailed = false
+
+	private var effectiveIsSVG: Bool { isSVG || rasterLoadFailed }
 
 	@MainActor
 	init(url: URL, alt: String, htmlWidth: CGFloat? = nil, htmlHeight: CGFloat? = nil, allowUpscaling: Bool = false) {
@@ -40,7 +48,7 @@ struct ScaleDownImage: View {
 	}
 
 	var body: some View {
-		if isSVG {
+		if effectiveIsSVG {
 			#if os(macOS)
 			let size = displaySize ?? CGSize(width: 400, height: 200)
 			SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
@@ -86,12 +94,23 @@ struct ScaleDownImage: View {
 
 	@MainActor
 	private func loadRaster() async {
-		guard !isSVG, loadedImage == nil else { return }
-		guard let image = try? await sharedImagesCache[async: url] else { return }
-		loadedImage = image
-		if intrinsicSize == nil, image.size.width > 0, image.size.height > 0 {
-			intrinsicSize = image.size
-			ImageDimensionCache.shared.record(image.size, for: url)
+		guard !isSVG, !rasterLoadFailed, loadedImage == nil else { return }
+		do {
+			let image = try await sharedImagesCache[async: url]
+			guard let image else {
+				rasterLoadFailed = true
+				return
+			}
+			loadedImage = image
+			if intrinsicSize == nil, image.size.width > 0, image.size.height > 0 {
+				intrinsicSize = image.size
+				ImageDimensionCache.shared.record(image.size, for: url)
+			}
+		} catch {
+			// NSImage couldn't decode the response (typical when the server
+			// returns SVG via a path that doesn't look like SVG). Route the
+			// view through the WebKit path instead.
+			rasterLoadFailed = true
 		}
 	}
 
