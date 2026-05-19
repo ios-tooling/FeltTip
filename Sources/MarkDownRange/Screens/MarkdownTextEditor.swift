@@ -64,6 +64,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
 		textView.string = text
+		// Wire the textStorage delegate so the coordinator can capture the
+		// edited range — the incremental highlight path needs it to scope
+		// re-styling to the paragraph that actually changed.
+		textView.textStorage?.delegate = context.coordinator
 
 		scrollView.documentView = textView
 		scrollView.hasVerticalScroller = true
@@ -247,7 +251,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.backgroundColor = bg
 	}
 
-	public class Coordinator: NSObject, NSTextViewDelegate {
+	public class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
 		var parent: MarkdownTextEditor
 		var lastScrolledID: String?
 		var scrollObserver: Any?
@@ -264,7 +268,27 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
 		var highlightDebounceTimer: Timer?
+		/// Accumulates the edited range between debounced highlight passes.
+		/// Cleared each time the debounced timer fires.
+		var pendingHighlightRange: NSRange?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
+
+		public func textStorage(
+			_ textStorage: NSTextStorage,
+			didProcessEditing editedMask: NSTextStorageEditActions,
+			range editedRange: NSRange,
+			changeInLength delta: Int
+		) {
+			// Only character edits affect highlighting scope. Attribute-only
+			// edits (which we generate ourselves when applying styles) would
+			// otherwise create a feedback loop.
+			guard editedMask.contains(.editedCharacters) else { return }
+			if let existing = pendingHighlightRange {
+				pendingHighlightRange = NSUnionRange(existing, editedRange)
+			} else {
+				pendingHighlightRange = editedRange
+			}
+		}
 
 		/// Runs once scrolling has been quiet for the debounce window. Reads
 		/// the visible-top heading and reports it to the parent. Kept off the
@@ -314,7 +338,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			highlightDebounceTimer?.invalidate()
 			highlightDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self, weak textView] _ in
 				guard let self, let textView, let theme = self.parent.theme else { return }
-				MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme, options: self.parent.markdownOptions)
+				let edited = self.pendingHighlightRange
+				self.pendingHighlightRange = nil
+				MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme, options: self.parent.markdownOptions, editedRange: edited)
 			}
 		}
 

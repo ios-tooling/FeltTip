@@ -7,12 +7,29 @@
 import AppKit
 
 enum MarkdownSyntaxHighlighter {
-	static func highlight(textView: NSTextView, theme: MarkdownTheme, options: MarkdownOptions = .default) {
+	/// Apply (or refresh) syntax styling for the editor.
+	///
+	/// `editedRange` is a hint about which part of the document changed. When
+	/// supplied, we expand it to paragraph boundaries and re-process only that
+	/// scope, leaving the rest of the document's attributes untouched. This is
+	/// the per-keystroke fast path — on a long document the win is roughly
+	/// O(N) → O(paragraph). When the affected range straddles a code-fence
+	/// boundary the meaning of distant text could change, so we transparently
+	/// fall back to a full-document highlight.
+	static func highlight(
+		textView: NSTextView,
+		theme: MarkdownTheme,
+		options: MarkdownOptions = .default,
+		editedRange: NSRange? = nil
+	) {
 		guard let layoutManager = textView.layoutManager,
 			  let textStorage = textView.textStorage else { return }
 		let string = textView.string
-		let fullRange = NSRange(location: 0, length: (string as NSString).length)
+		let nsString = string as NSString
+		let fullRange = NSRange(location: 0, length: nsString.length)
 		guard fullRange.length > 0 else { return }
+
+		let scope = highlightScope(for: editedRange, in: nsString, string: string, fullRange: fullRange)
 
 		let basePointSize = textView.font?.pointSize ?? 13
 		let regularFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .regular)
@@ -22,19 +39,25 @@ enum MarkdownSyntaxHighlighter {
 		// valid NSLayoutManager temporary attribute key). Wrap in begin/end
 		// to coalesce the per-range updates into a single layout pass.
 		textStorage.beginEditing()
-		textStorage.addAttribute(.font, value: regularFont, range: fullRange)
+		textStorage.addAttribute(.font, value: regularFont, range: scope)
+		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: scope)
 
-		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
-
+		// Code fences must always be scanned over the whole document because a
+		// fence may begin outside `scope` but reach into it.
 		let codeFenceRanges = matches(for: codeFencePattern, in: string)
-		apply(codeFenceRanges, color: theme.codeForeground, layoutManager: layoutManager)
+		for fence in codeFenceRanges {
+			let inter = NSIntersectionRange(fence, scope)
+			if inter.length > 0 {
+				layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.codeForeground), forCharacterRange: inter)
+			}
+		}
 
 		// Color and embolden the entire heading line so the source still
 		// reads like a heading in the raw pane. Monospaced bold shares
 		// metrics with monospaced regular, so line-wrap is unaffected.
 		let lineRegex = headingLinePattern(for: options)
 		let markerRegex = headingMarkerPattern(for: options)
-		for range in matches(for: lineRegex, in: string) {
+		for range in matches(for: lineRegex, in: string, in: scope) {
 			guard !intersects(range, codeFenceRanges) else { continue }
 			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
 			textStorage.addAttribute(.font, value: headingFont, range: range)
@@ -53,7 +76,7 @@ enum MarkdownSyntaxHighlighter {
 		]
 
 		for (pattern, color) in patterns {
-			for range in matches(for: pattern, in: string) {
+			for range in matches(for: pattern, in: string, in: scope) {
 				guard !intersects(range, codeFenceRanges) else { continue }
 				layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(color), forCharacterRange: range)
 			}
@@ -82,6 +105,47 @@ enum MarkdownSyntaxHighlighter {
 		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
 	}
 
+	// MARK: - Scope selection
+
+	/// Decide which range to re-highlight: the full document, or just the
+	/// paragraph(s) around the edit. We bail to full-doc whenever a triple
+	/// backtick is anywhere in the expanded probe window, because flipping a
+	/// code fence open or closed redefines the meaning of distant text.
+	private static func highlightScope(
+		for editedRange: NSRange?,
+		in nsString: NSString,
+		string: String,
+		fullRange: NSRange
+	) -> NSRange {
+		guard let edited = editedRange,
+			  edited.location <= nsString.length,
+			  fullRange.length > 0
+		else { return fullRange }
+
+		let safeLength = max(0, min(edited.length, nsString.length - edited.location))
+		let safeEdit = NSRange(location: edited.location, length: safeLength)
+		let paragraphRange = nsString.paragraphRange(for: safeEdit)
+
+		// Expand one line on either side so a fence opener adjacent to the
+		// edit still triggers the full-doc fallback.
+		let probe = expandToLineBoundaries(paragraphRange, in: nsString)
+		let probeText = nsString.substring(with: probe)
+		if probeText.contains("```") {
+			return fullRange
+		}
+		return paragraphRange
+	}
+
+	private static func expandToLineBoundaries(_ range: NSRange, in nsString: NSString) -> NSRange {
+		var start = range.location
+		var end = range.location + range.length
+		while start > 0, nsString.character(at: start - 1) != unichar(0x0A) { start -= 1 }
+		if start > 0 { start -= 1 }
+		while end < nsString.length, nsString.character(at: end) != unichar(0x0A) { end += 1 }
+		if end < nsString.length { end += 1 }
+		return NSRange(location: start, length: end - start)
+	}
+
 	private static func apply(_ ranges: [NSRange], color: Color, layoutManager: NSLayoutManager) {
 		let nsColor = NSColor(color)
 		for range in ranges {
@@ -92,6 +156,13 @@ enum MarkdownSyntaxHighlighter {
 	private static func matches(for regex: NSRegularExpression, in string: String) -> [NSRange] {
 		let nsString = string as NSString
 		return regex.matches(in: string, range: NSRange(location: 0, length: nsString.length)).map(\.range)
+	}
+
+	/// Range-scoped variant — only returns matches whose ranges sit entirely
+	/// inside `searchRange`. Used by the incremental path so a regex doesn't
+	/// have to scan the whole document for inline-only patterns.
+	private static func matches(for regex: NSRegularExpression, in string: String, in searchRange: NSRange) -> [NSRange] {
+		regex.matches(in: string, range: searchRange).map(\.range)
 	}
 
 	private static func intersects(_ range: NSRange, _ exclusions: [NSRange]) -> Bool {
