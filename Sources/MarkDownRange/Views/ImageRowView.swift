@@ -12,11 +12,19 @@ struct ImageRowView: View {
 	var onLinkHover: ((String?) -> Void)? = nil
 
 	var body: some View {
-		FlowLayout(horizontalSpacing: 8, verticalSpacing: 8, alignment: .center) {
+		// `maxWidth: .infinity` lets FlowLayout claim the full container width,
+		// so its `.center` alignment has somewhere to actually center each row.
+		// Without it, FlowLayout reports its natural (widest-row) size, the
+		// outer `.aligned(.center)` centers that block, and narrower trailing
+		// rows look left-aligned within it.
+		// `verticalSpacing: 4` matches the tight inter-row gap GitHub uses for
+		// badge strips — the default 8 read as a visible paragraph break.
+		FlowLayout(horizontalSpacing: 8, verticalSpacing: 4, alignment: .center) {
 			ForEach(Array(images.enumerated()), id: \.offset) { _, item in
 				imageCell(item)
 			}
 		}
+		.frame(maxWidth: .infinity)
 	}
 
 	@ViewBuilder private func imageCell(_ item: ImageRowItem) -> some View {
