@@ -19,7 +19,7 @@ struct ImageRowView: View {
 		// rows look left-aligned within it.
 		// `verticalSpacing: 4` matches the tight inter-row gap GitHub uses for
 		// badge strips — the default 8 read as a visible paragraph break.
-		FlowLayout(horizontalSpacing: 4, verticalSpacing: 0, alignment: .center) {
+		FlowLayout(horizontalSpacing: 4, verticalSpacing: 4, alignment: .center) {
 			ForEach(Array(images.enumerated()), id: \.offset) { _, item in
 				imageCell(item)
 			}
