@@ -110,8 +110,8 @@ For completeness — these are features we add that are not in either spec:
 | Emoticons (`:-)`, `;)`, `8-)` …) | `EmoticonShortcodes` | `EmoticonShortcodesTests` (7) | Word-boundary-anchored. |
 | Smart quotes / typography | `SmartQuotes`, `SmartTypography` | `SmartTypographyTests` (12) · `MarkdownItParityTests.typographer_*` (10) | `--` → en-dash, `---` → em-dash, `...` → `…`, `(c)` → `©`, `(r)`, `(tm)`, `(p)`, `+-` → `±`. Skips link-reference titles, HTML attributes, structural dash lines. |
 | Custom containers (`::: warning`) | `CustomContainerProcessor` | `AlertBlockTests` (8) · `MarkdownItParityTests.plugin_customContainer` | Converts to GFM-style `[!WARNING]` alerts. |
-| Wikilinks (`[[Page]]`, `[[Page\|Alias]]`) | `WikilinkProcessor` | ❌ no dedicated test | Obsidian/Bear-style. Gap worth filling. |
-| Citations | `Citation` | ❌ no dedicated test | Pandoc-style. Gap worth filling. |
+| Wikilinks (`[[Page]]`, `[[Page\|Alias]]`) | `WikilinkProcessor` | `WikilinkProcessorTests` (8) | Obsidian/Bear-style. Covers pass-through, unclosed openers, empty brackets, multi-link lines, aliases, newline boundaries, percent-encoding. |
+| Citations | `Citation` | `CitationTests` (10) | Pandoc-style. Covers single ref/def, renumber by first-appearance order, duplicate-ref collapse, missing-def drop, fence-ignored definitions, rendered output, parseDefinition edge cases. |
 | Frontmatter | `MarkdownBlockParser.extractFrontmatter` | `FrontmatterTests` (10) | YAML key-value parsed off the top; strict key validation prevents arbitrary `---`-bracketed prose from being eaten. |
 | GFM-style alerts (`> [!NOTE]`, `[!TIP]`, `[!WARNING]`, `[!IMPORTANT]`, `[!CAUTION]`) | `convertAlerts` | `AlertBlockTests` (8) | We accept these even though they're a GitHub UI feature, not part of the published GFM spec. |
 | Heading lenient mode | `MarkdownOptions.headingsRequireSpaceAfterHash = false` | `MarkdownOptionsTests` (9) · `MarkdownSyntaxHighlighterTests` (6) | CommonMark divergence: `##Heading` (no space) is promoted to a heading. Opt-out available. |
@@ -124,8 +124,6 @@ For completeness — these are features we add that are not in either spec:
 2. **GFM extended autolinks (partial)** — `www.` prefix is not implemented; URL trailing-punctuation handling is `NSDataDetector`'s, not GFM's.
 3. **Lenient ATX headings as default** — diverges from CommonMark. Intentional, but flag-gated; consumers can opt back into strict mode.
 4. **Smart-typography is irreversible** — once `--` becomes `–`, the source no longer round-trips. Acceptable for a renderer; would need rethinking for a tool that re-serializes parsed AST.
-5. **No dedicated tests for `WikilinkProcessor` and `Citation`** — both processors run in the preprocessor pipeline and have implicit coverage via `PipelineBenchmarkTests` and `MarkdownMetaSampleTests`, but no focused behavioural tests. Worth adding.
-
 ---
 
 ## Test files reference
@@ -138,6 +136,7 @@ For completeness — these are features we add that are not in either spec:
 | `BackslashEscapesTests` | 7 | CommonMark § 2.4 — escapes for `*`, `_`, `[`, `` ` ``, `\`, plus non-escape and code-span literals. |
 | `BlankLineTests` | 4 | CommonMark § 4.9 — leading/trailing/multiple/separator blanks. |
 | `BlockQuoteTests` | 5 | CommonMark § 5.1 — simple/multi-line/nested/with-code/with-list. |
+| `CitationTests` | 10 | Pandoc-style `[@key]` references and `[@key]: …` definitions, with renumber and fence-skip rules. |
 | `CodeBlockTests` | 6 | CommonMark § 4.5 — fenced (` ``` `, `~~~`), language tags, whitespace preservation. |
 | `ComplexDocumentTests` | 9 | Integration of headings, lists, code, links across full documents. |
 | `DetailsSummaryTests` | 4 | `<details>`/`<summary>` post-processing into `.details` blocks. |
@@ -176,5 +175,6 @@ For completeness — these are features we add that are not in either spec:
 | `ThematicBreakTests` | 5 | CommonMark § 4.1 — `---`/`***`/`___`/with-spaces/between-paragraphs. |
 | `ThemeTests` | 6 | Theme value-type behaviour. |
 | `TokenizerTests` | 12 | HTML tokenizer/attribute parser primitives. |
+| `WikilinkProcessorTests` | 8 | Obsidian/Bear-style `[[Page]]` / `[[Page\|Alias]]` desugaring with percent-encoding. |
 
-**Total: 339 tests across 45 suites.**
+**Total: 357 tests across 47 suites.**
