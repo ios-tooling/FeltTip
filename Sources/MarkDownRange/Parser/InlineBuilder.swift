@@ -21,8 +21,11 @@ struct InlineBuilder: MarkupWalker {
 		self.fontSize = fontSize
 	}
 
-	private(set) var result = AttributedString()
-	private(set) var links: [LinkInfo] = []
+	// `internal` rather than `private(set)` so the linkify extension (in its
+	// own file) can write to them. The whole type is internal, so dropping
+	// the read/write split doesn't widen access beyond the module.
+	var result = AttributedString()
+	var links: [LinkInfo] = []
 	private var charOffset = 0
 	private var bold = false
 	private var italic = false
@@ -45,7 +48,10 @@ struct InlineBuilder: MarkupWalker {
 	}
 
 	mutating func finalize(linkifyURLs: Bool = true) -> InlineResult {
-		if linkifyURLs { linkifyBareURLs() }
+		if linkifyURLs {
+			linkifyBareURLs()
+			linkifyWWWPrefix()
+		}
 		return InlineResult(attributed: result, links: links)
 	}
 
@@ -225,33 +231,4 @@ struct InlineBuilder: MarkupWalker {
 		if !traits.isEmpty { str.inlineFontTraits = traits }
 	}
 
-	private static let urlDetector: NSDataDetector? = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-
-	private mutating func linkifyBareURLs() {
-		let plainText = String(result.characters)
-		guard !plainText.isEmpty, plainText.contains("://"), let detector = Self.urlDetector else { return }
-		let fullRange = NSRange(plainText.startIndex..<plainText.endIndex, in: plainText)
-		let matches = detector.matches(in: plainText, range: fullRange)
-
-		for match in matches.reversed() {
-			guard let url = match.url,
-				  let stringRange = Range(match.range, in: plainText) else { continue }
-			let startOffset = plainText.distance(from: plainText.startIndex, to: stringRange.lowerBound)
-			let endOffset = plainText.distance(from: plainText.startIndex, to: stringRange.upperBound)
-			let start = result.characters.index(result.startIndex, offsetBy: startOffset)
-			let end = result.characters.index(result.startIndex, offsetBy: endOffset)
-			let range = start..<end
-
-			// Skip runs that already have a link
-			var alreadyLinked = false
-			for run in result[range].runs {
-				if run.link != nil { alreadyLinked = true; break }
-			}
-			if alreadyLinked { continue }
-
-			result[range].link = url
-			result[range].foregroundColor = theme.linkColor
-			links.append(LinkInfo(url: url.absoluteString, characterOffset: startOffset))
-		}
-	}
 }

@@ -51,7 +51,7 @@ Two notes that affect the entire audit:
 | 4.3 | Setext headings | ✅ | `HeadingTests.setextH2` · `MarkdownItParityTests.commonMark_setextHeadings` | swift-markdown. `HighlightSyntax` skips lines made of only `=`/whitespace so `===` underlines aren't mistaken for `==highlight==` syntax. |
 | 4.4 | Indented code blocks | ✅ | `IndentedCodeTests` (4) · parity | swift-markdown. |
 | 4.5 | Fenced code blocks | ✅ | `CodeBlockTests` (6) · parity | swift-markdown. Language attribute is preserved on `.codeBlock(language:)`. All preprocessors that scan text skip fenced blocks. |
-| 4.6 | HTML blocks | ✅ | `HTMLBlockTests` (5) · `HTMLDivAndImageTests` (6) · parity | swift-markdown emits `HTMLBlock`. We then post-process selected shapes: `<table>` → `.table`, `<dl>` → `.definitionList`, `<pre>` → `.codeBlock`, `<details>` → `.details`, `<div>`/`<p>` with images/anchors → image/imageRow/paragraph via `HTMLInlineConverter`. Unconverted HTML blocks render via `HTMLBlockView` (WebKit-backed). |
+| 4.6 | HTML blocks | ✅ | `HTMLBlockTests` (5) · `HTMLDivAndImageTests` (6) · parity | swift-markdown emits `HTMLBlock`. We then post-process selected shapes: `<table>` → `.table`, `<dl>` → `.definitionList`, `<pre>` → `.codeBlock`, `<details>` → `.details`, `<div>`/`<p>` with images/anchors → image/imageRow/paragraph via `HTMLInlineConverter`. Unconverted HTML blocks render via `HTMLBlockView`, which decodes HTML through `NSAttributedString` (no WebKit, no JavaScript execution path). |
 | 4.7 | Link reference definitions | ✅ | `LinkReferenceTests` (5) · parity | swift-markdown resolves shortcut/collapsed/full references. `SmartQuotes` explicitly skips link-reference definitions so `[ref]: url "Title"` titles aren't curled. |
 | 4.8 | Paragraphs | ✅ | `ParagraphTests` (13) · parity | swift-markdown. |
 | 4.9 | Blank lines | ✅ | `BlankLineTests` (4) | swift-markdown. Leading/trailing blanks ignored, multiple internal blanks collapse to a single separator. |
@@ -89,8 +89,8 @@ GFM adds five sections on top of CommonMark. `swift-markdown` ships the first th
 | 4.10 | Tables (extension) | ✅ | `TableTests` (4) · `HTMLBlockTests.htmlTableConvertedToTableBlock` · `MarkdownItParityTests.{gfm_table,gfm_tableRightAlignment}` | swift-markdown emits `Markdown.Table`. `BlockBuilder.visitTable` carries header row, body rows, and per-column alignment (`TableColumnAlignment.left/center/right/default`). Image-only cells are surfaced as `.image` table cells so they render as bitmaps, not alt text. `HTMLTableParser` parses raw `<table>` HTML blocks into the same `.table` case. |
 | 5.3 | Task list items (extension) | ✅ | `TaskListTests` (5) · `MarkdownItParityTests.gfm_taskList` | swift-markdown's `ListItem.checkbox` is read in `visitOrderedList`/`visitUnorderedList`. Checkbox state and per-document index recorded on `ListItemContent` so toggles can write back through `CheckboxToggleAction`. |
 | 6.5 | Strikethrough (extension) | ✅ | `ParagraphTests.strikethrough` · `MarkdownItParityTests.gfm_strikethrough` | swift-markdown emits `Strikethrough` nodes; `InlineBuilder.visitStrikethrough` toggles a flag that turns into `.strikethroughStyle = .single` on the run. Both `~~` and `~` accepted by upstream. |
-| 6.9 | Autolinks (extension) | ⚠️ | `AutolinkTests.{bareURLAutolink,emailAutolink,multipleBareURLs,bareURLDoesNotDuplicateExplicitLink}` · `MarkdownItParityTests.gfm_autolinkBareURL` | Bare-URL linkification via `NSDataDetector` in `InlineBuilder.linkifyBareURLs` (toggle-able via `linkifyURLs:`). Catches `https://`/`http://` URLs anywhere in text. **Divergences from GFM:** (a) no `www.` autolinker — `www.example.com` without a scheme is *not* turned into a link; (b) trailing-punctuation trimming follows `NSDataDetector` heuristics, not GFM's explicit rules about trailing `?!.,:*_~`. Email autolinking works for `foo@bar` patterns via `NSDataDetector`. |
-| 6.11 | Disallowed Raw HTML (extension) | ❌ | — (not implemented) | GFM filters `<title>`, `<textarea>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<script>`, `<plaintext>` to text. We do **not** filter. Whitelisted tags are styled; everything else falls through `HTMLBlockView` (WebKit) or renders as plain text in inline contexts. Acceptable for a local-trust editor but would need filtering before rendering untrusted content. |
+| 6.9 | Autolinks (extension) | ✅ | `AutolinkTests` (7) · `WWWAutolinkTests` (13) · `MarkdownItParityTests.gfm_autolinkBareURL` | Two-pass linkification on the finalized inline string. `linkifyBareURLs` runs `NSDataDetector` for scheme-bearing URLs (`http://`, `https://`) and email patterns. `linkifyWWWPrefix` adds GFM's `www.`-prefix extension: matches `\bwww\.[…]+(?:\.[…])+(?:/…)?`, maps to `http://<run>`, strips trailing `?!.,:*_~` and unbalanced trailing `)` per GFM. Both passes skip ranges that already carry a link or sit inside a code-span / `<kbd>` (verbatim) region. Toggle-able via `linkifyURLs:`. |
+| 6.11 | Disallowed Raw HTML (extension) | ❌ | — (not implemented) | GFM filters `<title>`, `<textarea>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<script>`, `<plaintext>` to text. We do **not** filter. Lower risk than it sounds for our renderer: `HTMLBlockView` uses `NSAttributedString` HTML decoding (no JavaScript execution); whitelisted tags are styled and the rest is rendered as plain styled text. Filtering would still be required if we ever pipe untrusted markdown through a WebKit surface. |
 
 ---
 
@@ -120,10 +120,9 @@ For completeness — these are features we add that are not in either spec:
 
 ## Known gaps worth tracking
 
-1. **GFM disallowed raw HTML** — no filtering of `<script>`, `<style>`, `<iframe>`, etc. Not safe for untrusted input as-is. (See § 6.11 above.)
-2. **GFM extended autolinks (partial)** — `www.` prefix is not implemented; URL trailing-punctuation handling is `NSDataDetector`'s, not GFM's.
-3. **Lenient ATX headings as default** — diverges from CommonMark. Intentional, but flag-gated; consumers can opt back into strict mode.
-4. **Smart-typography is irreversible** — once `--` becomes `–`, the source no longer round-trips. Acceptable for a renderer; would need rethinking for a tool that re-serializes parsed AST.
+1. **GFM disallowed raw HTML** — no filtering of `<script>`, `<style>`, `<iframe>`, etc. Lower risk than it sounds because `HTMLBlockView` decodes HTML through `NSAttributedString` (no JS execution path), but filtering would still be needed before piping untrusted markdown through a WebKit surface. (See § 6.11 above.)
+2. **Lenient ATX headings as default** — diverges from CommonMark. Intentional, but flag-gated; consumers can opt back into strict mode.
+3. **Smart-typography is irreversible** — once `--` becomes `–`, the source no longer round-trips. Acceptable for a renderer; would need rethinking for a tool that re-serializes parsed AST.
 ---
 
 ## Test files reference
@@ -175,6 +174,7 @@ For completeness — these are features we add that are not in either spec:
 | `ThematicBreakTests` | 5 | CommonMark § 4.1 — `---`/`***`/`___`/with-spaces/between-paragraphs. |
 | `ThemeTests` | 6 | Theme value-type behaviour. |
 | `TokenizerTests` | 12 | HTML tokenizer/attribute parser primitives. |
+| `WWWAutolinkTests` | 13 | GFM § 6.9 `www.`-prefix autolinker — bare URL, path, TLD requirement, trailing-punctuation strip, balanced/unbalanced paren rules, code-span / kbd skip, case-insensitive match. |
 | `WikilinkProcessorTests` | 8 | Obsidian/Bear-style `[[Page]]` / `[[Page\|Alias]]` desugaring with percent-encoding. |
 
-**Total: 357 tests across 47 suites.**
+**Total: 375 tests across 48 suites.**
