@@ -27,8 +27,17 @@ struct ScaleDownImage: View {
 	/// whose path ends in `.js`). Forces the view through the SVG/WebKit
 	/// path, which can render whatever the server actually sends.
 	@State private var rasterLoadFailed = false
+	/// Flips to `true` after measureSVG actually tried and got no data back —
+	/// used to swap the WebKit view for a labeled placeholder so a broken
+	/// SVG doesn't render as an empty rectangle.
+	@State private var svgLoadFailed = false
 
 	private var effectiveIsSVG: Bool { isSVG || rasterLoadFailed }
+	private var didFail: Bool {
+		if isSVG && svgLoadFailed { return true }
+		if !isSVG && rasterLoadFailed && loadedImage == nil { return true }
+		return false
+	}
 
 	@MainActor
 	init(url: URL, alt: String, htmlWidth: CGFloat? = nil, htmlHeight: CGFloat? = nil, allowUpscaling: Bool = false) {
@@ -49,7 +58,9 @@ struct ScaleDownImage: View {
 
 	var body: some View {
 		Group {
-			if effectiveIsSVG {
+			if didFail {
+				failurePlaceholder
+			} else if effectiveIsSVG {
 				#if os(macOS)
 				let size = displaySize ?? CGSize(width: 400, height: 200)
 				SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
@@ -66,10 +77,28 @@ struct ScaleDownImage: View {
 		.preference(key: PopoutableImageLoadKey.self, value: loadState)
 	}
 
+	@ViewBuilder private var failurePlaceholder: some View {
+		ImageFailurePlaceholder(alt: alt, size: placeholderSize)
+	}
+
+	/// Hint for the placeholder's box size when we can derive one from the
+	/// markdown (e.g. `<img width="400">`); falls back to nil so small badges
+	/// just size to their alt text.
+	private var placeholderSize: CGSize? {
+		if let htmlWidth, let htmlHeight {
+			return CGSize(width: htmlWidth, height: htmlHeight)
+		}
+		if let htmlWidth {
+			return CGSize(width: htmlWidth, height: htmlWidth)
+		}
+		return nil
+	}
+
 	/// Reported to any enclosing `PopoutableImageView` so it can hide the
 	/// zoom button on broken images. `nil` while we're still loading, `true`
 	/// once we have something real to draw, `false` if the load gave up.
 	private var loadState: Bool? {
+		if didFail { return false }
 		if rasterLoadFailed && loadedImage == nil && intrinsicSize == nil {
 			return false
 		}
@@ -131,7 +160,10 @@ struct ScaleDownImage: View {
 
 	private func measureSVG() async {
 		guard isSVG, intrinsicSize == nil else { return }
-		guard let data = try? await ImageDataLoader.data(from: url) else { return }
+		guard let data = try? await ImageDataLoader.data(from: url) else {
+			svgLoadFailed = true
+			return
+		}
 		let text = String(data: data, encoding: .utf8) ?? ""
 		let size = SVGDimensionParser.parse(text) ?? CGSize(width: 400, height: 200)
 		intrinsicSize = size
