@@ -56,7 +56,11 @@ struct SVGImageView: NSViewRepresentable {
 		  onerror="webkit.messageHandlers.loadFailed.postMessage({})"
 		></body></html>
 		"""
-		webView.loadHTMLString(html, baseURL: url)
+		// `baseURL: nil` keeps WebKit from treating the inline page as having
+		// originated from raw.githubusercontent.com (or wherever the image
+		// lives), which would impose a same-origin policy on resources the
+		// `<img>` tag is trying to fetch from elsewhere.
+		webView.loadHTMLString(html, baseURL: nil)
 	}
 
 	final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
