@@ -63,7 +63,12 @@ struct ScaleDownImage: View {
 			} else if effectiveIsSVG {
 				#if os(macOS)
 				let size = displaySize ?? CGSize(width: 400, height: 200)
-				SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
+				SVGImageView(
+					url: url,
+					maxWidth: size.width,
+					maxHeight: size.height,
+					onLoadFailure: { Task { @MainActor in svgLoadFailed = true } }
+				)
 					.frame(width: size.width, height: size.height)
 					.accessibilityLabel(alt.isEmpty ? "Image" : alt)
 					.task(id: url) { await measureSVG() }
