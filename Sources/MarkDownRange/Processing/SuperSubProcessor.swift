@@ -40,6 +40,15 @@ public enum SuperSubProcessor {
 					i = line.index(after: close); continue
 				}
 			}
+			// Pass HTML tags through verbatim. A `~` inside an attribute value
+			// (e.g. a URL with `~user`) must not pair with another `~` elsewhere
+			// on the line — that would mangle the tag into `<sub>` markup and
+			// destroy the surrounding HTML structure.
+			if ch == "<", let close = line[line.index(after: i)...].firstIndex(of: ">") {
+				if !pending.isEmpty { pieces.append(applyMarkers(pending)); pending = "" }
+				pieces.append(String(line[i...close]))
+				i = line.index(after: close); continue
+			}
 			pending.append(ch)
 			i = line.index(after: i)
 		}
