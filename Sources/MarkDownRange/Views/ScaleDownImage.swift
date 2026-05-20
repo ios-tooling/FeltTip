@@ -99,7 +99,11 @@ struct ScaleDownImage: View {
 			// gobbling a whole screen for narrow viewports.
 			return CGSize(width: htmlWidth, height: max(120, htmlWidth * 0.5))
 		}
-		if let intrinsicSize { return intrinsicSize }
+		// Deliberately ignore `intrinsicSize` here: a failed SVG often falls
+		// back to the 400x200 measureSVG default, and reusing that as the
+		// placeholder bounds blew small inline images (e.g. CI badges) up to
+		// the size of a hero figure. Without a markdown-supplied width, let
+		// the placeholder size itself to its alt text.
 		return nil
 	}
 
