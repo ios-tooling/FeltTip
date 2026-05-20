@@ -26,11 +26,24 @@ enum SnapshotReplayer {
 			?? themeForRecordedName(bundle.metadata.theme)
 		let fontSize = CGFloat(bundle.metadata.fontSize)
 
+		// Horizontal padding to mirror Marker's WidthConstrainedView. If
+		// the capture happened with a max-content-width, content was
+		// centered within (geo - maxWidth)/2 pad on each side.
+		let horizontalPadding: CGFloat
+		if let maxWidth = bundle.metadata.contentMaxWidth, maxWidth < Double(size.width) {
+			horizontalPadding = CGFloat(max(0, (Double(size.width) - maxWidth) / 2))
+		} else {
+			horizontalPadding = 0
+		}
+		let statusBarHeight = CGFloat(bundle.metadata.statusBarHeight ?? 0)
+
 		let root = ReplayRoot(
 			text: bundle.source,
 			theme: theme,
 			fontSize: fontSize,
-			scrollFraction: bundle.metadata.scrollFraction
+			scrollFraction: bundle.metadata.scrollFraction,
+			horizontalPadding: horizontalPadding,
+			statusBarHeight: statusBarHeight
 		)
 		let hostingView = NSHostingView(rootView: root)
 		hostingView.frame = NSRect(origin: .zero, size: size)
@@ -87,18 +100,42 @@ private struct ReplayRoot: View {
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
 	let scrollFraction: Double
+	/// Horizontal padding to mirror WidthConstrainedView. 0 means no
+	/// constraint.
+	let horizontalPadding: CGFloat
+	/// Reserved bottom strip mirroring the document window's status bar.
+	/// 0 means no strip (recorder-window captures or pre-v3 bundles).
+	let statusBarHeight: CGFloat
 
 	@State private var selectedHeading: String?
 	@State private var linkDisplay = LinkDisplayState()
 
 	var body: some View {
-		FormattedMarkdownScreen(
-			text: text,
-			selectedHeadingID: $selectedHeading,
-			theme: theme,
-			fontSize: fontSize,
-			syncScrollFraction: scrollFraction
-		)
+		VStack(spacing: 0) {
+			FormattedMarkdownScreen(
+				text: text,
+				selectedHeadingID: $selectedHeading,
+				theme: theme,
+				fontSize: fontSize,
+				syncScrollFraction: scrollFraction
+			)
+			.padding(.horizontal, horizontalPadding)
+
+			if statusBarHeight > 0 {
+				// Plain stand-in for the document status bar — we don't
+				// reproduce the live word/character counts, just the
+				// strip's footprint and divider. The diff in those pixels
+				// is bounded by the strip's small height.
+				Rectangle()
+					.fill(theme.backgroundColor.opacity(0.95))
+					.frame(height: statusBarHeight)
+					.overlay(alignment: .top) {
+						Rectangle()
+							.fill(theme.secondaryColor.opacity(0.25))
+							.frame(height: 1)
+					}
+			}
+		}
 		.environment(linkDisplay)
 		.background(theme.backgroundColor)
 	}

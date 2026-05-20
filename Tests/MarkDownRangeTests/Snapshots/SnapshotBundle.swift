@@ -25,6 +25,15 @@ struct SnapshotBundle {
 		var themeColors: MarkdownThemeSnapshot?
 		var fontSize: Double
 		var viewMode: String
+		/// Optional — set on schema v3+. The replayer mirrors the
+		/// document window's WidthConstrainedView by horizontally
+		/// padding FormattedMarkdownScreen so it fills exactly this
+		/// many points (centered). nil ⇒ content fills the full width.
+		var contentMaxWidth: Double?
+		/// Optional — set on schema v3+. Height of the document status
+		/// bar that was in the capture; replayer reserves a matching
+		/// strip at the bottom so heights line up.
+		var statusBarHeight: Double?
 		var capturedAt: Date
 		var schemaVersion: Int
 	}
