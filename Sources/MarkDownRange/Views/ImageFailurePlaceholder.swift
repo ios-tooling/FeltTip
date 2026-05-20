@@ -14,21 +14,24 @@ struct ImageFailurePlaceholder: View {
 	let size: CGSize?
 
 	var body: some View {
-		HStack(alignment: .top, spacing: 6) {
+		VStack(spacing: 8) {
 			Image(systemName: "photo.badge.exclamationmark")
-				.foregroundStyle(.secondary)
+				.font(.system(size: 28))
+				.foregroundStyle(Color.secondary)
 			if !alt.isEmpty {
 				Text(alt)
-					.foregroundStyle(.primary)
+					.font(.callout)
+					.foregroundStyle(Color.primary)
+					.multilineTextAlignment(.center)
 					.fixedSize(horizontal: false, vertical: true)
 			}
 		}
-		.padding(8)
-		.frame(width: size?.width, height: size?.height, alignment: .topLeading)
-		.background(.quaternary.opacity(0.5))
+		.padding(16)
+		.frame(width: size?.width, height: size?.height)
+		.background(Color.gray.opacity(0.15))
 		.overlay(
 			RoundedRectangle(cornerRadius: 4)
-				.strokeBorder(.secondary.opacity(0.4))
+				.strokeBorder(Color.secondary.opacity(0.4))
 		)
 		.accessibilityLabel(alt.isEmpty ? "Image failed to load" : "Image failed to load: \(alt)")
 	}

@@ -36,6 +36,7 @@ struct HeadingBlockView: View {
 		}
 		.padding(.top, topPadding)
 		.padding(.bottom, bottomPadding)
+		.frame(maxWidth: .infinity, alignment: frameAlignment)
 	}
 
 	private var frameAlignment: Alignment {

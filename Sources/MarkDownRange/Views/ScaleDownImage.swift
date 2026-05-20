@@ -94,8 +94,12 @@ struct ScaleDownImage: View {
 			return CGSize(width: htmlWidth, height: htmlHeight)
 		}
 		if let htmlWidth {
-			return CGSize(width: htmlWidth, height: htmlWidth)
+			// No height hint — pick something proportional rather than square.
+			// Half-height reads as an "image-shaped" placeholder without
+			// gobbling a whole screen for narrow viewports.
+			return CGSize(width: htmlWidth, height: max(120, htmlWidth * 0.5))
 		}
+		if let intrinsicSize { return intrinsicSize }
 		return nil
 	}
 
