@@ -48,19 +48,34 @@ struct ScaleDownImage: View {
 	}
 
 	var body: some View {
-		if effectiveIsSVG {
-			#if os(macOS)
-			let size = displaySize ?? CGSize(width: 400, height: 200)
-			SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
-				.frame(width: size.width, height: size.height)
-				.accessibilityLabel(alt.isEmpty ? "Image" : alt)
-				.task(id: url) { await measureSVG() }
-			#else
-			rasterImage
-			#endif
-		} else {
-			rasterImage
+		Group {
+			if effectiveIsSVG {
+				#if os(macOS)
+				let size = displaySize ?? CGSize(width: 400, height: 200)
+				SVGImageView(url: url, maxWidth: size.width, maxHeight: size.height)
+					.frame(width: size.width, height: size.height)
+					.accessibilityLabel(alt.isEmpty ? "Image" : alt)
+					.task(id: url) { await measureSVG() }
+				#else
+				rasterImage
+				#endif
+			} else {
+				rasterImage
+			}
 		}
+		.preference(key: PopoutableImageLoadKey.self, value: loadState)
+	}
+
+	/// Reported to any enclosing `PopoutableImageView` so it can hide the
+	/// zoom button on broken images. `nil` while we're still loading, `true`
+	/// once we have something real to draw, `false` if the load gave up.
+	private var loadState: Bool? {
+		if rasterLoadFailed && loadedImage == nil && intrinsicSize == nil {
+			return false
+		}
+		if loadedImage != nil { return true }
+		if isSVG, intrinsicSize != nil { return true }
+		return nil
 	}
 
 	private var rasterImage: some View {

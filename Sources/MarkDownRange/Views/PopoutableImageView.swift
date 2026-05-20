@@ -5,6 +5,17 @@
 
 import SwiftUI
 
+/// Signal published by the content inside a `PopoutableImageView` to indicate
+/// whether the image actually loaded. `true` = success, `false` = failure,
+/// `nil` = still pending. Used to suppress the zoom button when there's
+/// nothing meaningful to zoom into.
+struct PopoutableImageLoadKey: PreferenceKey {
+	static let defaultValue: Bool? = nil
+	static func reduce(value: inout Bool?, nextValue: () -> Bool?) {
+		if let next = nextValue() { value = next }
+	}
+}
+
 @MainActor
 struct PopoutableImageView<Content: View>: View {
 	let url: URL
@@ -18,6 +29,10 @@ struct PopoutableImageView<Content: View>: View {
 	@State private var isContentHovering = false
 	@State private var isButtonHovering = false
 	@State private var cacheToken: UUID?
+	/// Image-load state reported by the wrapped content via
+	/// `PopoutableImageLoadKey`. `nil` means the content hasn't reported yet
+	/// (treated as "still loading" — the button stays hidden until success).
+	@State private var didLoad: Bool?
 
 	init(
 		url: URL,
@@ -42,6 +57,7 @@ struct PopoutableImageView<Content: View>: View {
 			popoutButton
 		}
 		.contentShape(Rectangle())
+		.onPreferenceChange(PopoutableImageLoadKey.self) { didLoad = $0 }
 		#if os(macOS)
 		.onHover { isContentHovering = $0 }
 		.onAppear(perform: beginObservingDimensions)
@@ -60,7 +76,10 @@ struct PopoutableImageView<Content: View>: View {
 
 	@ViewBuilder private var popoutButton: some View {
 		#if os(macOS)
-		if MarkdownImageSizing.shouldOfferPopout(for: displayedSize) {
+		// `didLoad == true` requires the wrapped content to explicitly tell us
+		// it succeeded. Failed loads (and content that hasn't reported yet)
+		// keep the button hidden so we don't offer to zoom a broken image.
+		if didLoad == true, MarkdownImageSizing.shouldOfferPopout(for: displayedSize) {
 			MarkdownAccessoryButton(
 				systemImage: "arrow.up.left.and.arrow.down.right",
 				theme: theme,
