@@ -58,6 +58,14 @@ public struct FormattedMarkdownScreen: View {
 
 	public var body: some View {
 		VStack(spacing: 0) {
+			if renderModel == nil {
+				// First parse happens on a detached task. Show a spinner so
+				// the window doesn't appear blank while it runs.
+				ProgressView()
+					.controlSize(.large)
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
+					.background(theme.backgroundColor)
+			}
 			if let renderModel {
 				ScrollViewReader { proxy in
 					ScrollView {

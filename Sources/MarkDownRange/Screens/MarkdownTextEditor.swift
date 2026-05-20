@@ -51,6 +51,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		let textView = MarkdownFormattingTextView()
 
 		textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+		context.coordinator.lastAppliedFontSize = fontSize
 		textView.isEditable = true
 		textView.isRichText = false
 		textView.allowsUndo = true
@@ -115,8 +116,18 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		defer { context.coordinator.isUpdatingFromSwiftUI = false }
 		guard let textView = scrollView.documentView as? NSTextView else { return }
 
-		let expectedFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-		if textView.font != expectedFont { textView.font = expectedFont }
+		// Setting `textView.font` writes the font attribute across the whole
+		// textStorage, which clobbers the heading bolds the syntax highlighter
+		// has already applied. SwiftUI re-enters updateNSView on every cursor
+		// tick, so if we did this unconditionally the bolds would flash off on
+		// each keystroke and only return when the highlight debounce caught
+		// up — visible as headings "shimmering". Track the last-applied size
+		// in the coordinator and only rewrite the font when it actually
+		// changes.
+		if context.coordinator.lastAppliedFontSize != fontSize {
+			textView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+			context.coordinator.lastAppliedFontSize = fontSize
+		}
 		applyTheme(to: textView, scrollView: scrollView)
 		updateRuler(scrollView: scrollView, textView: textView)
 		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
@@ -261,6 +272,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrolledOffset: Int = -1
 		var isSyncScroll = false
 		var isUpdatingFromSwiftUI = false
+		var lastAppliedFontSize: CGFloat = 0
 		var lastHighlightedText: String?
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
