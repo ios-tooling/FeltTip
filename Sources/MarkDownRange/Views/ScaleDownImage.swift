@@ -83,28 +83,14 @@ struct ScaleDownImage: View {
 	}
 
 	@ViewBuilder private var failurePlaceholder: some View {
-		ImageFailurePlaceholder(alt: alt, size: placeholderSize)
-	}
-
-	/// Hint for the placeholder's box size when we can derive one from the
-	/// markdown (e.g. `<img width="400">`); falls back to nil so small badges
-	/// just size to their alt text.
-	private var placeholderSize: CGSize? {
-		if let htmlWidth, let htmlHeight {
-			return CGSize(width: htmlWidth, height: htmlHeight)
-		}
-		if let htmlWidth {
-			// No height hint — pick something proportional rather than square.
-			// Half-height reads as an "image-shaped" placeholder without
-			// gobbling a whole screen for narrow viewports.
-			return CGSize(width: htmlWidth, height: max(120, htmlWidth * 0.5))
-		}
-		// Deliberately ignore `intrinsicSize` here: a failed SVG often falls
-		// back to the 400x200 measureSVG default, and reusing that as the
-		// placeholder bounds blew small inline images (e.g. CI badges) up to
-		// the size of a hero figure. Without a markdown-supplied width, let
-		// the placeholder size itself to its alt text.
-		return nil
+		// Pass width/height separately so the placeholder can honor each
+		// independently — a markdown `<img width="400">` reserves a 400-wide
+		// slot but lets the height collapse to fit the alt label, mirroring a
+		// browser's default broken-image rendering. intrinsicSize is
+		// deliberately ignored: failed SVGs often cache the 400x200
+		// measureSVG fallback, and reusing it here ballooned CI badges to
+		// hero size.
+		ImageFailurePlaceholder(alt: alt, width: htmlWidth, height: htmlHeight)
 	}
 
 	/// Reported to any enclosing `PopoutableImageView` so it can hide the

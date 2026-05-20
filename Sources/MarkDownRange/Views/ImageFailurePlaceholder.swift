@@ -11,27 +11,32 @@ import SwiftUI
 /// what was supposed to be there.
 struct ImageFailurePlaceholder: View {
 	let alt: String
-	let size: CGSize?
+	/// Width/height hints from the source markdown (`<img width=… height=…>`).
+	/// Each is honored independently — a width-only image gets the width
+	/// reserved and the height sized to fit the alt label, matching a
+	/// browser's default broken-image affordance.
+	let width: CGFloat?
+	let height: CGFloat?
 
 	var body: some View {
-		VStack(spacing: 8) {
-			Image(systemName: "photo.badge.exclamationmark")
-				.font(.system(size: 28))
+		HStack(spacing: 6) {
+			Image(systemName: "photo")
+				.font(.system(size: 12))
 				.foregroundStyle(Color.secondary)
 			if !alt.isEmpty {
 				Text(alt)
-					.font(.callout)
-					.foregroundStyle(Color.primary)
-					.multilineTextAlignment(.center)
-					.fixedSize(horizontal: false, vertical: true)
+					.font(.footnote)
+					.foregroundStyle(Color.secondary)
+					.lineLimit(1)
+					.truncationMode(.tail)
 			}
 		}
-		.padding(16)
-		.frame(width: size?.width, height: size?.height)
-		.background(Color.gray.opacity(0.15))
+		.padding(.horizontal, 8)
+		.padding(.vertical, 4)
+		.frame(width: width, height: height, alignment: .leading)
 		.overlay(
-			RoundedRectangle(cornerRadius: 4)
-				.strokeBorder(Color.secondary.opacity(0.4))
+			RoundedRectangle(cornerRadius: 3)
+				.strokeBorder(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
 		)
 		.accessibilityLabel(alt.isEmpty ? "Image failed to load" : "Image failed to load: \(alt)")
 	}
