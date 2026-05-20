@@ -111,7 +111,20 @@ public enum MarkdownBlockParser {
 	}
 
 	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-		convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLTables(convertDefinitionLists(blocks))))))
+		convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLHeadings(convertHTMLTables(convertDefinitionLists(blocks)))))))
+	}
+
+	/// Convert standalone `<h1>`…`<h6>` HTML blocks into native heading blocks
+	/// so they share font weight/size and outline behavior with markdown
+	/// headings. Without this they fell through to the generic HTML block
+	/// renderer, which strips heading-level styling and reads as plain text.
+	private static func convertHTMLHeadings(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+		blocks.map { block in
+			guard case .htmlBlock(let html, let id) = block,
+				  let parsed = HTMLHeadingParser.parse(html: html, id: id)
+			else { return block }
+			return parsed
+		}
 	}
 
 	/// Convert `<dl>` HTML blocks into `.definitionList` blocks.

@@ -16,6 +16,27 @@ import Testing
 		#expect(content.contains("note"))
 	}
 
+	@Test func htmlHeadingConvertedToNativeHeading() {
+		let md = "<h1>Hello world</h1>"
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .heading(let level, let content, _) = blocks.first else {
+			Issue.record("Expected heading, got \(blocks.first.debugDescription)"); return
+		}
+		#expect(level == 1)
+		#expect(String(content.characters) == "Hello world")
+	}
+
+	@Test func htmlHeadingWithAlignWrappedInAligned() {
+		let md = "<h1 align=\"center\">Instant-loading web apps, without effort</h1>"
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .aligned(_, let inner, _) = blocks.first,
+			  case .heading(let level, let content, _) = inner else {
+			Issue.record("Expected aligned heading, got \(blocks.first.debugDescription)"); return
+		}
+		#expect(level == 1)
+		#expect(String(content.characters).contains("Instant-loading"))
+	}
+
 	@Test func htmlParagraphConvertedToNativeBlock() {
 		let md = "<p>Hello <strong>world</strong></p>"
 		let blocks = MarkdownBlockParser.parse(md)
