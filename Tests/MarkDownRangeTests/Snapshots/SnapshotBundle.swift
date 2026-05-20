@@ -6,6 +6,7 @@
 #if os(macOS)
 import Foundation
 import AppKit
+@testable import MarkDownRange
 
 /// In-memory shape of a recorded .markerSnap. The replayer rebuilds a
 /// matching render context from `metadata` and pixel-diffs the result
@@ -21,6 +22,7 @@ struct SnapshotBundle {
 		var contentSize: CGSize
 		var scrollFraction: Double
 		var theme: String
+		var themeColors: MarkdownThemeSnapshot?
 		var fontSize: Double
 		var viewMode: String
 		var capturedAt: Date

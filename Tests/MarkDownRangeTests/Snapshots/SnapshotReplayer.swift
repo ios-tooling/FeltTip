@@ -18,7 +18,12 @@ enum SnapshotReplayer {
 	static func render(_ bundle: SnapshotBundle, settleSeconds: TimeInterval = 4) async -> NSImage? {
 		let size = bundle.metadata.contentSize
 		guard size.width > 0, size.height > 0 else { return nil }
-		let theme = themeForRecordedName(bundle.metadata.theme)
+		// Prefer the baked-in resolved colors when present (schema v2+);
+		// older bundles fall back to the built-in MarkdownTheme matching
+		// the recorded theme rawValue.
+		let theme: MarkdownTheme = bundle.metadata.themeColors
+			.map(MarkdownTheme.init(snapshot:))
+			?? themeForRecordedName(bundle.metadata.theme)
 		let fontSize = CGFloat(bundle.metadata.fontSize)
 
 		let root = ReplayRoot(
