@@ -24,6 +24,10 @@ public struct FormattedMarkdownScreen: View {
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var highlightedSectionID: String?
 	var onVisibleSectionChanged: ((String) -> Void)?
+	/// Fires whenever the async render task finishes and the section list
+	/// becomes available (or refreshes due to a key change). Lets snapshot
+	/// tooling avoid capturing while the canvas is still blank.
+	var onRenderReady: (() -> Void)?
 	@Environment(LinkDisplayState.self) var linkDisplay
 
 	public init(
@@ -37,7 +41,8 @@ public struct FormattedMarkdownScreen: View {
 		focusModeEnabled: Bool = false,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		highlightedSectionID: String? = nil,
-		onVisibleSectionChanged: ((String) -> Void)? = nil
+		onVisibleSectionChanged: ((String) -> Void)? = nil,
+		onRenderReady: (() -> Void)? = nil
 	) {
 		self.text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -50,6 +55,7 @@ public struct FormattedMarkdownScreen: View {
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.highlightedSectionID = highlightedSectionID
 		self.onVisibleSectionChanged = onVisibleSectionChanged
+		self.onRenderReady = onRenderReady
 	}
 
 	private var renderKey: FormattedMarkdownRenderModel.Key {
@@ -159,6 +165,7 @@ public struct FormattedMarkdownScreen: View {
 				let model = await FormattedMarkdownRenderModel(key: key)
 				guard !Task.isCancelled else { return }
 				renderModel = model
+				onRenderReady?()
 			}
 		}
 		.environment(\.openURL, OpenURLAction { url in
