@@ -1,0 +1,3 @@
+.markerSnap bundles autosaved by Marker's Snapshot Recorder window
+(Debug menu → Snapshot Recorder…). The replayer test (TODO) walks this
+directory and asserts each bundle still matches the engine's render.
