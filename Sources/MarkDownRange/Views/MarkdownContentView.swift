@@ -98,10 +98,25 @@ public struct MarkdownContentView: View {
 		case .frontmatter(let pairs, _):
 			FrontmatterView(pairs: pairs, theme: theme)
 		case .aligned(let alignment, let inner, _):
-			AnyView(
-				Self.blockView(for: inner, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
-					.frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
-			)
+			// Headings need the alignment pushed into their own layout — the
+			// inner VStack(alignment: .leading) + Divider otherwise hug the
+			// leading edge regardless of any outer .frame alignment.
+			if case .heading(let level, let content, _) = inner {
+				AnyView(
+					HeadingBlockView(
+						level: level,
+						content: content,
+						theme: theme,
+						fontSize: fontSize,
+						alignment: alignment
+					)
+				)
+			} else {
+				AnyView(
+					Self.blockView(for: inner, theme: theme, fontSize: fontSize, baseURL: baseURL, onLinkHover: onLinkHover)
+						.frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+				)
+			}
 		case .definitionList(let items, _):
 			DefinitionListView(items: items, theme: theme, fontSize: fontSize)
 		}
