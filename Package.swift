@@ -30,6 +30,13 @@ let package = Package(
 			],
 			resources: [.copy("Resources")]
 		),
-		.testTarget(name: "MarkDownRangeTests", dependencies: ["MarkDownRange"]),
+		.testTarget(
+			name: "MarkDownRangeTests",
+			dependencies: ["MarkDownRange"],
+			// Snapshot bundles are accessed via `#filePath` from the replayer
+			// tests, not as compiled-in resources. Excluding the directory
+			// silences SPM's "unhandled file" warnings for every .markerSnap.
+			exclude: ["Snapshots/Bundles"]
+		),
 	]
 )
