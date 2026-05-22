@@ -48,7 +48,7 @@ struct PopoutableImageView<Content: View>: View {
 		self.htmlWidth = htmlWidth
 		self.htmlHeight = htmlHeight
 		self.content = content
-		self._intrinsicSize = State(initialValue: ImageDimensionCache.shared.size(for: url))
+		self._intrinsicSize = State(initialValue: ImageDimensionCache.shared.persistedSize(for: url))
 	}
 
 	var body: some View {

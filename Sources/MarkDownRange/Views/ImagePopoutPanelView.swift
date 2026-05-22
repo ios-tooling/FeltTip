@@ -22,7 +22,7 @@ struct ImagePopoutPanelView: View {
 	init(url: URL, alt: String, intrinsicSize: CGSize?) {
 		self.url = url
 		self.alt = alt
-		self._intrinsicSize = State(initialValue: intrinsicSize ?? ImageDimensionCache.shared.size(for: url))
+		self._intrinsicSize = State(initialValue: intrinsicSize ?? ImageDimensionCache.shared.persistedSize(for: url))
 	}
 
 	var body: some View {

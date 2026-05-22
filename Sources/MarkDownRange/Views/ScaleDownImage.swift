@@ -52,7 +52,7 @@ struct ScaleDownImage: View {
 		// view is hosted as an NSTextAttachment, where the attachment
 		// bounds are measured upfront and don't grow when async content
 		// loads.
-		self._intrinsicSize = State(initialValue: ImageDimensionCache.shared.size(for: url))
+		self._intrinsicSize = State(initialValue: ImageDimensionCache.shared.persistedSize(for: url))
 		self._loadedImage = State(initialValue: sharedImagesCache[url])
 	}
 
