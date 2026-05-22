@@ -48,7 +48,7 @@ public enum MarkdownAttributedStringBuilder {
 		// SwiftUI block view, giving us full visual fidelity (syntax
 		// highlighting, copy buttons, table layout, image fetching, etc.)
 		// inside the single-NSTextView path.
-		case .codeBlock, .image, .imageRow, .htmlBlock, .table, .details, .alert, .frontmatter:
+		case .codeBlock, .image, .imageRow, .figure, .htmlBlock, .table, .details, .alert, .frontmatter:
 			appendBlockAttachment(block, to: out, context: context)
 		}
 	}

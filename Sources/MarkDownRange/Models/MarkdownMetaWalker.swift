@@ -47,6 +47,9 @@ struct MarkdownMetaWalker {
 		case .imageRow(let items, _):
 			for item in items { images.append(.init(source: item.source, alt: item.alt)) }
 
+		case .figure(let item, _, _):
+			images.append(.init(source: item.source, alt: item.alt))
+
 		case .details(_, let children, _), .alert(_, let children, _):
 			walk(children)
 

@@ -89,6 +89,8 @@ public struct MarkdownContentView: View {
 			ImageBlockView(source: source, alt: alt, theme: theme, baseURL: baseURL, htmlWidth: width, htmlHeight: height)
 		case .imageRow(let images, _):
 			ImageRowView(images: images, theme: theme, baseURL: baseURL, onLinkHover: onLinkHover)
+		case .figure(let item, let caption, _):
+			FigureView(image: item, caption: caption, theme: theme, baseURL: baseURL)
 		case .htmlBlock(let content, _):
 			HTMLBlockView(html: content, theme: theme, fontSize: fontSize)
 		case .details(let summary, let children, _):

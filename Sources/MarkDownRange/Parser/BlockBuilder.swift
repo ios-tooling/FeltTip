@@ -40,45 +40,116 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitParagraph(_ paragraph: Paragraph) {
-		// Extract images as separate blocks, text as paragraphs
-		var inlineChildren: [Markup] = []
 		let children = Array(paragraph.children)
+		let paragraphCarriesOnlyImages = isImageOnly(children)
+		var inlineChildren: [Markup] = []
+		var pendingImages: [ImageRowItem] = []
 
 		var i = 0
 		while i < children.count {
-			if let image = children[i] as? Markdown.Image {
+			let child = children[i]
+			if let image = child as? Markdown.Image {
 				if !inlineChildren.isEmpty {
 					blocks.append(buildParagraph(from: inlineChildren))
 					inlineChildren = []
 				}
-				blocks.append(.image(source: image.source ?? "", alt: image.plainText, id: nextID()))
+				pendingImages.append(imageItem(from: image))
 				i += 1
-			} else if let imgBlock = extractInlineHTMLImage(from: children, at: &i) {
-				if !inlineChildren.isEmpty {
-					blocks.append(buildParagraph(from: inlineChildren))
-					inlineChildren = []
-				}
-				blocks.append(imgBlock)
-			} else {
-				inlineChildren.append(children[i])
-				i += 1
+				continue
 			}
+			if let item = extractInlineHTMLImageItem(from: children, at: &i) {
+				if !inlineChildren.isEmpty {
+					blocks.append(buildParagraph(from: inlineChildren))
+					inlineChildren = []
+				}
+				pendingImages.append(item)
+				continue
+			}
+			// A run of inline images is "same line" only while the separating
+			// content is plain whitespace text. SoftBreaks, LineBreaks, links,
+			// emphasis, or anything else terminates the row so authored line
+			// boundaries continue to stack visually.
+			if !pendingImages.isEmpty, isWhitespaceText(child) {
+				i += 1
+				continue
+			}
+			flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages,
+								imageNode: imageNode(in: paragraph))
+			inlineChildren.append(child)
+			i += 1
 		}
 
+		flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages,
+							imageNode: imageNode(in: paragraph))
 		if !inlineChildren.isEmpty {
 			blocks.append(buildParagraph(from: inlineChildren))
 		}
 	}
 
+	private mutating func flushPendingImages(
+		_ images: inout [ImageRowItem],
+		paragraphIsImageOnly: Bool,
+		imageNode: Markdown.Image?
+	) {
+		guard !images.isEmpty else { return }
+		defer { images.removeAll() }
+		if images.count >= 2 {
+			blocks.append(.imageRow(images: images, id: nextID()))
+			return
+		}
+		let only = images[0]
+		// Promote to a captioned figure only when the paragraph contains
+		// nothing but this single image AND the author supplied a markdown
+		// title (`![alt](url "caption")`). The title is the explicit opt-in;
+		// alt stays for accessibility so existing documents don't grow
+		// surprise captions.
+		if paragraphIsImageOnly, let caption = imageNode?.title, !caption.isEmpty {
+			blocks.append(.figure(image: only, caption: caption, id: nextID()))
+			return
+		}
+		blocks.append(.image(source: only.source, alt: only.alt, width: only.width, height: only.height, id: nextID()))
+	}
+
+	private func imageItem(from image: Markdown.Image) -> ImageRowItem {
+		ImageRowItem(source: image.source ?? "", alt: image.plainText)
+	}
+
+	private func isWhitespaceText(_ markup: Markup) -> Bool {
+		guard let text = markup as? Markdown.Text else { return false }
+		return text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+	}
+
+	private func isImageOnly(_ children: [Markup]) -> Bool {
+		var sawImage = false
+		for child in children {
+			if child is Markdown.Image { sawImage = true; continue }
+			if isWhitespaceText(child) { continue }
+			// HTML img counts too, but allow only it — anything else (text,
+			// emphasis, links, breaks) disqualifies the paragraph from the
+			// figure/caption promotion.
+			if let html = child as? InlineHTML,
+			   html.rawHTML.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("<img") {
+				sawImage = true
+				continue
+			}
+			return false
+		}
+		return sawImage
+	}
+
+	private func imageNode(in paragraph: Paragraph) -> Markdown.Image? {
+		paragraph.children.compactMap { $0 as? Markdown.Image }.first
+	}
+
 	/// Detects `<a href="..."><img src="..."/></a>` or standalone `<img>` in inline HTML nodes.
-	private mutating func extractInlineHTMLImage(from children: [Markup], at i: inout Int) -> MarkdownBlock? {
+	private func extractInlineHTMLImageItem(from children: [Markup], at i: inout Int) -> ImageRowItem? {
 		guard let html = children[i] as? InlineHTML else { return nil }
 		let tag = html.rawHTML.trimmingCharacters(in: .whitespaces)
 
 		// Standalone <img>
 		if tag.lowercased().hasPrefix("<img"), let img = HTMLAttributeParser.extractImage(from: tag) {
 			i += 1
-			return .image(source: img.src, alt: img.alt, width: img.width, height: img.height, id: nextID())
+			return ImageRowItem(source: img.src, alt: img.alt, width: img.width, height: img.height)
 		}
 
 		// <a href="..."> followed by <img> followed by </a>
@@ -91,7 +162,8 @@ struct BlockBuilder: MarkupWalker {
 			let imgTag = imgHTML.rawHTML.trimmingCharacters(in: .whitespaces)
 			guard let img = HTMLAttributeParser.extractImage(from: imgTag) else { return nil }
 			i += 3
-			return .image(source: img.src, alt: img.alt, width: img.width, height: img.height, id: nextID())
+			let link = HTMLAttributeParser.extractAttribute("href", from: tag).flatMap { URL(string: $0) }
+			return ImageRowItem(source: img.src, alt: img.alt, link: link, width: img.width, height: img.height)
 		}
 
 		return nil

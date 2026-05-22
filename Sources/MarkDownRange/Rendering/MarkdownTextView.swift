@@ -324,6 +324,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 							ImageDimensionCache.shared.prefetch(url)
 						}
 					}
+				case .figure(let item, _, _):
+					if let url = Self.resolve(item.source, baseURL: baseURL) {
+						ImageDimensionCache.shared.prefetchSyncIfLocal(url)
+						ImageDimensionCache.shared.prefetch(url)
+					}
 				case .table(let header, let rows, _, _):
 					for cell in header {
 						if let url = imageURL(from: cell, baseURL: baseURL) {

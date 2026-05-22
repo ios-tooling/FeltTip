@@ -48,6 +48,10 @@ extension MarkdownHTMLRenderer {
 			}
 			return "<div class=\"image-row\">\(inner)</div>"
 
+		case .figure(let item, let caption, _):
+			let img = renderImage(source: item.source, alt: item.alt, width: item.width, height: item.height, link: item.link)
+			return "<figure>\(img)<figcaption>\(escape(caption))</figcaption></figure>"
+
 		case .htmlBlock(let content, _):
 			return content
 
