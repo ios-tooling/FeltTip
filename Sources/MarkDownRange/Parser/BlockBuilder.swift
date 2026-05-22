@@ -48,12 +48,12 @@ struct BlockBuilder: MarkupWalker {
 		var i = 0
 		while i < children.count {
 			let child = children[i]
-			if let image = child as? Markdown.Image {
+			if let item = imageItem(from: child) {
 				if !inlineChildren.isEmpty {
 					blocks.append(buildParagraph(from: inlineChildren))
 					inlineChildren = []
 				}
-				pendingImages.append(imageItem(from: image))
+				pendingImages.append(item)
 				i += 1
 				continue
 			}
@@ -73,14 +73,12 @@ struct BlockBuilder: MarkupWalker {
 				i += 1
 				continue
 			}
-			flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages,
-								imageNode: imageNode(in: paragraph))
+			flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages)
 			inlineChildren.append(child)
 			i += 1
 		}
 
-		flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages,
-							imageNode: imageNode(in: paragraph))
+		flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages)
 		if !inlineChildren.isEmpty {
 			blocks.append(buildParagraph(from: inlineChildren))
 		}
@@ -88,8 +86,7 @@ struct BlockBuilder: MarkupWalker {
 
 	private mutating func flushPendingImages(
 		_ images: inout [ImageRowItem],
-		paragraphIsImageOnly: Bool,
-		imageNode: Markdown.Image?
+		paragraphIsImageOnly: Bool
 	) {
 		guard !images.isEmpty else { return }
 		defer { images.removeAll() }
@@ -99,19 +96,48 @@ struct BlockBuilder: MarkupWalker {
 		}
 		let only = images[0]
 		// Promote to a captioned figure only when the paragraph contains
-		// nothing but this single image AND the author supplied a markdown
-		// title (`![alt](url "caption")`). The title is the explicit opt-in;
-		// alt stays for accessibility so existing documents don't grow
-		// surprise captions.
-		if paragraphIsImageOnly, let caption = imageNode?.title, !caption.isEmpty {
+		// nothing but this single image AND the author supplied a title —
+		// markdown form `![alt](url "caption")` or HTML `<img title="…">`.
+		// The title is the explicit opt-in; alt stays for accessibility so
+		// existing documents don't grow surprise captions.
+		if paragraphIsImageOnly, let caption = only.title, !caption.isEmpty {
 			blocks.append(.figure(image: only, caption: caption, id: nextID()))
+			return
+		}
+		// `.image` carries no link, so a clickable single image has to ride
+		// in an `.imageRow` of one — matches the HTML-form path that already
+		// uses imageRow for linked images.
+		if only.link != nil {
+			blocks.append(.imageRow(images: [only], id: nextID()))
 			return
 		}
 		blocks.append(.image(source: only.source, alt: only.alt, width: only.width, height: only.height, id: nextID()))
 	}
 
-	private func imageItem(from image: Markdown.Image) -> ImageRowItem {
-		ImageRowItem(source: image.source ?? "", alt: image.plainText)
+	/// Extracts an image from a markdown inline node. Returns `nil` for
+	/// anything that isn't a top-level image or a link wrapping a single
+	/// image (`[![alt](url)](link)`), the latter being the common pattern
+	/// for clickable badges authored in pure markdown.
+	private func imageItem(from markup: Markup) -> ImageRowItem? {
+		if let image = markup as? Markdown.Image {
+			return ImageRowItem(
+				source: image.source ?? "",
+				alt: image.plainText,
+				title: image.title
+			)
+		}
+		if let link = markup as? Markdown.Link,
+		   link.childCount == 1,
+		   let inner = link.child(at: 0) as? Markdown.Image {
+			let destination = link.destination.flatMap { URL(string: $0) }
+			return ImageRowItem(
+				source: inner.source ?? "",
+				alt: inner.plainText,
+				link: destination,
+				title: inner.title
+			)
+		}
+		return nil
 	}
 
 	private func isWhitespaceText(_ markup: Markup) -> Bool {
@@ -122,10 +148,10 @@ struct BlockBuilder: MarkupWalker {
 	private func isImageOnly(_ children: [Markup]) -> Bool {
 		var sawImage = false
 		for child in children {
-			if child is Markdown.Image { sawImage = true; continue }
+			if imageItem(from: child) != nil { sawImage = true; continue }
 			if isWhitespaceText(child) { continue }
 			// HTML img counts too, but allow only it — anything else (text,
-			// emphasis, links, breaks) disqualifies the paragraph from the
+			// emphasis, breaks) disqualifies the paragraph from the
 			// figure/caption promotion.
 			if let html = child as? InlineHTML,
 			   html.rawHTML.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("<img") {
@@ -137,10 +163,6 @@ struct BlockBuilder: MarkupWalker {
 		return sawImage
 	}
 
-	private func imageNode(in paragraph: Paragraph) -> Markdown.Image? {
-		paragraph.children.compactMap { $0 as? Markdown.Image }.first
-	}
-
 	/// Detects `<a href="..."><img src="..."/></a>` or standalone `<img>` in inline HTML nodes.
 	private func extractInlineHTMLImageItem(from children: [Markup], at i: inout Int) -> ImageRowItem? {
 		guard let html = children[i] as? InlineHTML else { return nil }
@@ -149,7 +171,8 @@ struct BlockBuilder: MarkupWalker {
 		// Standalone <img>
 		if tag.lowercased().hasPrefix("<img"), let img = HTMLAttributeParser.extractImage(from: tag) {
 			i += 1
-			return ImageRowItem(source: img.src, alt: img.alt, width: img.width, height: img.height)
+			let title = HTMLAttributeParser.extractAttribute("title", from: tag)
+			return ImageRowItem(source: img.src, alt: img.alt, width: img.width, height: img.height, title: title)
 		}
 
 		// <a href="..."> followed by <img> followed by </a>
@@ -163,7 +186,8 @@ struct BlockBuilder: MarkupWalker {
 			guard let img = HTMLAttributeParser.extractImage(from: imgTag) else { return nil }
 			i += 3
 			let link = HTMLAttributeParser.extractAttribute("href", from: tag).flatMap { URL(string: $0) }
-			return ImageRowItem(source: img.src, alt: img.alt, link: link, width: img.width, height: img.height)
+			let title = HTMLAttributeParser.extractAttribute("title", from: imgTag)
+			return ImageRowItem(source: img.src, alt: img.alt, link: link, width: img.width, height: img.height, title: title)
 		}
 
 		return nil

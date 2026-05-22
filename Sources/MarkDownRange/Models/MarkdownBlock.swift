@@ -42,13 +42,19 @@ public struct ImageRowItem: Sendable {
 	public let link: URL?
 	public let width: CGFloat?
 	public let height: CGFloat?
+	/// Author-supplied caption text, from the markdown title syntax
+	/// (`![alt](url "title")`) or an HTML `<img title="…">`. Used by the
+	/// block builder to promote a standalone image to a `.figure`. `nil`
+	/// means no caption is available — the image renders without one.
+	public let title: String?
 
-	public init(source: String, alt: String, link: URL? = nil, width: CGFloat? = nil, height: CGFloat? = nil) {
+	public init(source: String, alt: String, link: URL? = nil, width: CGFloat? = nil, height: CGFloat? = nil, title: String? = nil) {
 		self.source = source
 		self.alt = alt
 		self.link = link
 		self.width = width
 		self.height = height
+		self.title = title
 	}
 }
 

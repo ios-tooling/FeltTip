@@ -17,11 +17,22 @@ enum ImageRegions {
 		let link: String?
 		let width: CGFloat?
 		let height: CGFloat?
+		let title: String?
+
+		var rowItem: ImageRowItem {
+			ImageRowItem(
+				source: src,
+				alt: alt,
+				link: link.flatMap { URL(string: $0) },
+				width: width,
+				height: height,
+				title: title
+			)
+		}
 
 		func makeBlock(id: String) -> MarkdownBlock {
-			if let href = link, let url = URL(string: href) {
-				let item = ImageRowItem(source: src, alt: alt, link: url, width: width, height: height)
-				return .imageRow(images: [item], id: id)
+			if link != nil {
+				return .imageRow(images: [rowItem], id: id)
 			}
 			return .image(source: src, alt: alt, width: width, height: height, id: id)
 		}
@@ -35,9 +46,10 @@ enum ImageRegions {
 			let fullTag = ns.substring(with: match.range)
 			let src = ns.substring(with: match.range(at: 1))
 			let alt = HTMLAttributeParser.extractAttribute("alt", from: fullTag) ?? ""
+			let title = HTMLAttributeParser.extractAttribute("title", from: fullTag)
 			let (w, h) = HTMLAttributeParser.extractDimensions(from: fullTag)
 			let link = enclosingAnchorHref(in: html, ns: ns, before: match.range.location)
-			return Hit(range: match.range, src: src, alt: alt, link: link, width: w, height: h)
+			return Hit(range: match.range, src: src, alt: alt, link: link, width: w, height: h, title: title)
 		}
 	}
 

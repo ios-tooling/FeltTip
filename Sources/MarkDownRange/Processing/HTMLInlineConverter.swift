@@ -82,6 +82,19 @@ enum HTMLInlineConverter {
 			return makeTextBlocks(html, nextID: nextID)
 		}
 
+		// Mirror BlockBuilder's promotion rule for HTML blocks too: when the
+		// segment contains exactly one image, no surrounding non-whitespace
+		// text, and the image carries a `title` attribute, emit a `.figure`
+		// so HTML-form images get the same captioned-figure treatment as the
+		// markdown `![alt](url "caption")` syntax.
+		if images.count == 1, segmentIsImageOnly(html, image: images[0]) {
+			let only = images[0]
+			if let title = only.title, !title.isEmpty {
+				return [.figure(image: only.rowItem, caption: title, id: nextID())]
+			}
+			return [only.makeBlock(id: nextID())]
+		}
+
 		var blocks: [MarkdownBlock] = []
 		let ns = html as NSString
 		var cursor = 0
@@ -92,11 +105,7 @@ enum HTMLInlineConverter {
 			if pending.count == 1 {
 				blocks.append(pending[0].makeBlock(id: nextID()))
 			} else {
-				let items = pending.map { hit in
-					ImageRowItem(source: hit.src, alt: hit.alt,
-								 link: hit.link.flatMap { URL(string: $0) },
-								 width: hit.width, height: hit.height)
-				}
+				let items = pending.map { $0.rowItem }
 				blocks.append(.imageRow(images: items, id: nextID()))
 			}
 			pending.removeAll()
@@ -127,6 +136,34 @@ enum HTMLInlineConverter {
 		}
 		return blocks
 	}
+
+	private static func segmentIsImageOnly(_ html: String, image: ImageRegions.Hit) -> Bool {
+		let ns = html as NSString
+		// Include an enclosing `<a href="…">…</a>` (when present) in the
+		// "image span," since BlockBuilder's HTML-image extractor and the
+		// regions collector both treat the anchor as part of the image.
+		var spanStart = image.range.location
+		var spanEnd = image.range.location + image.range.length
+		if image.link != nil {
+			if let openMatch = openAnchorPattern.matches(in: html, range: NSRange(location: 0, length: spanStart)).last {
+				spanStart = openMatch.range.location
+			}
+			if let closeMatch = closeAnchorPattern.firstMatch(in: html, range: NSRange(location: spanEnd, length: ns.length - spanEnd)) {
+				spanEnd = closeMatch.range.location + closeMatch.range.length
+			}
+		}
+		let before = ns.substring(with: NSRange(location: 0, length: spanStart))
+		let after = ns.substring(with: NSRange(location: spanEnd, length: ns.length - spanEnd))
+		return isWhitespaceOnly(before) && isWhitespaceOnly(after)
+	}
+
+	private static let openAnchorPattern = try! NSRegularExpression(
+		pattern: #"<a[^>]*href=["'][^"']+["'][^>]*>"#, options: .caseInsensitive
+	)
+
+	private static let closeAnchorPattern = try! NSRegularExpression(
+		pattern: #"</a\s*>"#, options: .caseInsensitive
+	)
 
 	private static func isWhitespaceOnly(_ html: String) -> Bool {
 		HTMLAttributeParser.decodeEntities(HTMLAttributeParser.stripTags(html))
