@@ -64,6 +64,24 @@ public final class SwiftUIAttachment: NSTextAttachment {
 
 	public required init?(coder: NSCoder) { nil }
 
+	/// Adopt the already-mounted hosting view from a previous attachment at
+	/// the same position, refreshing its rootView with this attachment's
+	/// (newer) viewBuilder output. Lets a textStorage rebuild — e.g. a theme
+	/// swap — keep its NSHostingViews mounted instead of letting TextKit
+	/// destroy and recreate them, which otherwise produces a visible flash
+	/// and a viewport-layout race where attachments stay hidden until the
+	/// user scrolls.
+	public func inheritHost(from previous: SwiftUIAttachment) {
+		guard let host = previous.cachedHost else { return }
+		previous.cachedHost = nil
+		host.rootView = AnyView(
+			viewBuilder()
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.fixedSize(horizontal: false, vertical: true)
+		)
+		cachedHost = host
+	}
+
 	/// Recompute bounds for a new container width. Used by the renderer
 	/// after the text view's frame changes so an existing attachment can
 	/// fit its new line-fragment width without rebuilding the entire

@@ -235,6 +235,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// a window resize (or any other forced re-render) doesn't snap
 			// the user back to the top of the document.
 			let scrollFraction = currentScrollFraction(of: textView)
+			// Hand each already-mounted NSHostingView from the old storage
+			// to its same-position counterpart in the new storage. Avoids
+			// the flash and viewport-mount race that otherwise follow a
+			// setAttributedString call on a doc containing attachments.
+			Self.inheritAttachmentHosts(into: attributed, from: textView.textStorage)
 			textView.textStorage?.setAttributedString(attributed)
 
 			// TextKit 2 lays out attachments lazily as they scroll into view. On
@@ -242,7 +247,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// immediate layout pass would lay out at 0×0. Defer to the next run
 			// loop tick so the scroll view has propagated its real width, then
 			// force a full-range layout + viewport pass to realise hosted views.
-			//
+			//be
 			// `invalidateLayout` before `ensureLayout` matches what
 			// `handleWidthChange` does and is required after a textStorage
 			// swap — without it, the layout manager can serve stale fragment
@@ -369,6 +374,29 @@ public struct MarkdownTextView: NSViewRepresentable {
 		// horizontal text-container inset on each side and the line-fragment
 		// padding on each side. Falls back to nil before the view has laid
 		// out (so SwiftUIAttachment uses its default measurement width).
+		/// For each SwiftUIAttachment in `new` whose ordinal position matches
+		/// one in `old`, transfer the old attachment's mounted NSHostingView
+		/// onto the new attachment (refreshing its rootView with the new
+		/// content). Positional pairing is enough because a theme-only
+		/// rebuild produces the same attachment count and order as before.
+		fileprivate static func inheritAttachmentHosts(into new: NSAttributedString, from old: NSTextStorage?) {
+			guard let old else { return }
+			let previous = attachments(in: old)
+			guard !previous.isEmpty else { return }
+			let upcoming = attachments(in: new)
+			for (incoming, prior) in zip(upcoming, previous) {
+				incoming.inheritHost(from: prior)
+			}
+		}
+
+		private static func attachments(in string: NSAttributedString) -> [SwiftUIAttachment] {
+			var result: [SwiftUIAttachment] = []
+			string.enumerateAttribute(.attachment, in: NSRange(location: 0, length: string.length)) { value, _, _ in
+				if let attachment = value as? SwiftUIAttachment { result.append(attachment) }
+			}
+			return result
+		}
+
 		private static func availableContentWidth(in textView: NSTextView) -> CGFloat? {
 			let width = textView.bounds.width
 			guard width > 0 else { return nil }
