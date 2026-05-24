@@ -80,5 +80,11 @@ extension NSAttributedString.Key {
 	/// view subclass uses this to draw the left indicator bar that fenced
 	/// blockquote text apart from surrounding prose.
 	public static let markdownBlockquoteDepth = NSAttributedString.Key("markdownBlockquoteDepth")
+
+	/// Tags a run as a rendered heading (value: the heading level as Int).
+	/// Callers iterate runs with this attribute to map TOC indices back to
+	/// positions in the rendered storage, where the raw markdown's character
+	/// offsets no longer line up.
+	public static let markdownHeadingLevel = NSAttributedString.Key("markdownHeadingLevel")
 }
 #endif

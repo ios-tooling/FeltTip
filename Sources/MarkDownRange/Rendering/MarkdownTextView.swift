@@ -18,6 +18,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 	var baseURL: URL?
 	var header: AnyView?
 	private let headerToken: AnyHashable?
+	/// Optional TOC selection binding. When the wrapped value changes the
+	/// renderer scrolls to the matching heading. We never write back — clearing
+	/// the value is the caller's responsibility (the tap-counter pattern in
+	/// `OutlineSidebar` keeps repeated taps on the same heading distinguishable
+	/// without needing a reset).
+	var selectedHeadingID: Binding<String?>?
 	/// Maximum width of the rendered text column. The scroll view still fills
 	/// the parent (so its scroller stays at the window edge); the inset of
 	/// the underlying NSTextView is adjusted to center the text within this
@@ -50,6 +56,15 @@ public struct MarkdownTextView: NSViewRepresentable {
 		self.baseURL = baseURL
 		self.header = AnyView(header())
 		self.headerToken = AnyHashable(headerToken)
+	}
+
+	/// Wire a TOC selection binding. Tapping a heading in an external outline
+	/// sets the binding to a unique value (typically `"<id>\t<tapCounter>"`);
+	/// the renderer detects the change and scrolls to that heading.
+	public func selectedHeading(_ binding: Binding<String?>) -> Self {
+		var copy = self
+		copy.selectedHeadingID = binding
+		return copy
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
@@ -111,6 +126,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		context.coordinator.attachFrameObserver(to: textView)
 		context.coordinator.applyHorizontalInset(to: textView)
 		context.coordinator.render(into: textView)
+		context.coordinator.handleSelectedHeading(in: textView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -124,6 +140,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private var rebuildTask: Task<Void, Never>?
 		private var lastObservedWidth: CGFloat = 0
 		private var frameObserver: NSObjectProtocol?
+		/// The most recent TOC selection we've acted on. Tracking it lets us
+		/// distinguish "binding changed because the user tapped a heading"
+		/// (scroll) from "binding is still the same value across an unrelated
+		/// updateNSView pass" (skip).
+		private var lastSelectedHeading: String?
+		private var flashTask: Task<Void, Never>?
 
 		init(parent: MarkdownTextView) {
 			self.parent = parent
@@ -368,6 +390,71 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private func imageURL(from cell: TableCell, baseURL: URL?) -> URL? {
 			guard case let .image(source, _, _, _, _) = cell else { return nil }
 			return Self.resolve(source, baseURL: baseURL)
+		}
+
+		/// Scroll to the heading the TOC just selected, if its value changed
+		/// since the last pass. The binding's value is `"<index>-<text>\t<tap>"`
+		/// — we need only the integer index to walk the rendered storage and
+		/// find the matching heading run, because raw-markdown offsets don't
+		/// line up with the rendered attributed string (`#` markers are gone,
+		/// inline-formatting tokens are stripped, etc).
+		func handleSelectedHeading(in textView: NSTextView) {
+			let current = parent.selectedHeadingID?.wrappedValue
+			guard current != lastSelectedHeading else { return }
+			lastSelectedHeading = current
+			guard let value = current else { return }
+			let id = value.components(separatedBy: "\t").first ?? value
+			guard let dash = id.firstIndex(of: "-"),
+				  let index = Int(id[..<dash]),
+				  let storage = textView.textStorage,
+				  let range = Self.range(ofHeadingAt: index, in: storage) else { return }
+			textView.scrollRangeToVisible(range)
+			flashHeading(range: range, in: textView)
+		}
+
+		private static func range(ofHeadingAt targetIndex: Int, in storage: NSTextStorage) -> NSRange? {
+			var seen = 0
+			var found: NSRange?
+			storage.enumerateAttribute(.markdownHeadingLevel, in: NSRange(location: 0, length: storage.length), options: []) { value, range, stop in
+				guard value != nil else { return }
+				if seen == targetIndex {
+					found = range
+					stop.pointee = true
+					return
+				}
+				seen += 1
+			}
+			return found
+		}
+
+		/// Briefly tint the heading line so the user can locate it after the
+		/// scroll. Captures any existing backgroundColor runs (e.g. inline
+		/// code) in the range so we restore them rather than wiping them on
+		/// cleanup.
+		private func flashHeading(range: NSRange, in textView: NSTextView) {
+			flashTask?.cancel()
+			guard let storage = textView.textStorage,
+				  let initial = range.intersection(NSRange(location: 0, length: storage.length)),
+				  initial.length > 0 else { return }
+			var preexisting: [(NSRange, NSColor?)] = []
+			storage.enumerateAttribute(.backgroundColor, in: initial, options: []) { value, subRange, _ in
+				preexisting.append((subRange, value as? NSColor))
+			}
+			storage.addAttribute(.backgroundColor, value: NSColor.controlAccentColor.withAlphaComponent(0.18), range: initial)
+			flashTask = Task { @MainActor [weak self, weak textView] in
+				try? await Task.sleep(for: .milliseconds(600))
+				guard !Task.isCancelled, let storage = textView?.textStorage else { return }
+				let docRange = NSRange(location: 0, length: storage.length)
+				for (subRange, color) in preexisting {
+					guard let clamped = subRange.intersection(docRange), clamped.length > 0 else { continue }
+					if let color {
+						storage.addAttribute(.backgroundColor, value: color, range: clamped)
+					} else {
+						storage.removeAttribute(.backgroundColor, range: clamped)
+					}
+				}
+				self?.flashTask = nil
+			}
 		}
 
 		// Reading width inside the text container: textView width minus the
