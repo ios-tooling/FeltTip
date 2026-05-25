@@ -1,0 +1,60 @@
+{
+  "capturedAt" : 801400462.762217,
+  "contentMaxWidth" : 680,
+  "contentSize" : [
+    760,
+    960
+  ],
+  "fontSize" : 16,
+  "name" : "agalwood__Motrix__README-20260525-061422",
+  "schemaVersion" : 3,
+  "scrollFraction" : 0.832577400907119,
+  "statusBarHeight" : 24,
+  "theme" : "light",
+  "themeColors" : {
+    "backgroundColor" : {
+      "a" : 1,
+      "b" : 1,
+      "g" : 1,
+      "r" : 1
+    },
+    "codeBackground" : {
+      "a" : 1,
+      "b" : 1,
+      "g" : 1,
+      "r" : 1
+    },
+    "codeForeground" : {
+      "a" : 1,
+      "b" : 0,
+      "g" : 0,
+      "r" : 0
+    },
+    "fontFamily" : "system",
+    "headingColor" : {
+      "a" : 1,
+      "b" : 0.4784314036369324,
+      "g" : 0.3058823347091675,
+      "r" : 0.12156865000724792
+    },
+    "linkColor" : {
+      "a" : 1,
+      "b" : 1,
+      "g" : 0.5333333611488342,
+      "r" : 0
+    },
+    "secondaryColor" : {
+      "a" : 0.49803921580314636,
+      "b" : 0,
+      "g" : 0,
+      "r" : 0
+    },
+    "textColor" : {
+      "a" : 1,
+      "b" : 0,
+      "g" : 0,
+      "r" : 0
+    }
+  },
+  "viewMode" : "formatted"
+}
