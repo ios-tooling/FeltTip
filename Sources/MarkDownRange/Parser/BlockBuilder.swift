@@ -44,36 +44,49 @@ struct BlockBuilder: MarkupWalker {
 		let paragraphCarriesOnlyImages = isImageOnly(children)
 		var inlineChildren: [Markup] = []
 		var pendingImages: [ImageRowItem] = []
+		// Whitespace characters between the latest image and the next thing
+		// we encounter. A single space *or* a single soft break (`\n`) keeps
+		// the run together; anything more (two spaces, a hard break, a space
+		// adjacent to a newline) breaks it. Non-whitespace nodes are treated
+		// as infinite separation and terminate the row outright.
+		var pendingSeparation = 0
+		let rowSeparationLimit = 1
 
 		var i = 0
 		while i < children.count {
 			let child = children[i]
 			if let item = imageItem(from: child) {
+				if !pendingImages.isEmpty, pendingSeparation > rowSeparationLimit {
+					flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages)
+				}
 				if !inlineChildren.isEmpty {
 					blocks.append(buildParagraph(from: inlineChildren))
 					inlineChildren = []
 				}
 				pendingImages.append(item)
+				pendingSeparation = 0
 				i += 1
 				continue
 			}
 			if let item = extractInlineHTMLImageItem(from: children, at: &i) {
+				if !pendingImages.isEmpty, pendingSeparation > rowSeparationLimit {
+					flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages)
+				}
 				if !inlineChildren.isEmpty {
 					blocks.append(buildParagraph(from: inlineChildren))
 					inlineChildren = []
 				}
 				pendingImages.append(item)
+				pendingSeparation = 0
 				continue
 			}
-			// A run of inline images is "same line" only while the separating
-			// content is plain whitespace text. SoftBreaks, LineBreaks, links,
-			// emphasis, or anything else terminates the row so authored line
-			// boundaries continue to stack visually.
-			if !pendingImages.isEmpty, isWhitespaceText(child) {
+			if !pendingImages.isEmpty, let count = whitespaceLength(of: child) {
+				pendingSeparation += count
 				i += 1
 				continue
 			}
 			flushPendingImages(&pendingImages, paragraphIsImageOnly: paragraphCarriesOnlyImages)
+			pendingSeparation = 0
 			inlineChildren.append(child)
 			i += 1
 		}
@@ -143,6 +156,22 @@ struct BlockBuilder: MarkupWalker {
 	private func isWhitespaceText(_ markup: Markup) -> Bool {
 		guard let text = markup as? Markdown.Text else { return false }
 		return text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+	}
+
+	/// Whitespace "width" of a node sitting between two images in the same
+	/// paragraph, in characters. `nil` for nodes that aren't whitespace (a
+	/// link, emphasis, real text, etc.) — those terminate an image row
+	/// outright. `SoftBreak`/`LineBreak` count their literal source widths
+	/// (1 for a single `\n`, 2 for the trailing-two-spaces hard break) so
+	/// "image, newline, image" stays grouped but "image, space + newline,
+	/// image" or a hard break breaks the row.
+	private func whitespaceLength(of markup: Markup) -> Int? {
+		if markup is Markdown.SoftBreak { return 1 }
+		if markup is Markdown.LineBreak { return 2 }
+		guard let text = markup as? Markdown.Text else { return nil }
+		let s = text.string
+		guard s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+		return s.count
 	}
 
 	private func isImageOnly(_ children: [Markup]) -> Bool {
