@@ -104,13 +104,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 		// scroll view's clip view — the only reliably-non-zero moment we
 		// have to mount any attachments TextKit skipped because the earlier
 		// dispatch ran while bounds were still zero.
-		textView.onDidLayout = { [weak textView] in
-			guard let textView,
-				  textView.window != nil,
-				  textView.bounds.width > 0,
-				  let layoutManager = textView.textLayoutManager
-			else { return }
-			layoutManager.textViewportLayoutController.layoutViewport()
+		textView.onDidLayout = { [weak coordinator = context.coordinator, weak textView] in
+			guard let textView, let coordinator, textView.window != nil else { return }
+			coordinator.didLayoutTextView(textView)
 		}
 		return scrollView
 	}
@@ -461,6 +457,44 @@ public struct MarkdownTextView: NSViewRepresentable {
 		// horizontal text-container inset on each side and the line-fragment
 		// padding on each side. Falls back to nil before the view has laid
 		// out (so SwiftUIAttachment uses its default measurement width).
+		/// Called from `MarkdownTextViewBacking.layout()`. Runs an extra
+		/// viewport-layout pass — TextKit's initial pass can race past
+		/// `setAttributedString` without ever asking the attachment view
+		/// providers for views — and schedules a 50ms follow-up safety net
+		/// for the case where even the inline pass misses the first batch
+		/// of in-viewport attachments. Cheap when everything is already
+		/// mounted; recovers visible images on the unlucky cold-open races.
+		func didLayoutTextView(_ textView: NSTextView) {
+			guard textView.bounds.width > 0,
+				  let layoutManager = textView.textLayoutManager else { return }
+			layoutManager.textViewportLayoutController.layoutViewport()
+			Task { @MainActor [weak self, weak textView] in
+				try? await Task.sleep(for: .milliseconds(50))
+				guard let self, let textView else { return }
+				self.remountAttachmentsIfNeeded(in: textView)
+			}
+		}
+
+		/// If any attachments exist in storage that TextKit hasn't mounted,
+		/// force an `ensureLayout` + `layoutViewport` so it nudges the view
+		/// providers. Below-the-fold attachments stay unmounted by design;
+		/// this only does meaningful work when the in-viewport set hasn't
+		/// been touched yet.
+		private func remountAttachmentsIfNeeded(in textView: NSTextView) {
+			guard let storage = textView.textStorage,
+				  let layoutManager = textView.textLayoutManager else { return }
+			var hasUnmounted = false
+			storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
+				guard let attachment = value as? SwiftUIAttachment, !attachment.isMounted else { return }
+				hasUnmounted = true
+				stop.pointee = true
+			}
+			guard hasUnmounted else { return }
+			layoutManager.ensureLayout(for: layoutManager.documentRange)
+			layoutManager.textViewportLayoutController.layoutViewport()
+			textView.needsDisplay = true
+		}
+
 		/// For each SwiftUIAttachment in `new` whose ordinal position matches
 		/// one in `old`, transfer the old attachment's mounted NSHostingView
 		/// onto the new attachment (refreshing its rootView with the new

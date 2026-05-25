@@ -64,6 +64,13 @@ public final class SwiftUIAttachment: NSTextAttachment {
 
 	public required init?(coder: NSCoder) { nil }
 
+	/// True once TextKit has asked the view provider for a view and the
+	/// hosting view has been cached. The renderer uses this to detect
+	/// "attachments exist but TextKit hasn't mounted them yet" — a race
+	/// between text-storage setup and the initial viewport-layout pass that
+	/// otherwise leaves visible images hidden on cold open.
+	public var isMounted: Bool { cachedHost != nil }
+
 	/// Adopt the already-mounted hosting view from a previous attachment at
 	/// the same position, refreshing its rootView with this attachment's
 	/// (newer) viewBuilder output. Lets a textStorage rebuild — e.g. a theme
