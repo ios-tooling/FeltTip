@@ -134,6 +134,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		var lastRenderKey: RenderKey?
 		private var cacheToken: UUID?
 		private var rebuildTask: Task<Void, Never>?
+		private var renderTask: Task<Void, Never>?
 		private var lastObservedWidth: CGFloat = 0
 		private var frameObserver: NSObjectProtocol?
 		/// The most recent TOC selection we've acted on. Tracking it lets us
@@ -152,6 +153,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		}
 
 		deinit {
+			renderTask?.cancel()
 			if let cacheToken { ImageDimensionCache.shared.unsubscribe(cacheToken) }
 			// frameObserver block uses [weak self]; once we're gone, its
 			// callback no-ops. Skipping removeObserver here avoids a
@@ -231,69 +233,101 @@ public struct MarkdownTextView: NSViewRepresentable {
 			textView.needsDisplay = true
 		}
 
+		/// Schedules an async parse + build pass against the current text/theme/
+		/// fontSize. The synchronous version used to block `updateNSView` —
+		/// which kept the document window from appearing at all until the
+		/// entire markdown was parsed and every attachment measured. Running
+		/// the parse off-main and deferring the build onto a follow-up tick
+		/// lets the window present blank immediately and fill in once the
+		/// pipeline finishes (typically well under a second for large docs).
 		func render(into textView: NSTextView, force: Bool = false) {
 			let key = RenderKey(text: parent.text, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken)
 			if !force, key == lastRenderKey { return }
 			lastRenderKey = key
 
-			let blocks = MarkdownBlockParser.parse(parent.text)
-			prefetchImages(in: blocks, baseURL: parent.baseURL)
+			renderTask?.cancel()
+			let text = parent.text
+			let theme = parent.theme
+			let fontSize = parent.fontSize
+			let baseURL = parent.baseURL
+			let header = parent.header
 
-			let availableWidth = Self.availableContentWidth(in: textView)
-			let body = MarkdownAttributedStringBuilder.build(blocks: blocks, theme: parent.theme, fontSize: parent.fontSize, baseURL: parent.baseURL, availableWidth: availableWidth)
-			let attributed = NSMutableAttributedString()
-			if let header = parent.header {
-				let attachment = SwiftUIAttachment { header }
-				attributed.append(NSAttributedString(attachment: attachment))
-				attributed.append(NSAttributedString(string: "\n"))
-			}
-			attributed.append(body)
+			renderTask = Task { @MainActor [weak self, weak textView] in
+				let blocks = await Task.detached(priority: .userInitiated) {
+					MarkdownBlockParser.parse(text)
+				}.value
+				guard !Task.isCancelled, let self, let textView else { return }
 
-			// Capture the current scroll fraction so a rebuild triggered by
-			// a window resize (or any other forced re-render) doesn't snap
-			// the user back to the top of the document.
-			let scrollFraction = currentScrollFraction(of: textView)
-			// Hand each already-mounted NSHostingView from the old storage
-			// to its same-position counterpart in the new storage. Avoids
-			// the flash and viewport-mount race that otherwise follow a
-			// setAttributedString call on a doc containing attachments.
-			Self.inheritAttachmentHosts(into: attributed, from: textView.textStorage)
-			textView.textStorage?.setAttributedString(attributed)
+				self.prefetchImages(in: blocks, baseURL: baseURL)
 
-			// TextKit 2 lays out attachments lazily as they scroll into view. On
-			// the first render the text view's frame may still be zero, so an
-			// immediate layout pass would lay out at 0×0. Defer to the next run
-			// loop tick so the scroll view has propagated its real width, then
-			// force a full-range layout + viewport pass to realise hosted views.
-			//be
-			// `invalidateLayout` before `ensureLayout` matches what
-			// `handleWidthChange` does and is required after a textStorage
-			// swap — without it, the layout manager can serve stale fragment
-			// positions and the very first attachment (typically a table)
-			// fails to mount until the next user scroll forces a re-layout.
-			DispatchQueue.main.async { [weak self] in
-				if let layoutManager = textView.textLayoutManager {
-					layoutManager.invalidateLayout(for: layoutManager.documentRange)
+				let availableWidth = Self.availableContentWidth(in: textView)
+				let body = MarkdownAttributedStringBuilder.build(
+					blocks: blocks,
+					theme: theme,
+					fontSize: fontSize,
+					baseURL: baseURL,
+					availableWidth: availableWidth
+				)
+				let attributed = NSMutableAttributedString()
+				if let header {
+					let attachment = SwiftUIAttachment { header }
+					attributed.append(NSAttributedString(attachment: attachment))
+					attributed.append(NSAttributedString(string: "\n"))
+				}
+				attributed.append(body)
+
+				// Capture the current scroll fraction so a rebuild triggered by
+				// a window resize (or any other forced re-render) doesn't snap
+				// the user back to the top of the document.
+				let scrollFraction = self.currentScrollFraction(of: textView)
+				// Hand each already-mounted NSHostingView from the old storage
+				// to its same-position counterpart in the new storage. Avoids
+				// the flash and viewport-mount race that otherwise follow a
+				// setAttributedString call on a doc containing attachments.
+				Self.inheritAttachmentHosts(into: attributed, from: textView.textStorage)
+				textView.textStorage?.setAttributedString(attributed)
+
+				// Heading selection might have been requested while the storage
+				// was still empty — re-run after content lands so a TOC tap
+				// that arrived during the async parse actually scrolls.
+				self.handleSelectedHeading(in: textView)
+
+				// TextKit 2 lays out attachments lazily as they scroll into view. On
+				// the first render the text view's frame may still be zero, so an
+				// immediate layout pass would lay out at 0×0. Defer to the next run
+				// loop tick so the scroll view has propagated its real width, then
+				// force a full-range layout + viewport pass to realise hosted views.
+				//
+				// `invalidateLayout` before `ensureLayout` matches what
+				// `handleWidthChange` does and is required after a textStorage
+				// swap — without it, the layout manager can serve stale fragment
+				// positions and the very first attachment (typically a table)
+				// fails to mount until the next user scroll forces a re-layout.
+				DispatchQueue.main.async { [weak self, weak textView] in
+					guard let textView else { return }
+					if let layoutManager = textView.textLayoutManager {
+						layoutManager.invalidateLayout(for: layoutManager.documentRange)
+						layoutManager.ensureLayout(for: layoutManager.documentRange)
+						layoutManager.textViewportLayoutController.layoutViewport()
+					}
+					textView.needsDisplay = true
+					if let scrollFraction { self?.restoreScrollFraction(scrollFraction, in: textView) }
+					// After scrolling to the user's previous position, re-run
+					// the viewport layout so attachments newly inside the
+					// visible area get their hosting views mounted.
+					textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+				}
+				// Belt-and-suspenders: TextKit's first viewport pass can still
+				// race with the run loop on cold launches and miss the topmost
+				// attachment. Run the layout once more on a later tick — cheap
+				// when there's nothing to update, and catches the first table
+				// when it has been missed.
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak textView] in
+					guard let textView, let layoutManager = textView.textLayoutManager else { return }
 					layoutManager.ensureLayout(for: layoutManager.documentRange)
 					layoutManager.textViewportLayoutController.layoutViewport()
+					textView.needsDisplay = true
 				}
-				textView.needsDisplay = true
-				if let scrollFraction { self?.restoreScrollFraction(scrollFraction, in: textView) }
-				// After scrolling to the user's previous position, re-run
-				// the viewport layout so attachments newly inside the
-				// visible area get their hosting views mounted.
-				textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
-			}
-			// Belt-and-suspenders: TextKit's first viewport pass can still
-			// race with the run loop on cold launches and miss the topmost
-			// attachment. Run the layout once more on a later tick — cheap
-			// when there's nothing to update, and catches the first table
-			// when it has been missed.
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak textView] in
-				guard let textView, let layoutManager = textView.textLayoutManager else { return }
-				layoutManager.ensureLayout(for: layoutManager.documentRange)
-				layoutManager.textViewportLayoutController.layoutViewport()
-				textView.needsDisplay = true
 			}
 		}
 
