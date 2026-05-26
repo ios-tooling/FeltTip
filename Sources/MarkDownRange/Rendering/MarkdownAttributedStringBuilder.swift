@@ -14,14 +14,34 @@ import SwiftUI
 
 @MainActor
 public enum MarkdownAttributedStringBuilder {
-	public static func build(blocks: [MarkdownBlock], theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, availableWidth: CGFloat? = nil) -> NSAttributedString {
+	/// Builds an attributed string from `blocks`. Async so the work can yield
+	/// to the main run loop between blocks — each attachment-bearing block
+	/// runs NSHostingController.sizeThatFits, which is the dominant cost on
+	/// a large document. Yielding lets a `@Observable` progress value tick
+	/// the loading overlay's determinate bar instead of jumping 0→100 at
+	/// the end. `onProgress` is called after each block with a value in 0...1.
+	public static func build(
+		blocks: [MarkdownBlock],
+		theme: MarkdownTheme,
+		fontSize: CGFloat,
+		baseURL: URL? = nil,
+		availableWidth: CGFloat? = nil,
+		onProgress: (@MainActor @Sendable (Double) -> Void)? = nil
+	) async -> NSAttributedString {
 		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL, availableWidth: availableWidth)
 		let result = NSMutableAttributedString()
+		let total = max(blocks.count, 1)
 		for (index, block) in blocks.enumerated() {
 			append(block, to: result, context: context)
 			if index < blocks.count - 1, !result.string.hasSuffix("\n") {
 				result.append(NSAttributedString(string: "\n"))
 			}
+			onProgress?(Double(index + 1) / Double(total))
+			// Yield every few blocks so the overlay redraws between
+			// attachment measurements. More frequent yields are wasted on
+			// fast text-only blocks; less frequent ones make the bar feel
+			// jumpy on docs with many tables / code blocks.
+			if index % 4 == 3 { await Task.yield() }
 		}
 		return result
 	}

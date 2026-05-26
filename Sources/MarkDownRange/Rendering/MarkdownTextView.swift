@@ -32,6 +32,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// Minimum horizontal inset to keep around the text column even when the
 	/// content has no width constraint. Default 24.
 	public var minimumHorizontalInset: CGFloat = 24
+	/// Reports the formatted-view rebuild's lifecycle. Passes `0` when a
+	/// render task starts, fractional values 0…1 as attachment-bearing
+	/// blocks are measured, and `nil` once the rendered text has been
+	/// committed to the text view. The hosting screen uses this to drive a
+	/// determinate progress bar in the loading overlay.
+	public var onRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
 	@Environment(LinkDisplayState.self) private var linkDisplay
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, contentMaxWidth: CGFloat? = nil) {
@@ -64,6 +70,16 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func selectedHeading(_ binding: Binding<String?>) -> Self {
 		var copy = self
 		copy.selectedHeadingID = binding
+		return copy
+	}
+
+	/// Subscribe to formatted-view rebuild progress. The closure receives `0`
+	/// when a render task starts, fractional values during the build phase,
+	/// and `nil` once the rendered text is committed. Used by the document
+	/// screen to drive a determinate progress bar in the loading overlay.
+	public func onRenderProgress(_ callback: @escaping @MainActor @Sendable (Double?) -> Void) -> Self {
+		var copy = self
+		copy.onRenderProgress = callback
 		return copy
 	}
 
@@ -251,23 +267,31 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let fontSize = parent.fontSize
 			let baseURL = parent.baseURL
 			let header = parent.header
+			let progressCallback = parent.onRenderProgress
+			progressCallback?(0)
 
 			renderTask = Task { @MainActor [weak self, weak textView] in
 				let blocks = await Task.detached(priority: .userInitiated) {
 					MarkdownBlockParser.parse(text)
 				}.value
+				// Cancelled tasks return silently — the replacement render
+				// has already fired its own progress(0). Firing progress(nil)
+				// here would briefly drop the overlay between the two
+				// renders, producing a visible flash.
 				guard !Task.isCancelled, let self, let textView else { return }
 
 				self.prefetchImages(in: blocks, baseURL: baseURL)
 
 				let availableWidth = Self.availableContentWidth(in: textView)
-				let body = MarkdownAttributedStringBuilder.build(
+				let body = await MarkdownAttributedStringBuilder.build(
 					blocks: blocks,
 					theme: theme,
 					fontSize: fontSize,
 					baseURL: baseURL,
-					availableWidth: availableWidth
+					availableWidth: availableWidth,
+					onProgress: progressCallback
 				)
+				guard !Task.isCancelled else { return }
 				let attributed = NSMutableAttributedString()
 				if let header {
 					let attachment = SwiftUIAttachment { header }
@@ -286,6 +310,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// setAttributedString call on a doc containing attachments.
 				Self.inheritAttachmentHosts(into: attributed, from: textView.textStorage)
 				textView.textStorage?.setAttributedString(attributed)
+				// Render committed — drop the loading overlay before the next
+				// runloop tick runs the post-set layout pass.
+				progressCallback?(nil)
 
 				// Heading selection might have been requested while the storage
 				// was still empty — re-run after content lands so a TOC tap
