@@ -214,11 +214,11 @@ import AppKit
 
 	@Test func onProgress_firesMonotonicallyAndReachesOne() async {
 		// The loading overlay's determinate bar depends on the progress
-		// callback firing in-order during the build, with the final value
-		// landing at exactly 1.0 so the overlay can dismiss. Verify with
-		// a doc that has enough blocks for the callback to fire several
-		// times (each section here generates ~5 blocks).
-		let md = LargeMarkdownGeneratorMini.generate(sections: 8)
+		// callback firing in-order, ending at exactly 1.0 so the overlay
+		// can dismiss. Updates are coarse (the builder throttles to ~12
+		// calls regardless of block count) so the @Observable on the host
+		// doesn't invalidate views per-block.
+		let md = LargeMarkdownGeneratorMini.generate(sections: 30)
 		let blocks = MarkdownBlockParser.parse(md)
 		var values: [Double] = []
 		_ = await MarkdownAttributedStringBuilder.build(
@@ -227,7 +227,7 @@ import AppKit
 			fontSize: 16,
 			onProgress: { values.append($0) }
 		)
-		#expect(values.count == blocks.count, "Callback should fire once per block")
+		#expect(values.count >= 6 && values.count <= 20, "Callback should fire a coarse number of times (got \(values.count))")
 		#expect(values == values.sorted(), "Progress should never decrease")
 		#expect(values.last == 1.0, "Final value should be exactly 1.0 so the overlay can dismiss")
 		#expect(values.first ?? 0 > 0, "First value should be > 0 (not the pre-render 0)")

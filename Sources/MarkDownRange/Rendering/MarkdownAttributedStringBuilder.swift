@@ -31,17 +31,22 @@ public enum MarkdownAttributedStringBuilder {
 		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL, availableWidth: availableWidth)
 		let result = NSMutableAttributedString()
 		let total = max(blocks.count, 1)
+		// Fire progress + yield at the same coarse interval. Each progress
+		// update lights up the @Observable hosting it, invalidating views
+		// that read it; firing per-block on a 200-block document burns
+		// ~200 view-tree diffs that the user can't even perceive. Update
+		// 12-ish times instead.
+		let yieldInterval = max(1, blocks.count / 12)
 		for (index, block) in blocks.enumerated() {
 			append(block, to: result, context: context)
 			if index < blocks.count - 1, !result.string.hasSuffix("\n") {
 				result.append(NSAttributedString(string: "\n"))
 			}
-			onProgress?(Double(index + 1) / Double(total))
-			// Yield every few blocks so the overlay redraws between
-			// attachment measurements. More frequent yields are wasted on
-			// fast text-only blocks; less frequent ones make the bar feel
-			// jumpy on docs with many tables / code blocks.
-			if index % 4 == 3 { await Task.yield() }
+			let isLast = index == blocks.count - 1
+			if index % yieldInterval == yieldInterval - 1 || isLast {
+				onProgress?(Double(index + 1) / Double(total))
+				await Task.yield()
+			}
 		}
 		return result
 	}
