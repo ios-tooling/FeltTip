@@ -40,8 +40,10 @@ public enum MarkdownAttributedStringBuilder {
 			appendList(items: items, ordered: false, start: 1, to: out, context: context)
 		case .thematicBreak:
 			appendThematicBreak(to: out, context: context)
-		case .aligned(_, let inner, _):
-			append(inner, to: out, context: context)
+		case .aligned(let alignment, let inner, _):
+			var aligned = context
+			aligned.paragraphAlignment = nsAlignment(for: alignment)
+			append(inner, to: out, context: aligned)
 		case .definitionList(let items, _):
 			appendDefinitionList(items: items, to: out, context: context)
 		// Non-text blocks render via NSTextAttachment hosting the existing
@@ -50,6 +52,18 @@ public enum MarkdownAttributedStringBuilder {
 		// inside the single-NSTextView path.
 		case .codeBlock, .image, .imageRow, .figure, .htmlBlock, .table, .details, .alert, .frontmatter:
 			appendBlockAttachment(block, to: out, context: context)
+		}
+	}
+
+	/// Maps a SwiftUI `HorizontalAlignment` to an `NSTextAlignment`. The block
+	/// parser only ever emits `.center` and `.trailing` from `.aligned`
+	/// wrappers; anything else collapses to `.natural` so we don't override the
+	/// document's default direction.
+	static func nsAlignment(for alignment: HorizontalAlignment) -> NSTextAlignment {
+		switch alignment {
+		case .center: .center
+		case .trailing: .right
+		default: .natural
 		}
 	}
 }
@@ -61,5 +75,8 @@ struct MarkdownRenderContext {
 	var availableWidth: CGFloat?
 	var listDepth: Int = 0
 	var blockquoteDepth: Int = 0
+	/// Set by an enclosing `.aligned` block so paragraph/heading/attachment
+	/// rendering can stamp the alignment onto the underlying paragraph style.
+	var paragraphAlignment: NSTextAlignment?
 }
 #endif
