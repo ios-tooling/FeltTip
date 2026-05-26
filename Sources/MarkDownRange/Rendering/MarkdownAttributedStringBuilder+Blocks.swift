@@ -17,6 +17,7 @@ extension MarkdownAttributedStringBuilder {
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacingBefore = level <= 2 ? 24 : 16
 		para.paragraphSpacing = level <= 2 ? 12 : 8
+		if let alignment = context.paragraphAlignment { para.alignment = alignment }
 		let inner = nsAttributedString(from: content, font: font, defaultColor: color, boldColor: NSColor(context.theme.textColor), fontFamily: context.theme.fontFamily)
 		let start = out.length
 		out.append(decorate(inner, paragraphStyle: para))
@@ -33,6 +34,7 @@ extension MarkdownAttributedStringBuilder {
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacing = 10
 		para.lineHeightMultiple = 1.4
+		if let alignment = context.paragraphAlignment { para.alignment = alignment }
 		let inner = nsAttributedString(from: content, font: font, defaultColor: color, fontFamily: context.theme.fontFamily)
 		out.append(decorate(inner, paragraphStyle: para))
 		out.append(NSAttributedString(string: "\n"))
@@ -45,13 +47,14 @@ extension MarkdownAttributedStringBuilder {
 		let theme = context.theme
 		let fontSize = context.fontSize
 		let baseURL = context.baseURL
-		// Tables stretch to the available reading width and re-measure
-		// whenever the text view resizes; everything else uses the static
-		// measurement default.
+		// Tables and image-bearing blocks stretch to the available reading
+		// width and re-measure whenever the text view resizes — without this,
+		// wide cover images get sized to the static 700pt fallback and overflow
+		// narrower windows. Everything else uses the static default.
 		let measurementWidth: CGFloat?
 		let usesContainerWidth: Bool
 		switch block {
-		case .table:
+		case .table, .image, .imageRow, .figure:
 			measurementWidth = context.availableWidth
 			usesContainerWidth = true
 		default:
@@ -72,6 +75,7 @@ extension MarkdownAttributedStringBuilder {
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacingBefore = 14
 		para.paragraphSpacing = 14
+		if let alignment = context.paragraphAlignment { para.alignment = alignment }
 		let attachmentString = NSMutableAttributedString(attachment: attachment)
 		attachmentString.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: attachmentString.length))
 		out.append(attachmentString)

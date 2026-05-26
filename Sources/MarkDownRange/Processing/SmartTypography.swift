@@ -67,6 +67,15 @@ public enum SmartTypography {
 					i = line.index(after: close); continue
 				}
 			}
+			// Skip HTML tags and comments verbatim. Without this, `<!-- foo -->`
+			// becomes `<!– foo –>` (en-dash), the CommonMark parser stops seeing
+			// it as a type-2 HTML block, and the mangled text leaks into the
+			// rendered output as a paragraph. Same single-line `<...>` skip that
+			// SmartQuotes uses for attribute values.
+			if ch == "<", let close = line[line.index(after: i)...].firstIndex(of: ">") {
+				result.append(contentsOf: line[i...close])
+				i = line.index(after: close); continue
+			}
 			if let (replacement, after) = replacement(at: i, in: line) {
 				result.append(replacement)
 				i = after; continue

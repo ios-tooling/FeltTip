@@ -64,4 +64,23 @@ import Testing
 	@Test func skipsInlineCode() {
 		#expect(SmartTypography.process("Use `(c)` to print copyright") == "Use `(c)` to print copyright")
 	}
+
+	@Test func preservesHTMLComment() {
+		// Without the `<...>` skip, `--` inside an HTML comment gets en-dashed
+		// and the CommonMark parser stops recognising it as a type-2 HTML
+		// block — the literal text then leaks into the rendered output.
+		#expect(SmartTypography.process("<!-- prettier-ignore-start -->") == "<!-- prettier-ignore-start -->")
+		#expect(SmartTypography.process("<!--foo-->") == "<!--foo-->")
+	}
+
+	@Test func preservesHTMLAttributesWithHyphens() {
+		// `data--whatever` inside an attribute would otherwise become `data–whatever`.
+		#expect(SmartTypography.process(#"<div data-foo="a--b">"#) == #"<div data-foo="a--b">"#)
+	}
+
+	@Test func dashOutsideTagStillConverts() {
+		// Sanity: only the tag region is skipped — surrounding dashes still
+		// convert, so we don't silently turn the typography pass off.
+		#expect(SmartTypography.process("text -- <i>more</i> -- end") == "text – <i>more</i> – end")
+	}
 }

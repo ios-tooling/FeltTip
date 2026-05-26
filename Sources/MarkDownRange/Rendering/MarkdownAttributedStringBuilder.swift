@@ -14,13 +14,38 @@ import SwiftUI
 
 @MainActor
 public enum MarkdownAttributedStringBuilder {
-	public static func build(blocks: [MarkdownBlock], theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, availableWidth: CGFloat? = nil) -> NSAttributedString {
+	/// Builds an attributed string from `blocks`. Async so the work can yield
+	/// to the main run loop between blocks — each attachment-bearing block
+	/// runs NSHostingController.sizeThatFits, which is the dominant cost on
+	/// a large document. Yielding lets a `@Observable` progress value tick
+	/// the loading overlay's determinate bar instead of jumping 0→100 at
+	/// the end. `onProgress` is called after each block with a value in 0...1.
+	public static func build(
+		blocks: [MarkdownBlock],
+		theme: MarkdownTheme,
+		fontSize: CGFloat,
+		baseURL: URL? = nil,
+		availableWidth: CGFloat? = nil,
+		onProgress: (@MainActor @Sendable (Double) -> Void)? = nil
+	) async -> NSAttributedString {
 		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL, availableWidth: availableWidth)
 		let result = NSMutableAttributedString()
+		let total = max(blocks.count, 1)
+		// Fire progress + yield at the same coarse interval. Each progress
+		// update lights up the @Observable hosting it, invalidating views
+		// that read it; firing per-block on a 200-block document burns
+		// ~200 view-tree diffs that the user can't even perceive. Update
+		// 12-ish times instead.
+		let yieldInterval = max(1, blocks.count / 12)
 		for (index, block) in blocks.enumerated() {
 			append(block, to: result, context: context)
 			if index < blocks.count - 1, !result.string.hasSuffix("\n") {
 				result.append(NSAttributedString(string: "\n"))
+			}
+			let isLast = index == blocks.count - 1
+			if index % yieldInterval == yieldInterval - 1 || isLast {
+				onProgress?(Double(index + 1) / Double(total))
+				await Task.yield()
 			}
 		}
 		return result
@@ -40,8 +65,10 @@ public enum MarkdownAttributedStringBuilder {
 			appendList(items: items, ordered: false, start: 1, to: out, context: context)
 		case .thematicBreak:
 			appendThematicBreak(to: out, context: context)
-		case .aligned(_, let inner, _):
-			append(inner, to: out, context: context)
+		case .aligned(let alignment, let inner, _):
+			var aligned = context
+			aligned.paragraphAlignment = nsAlignment(for: alignment)
+			append(inner, to: out, context: aligned)
 		case .definitionList(let items, _):
 			appendDefinitionList(items: items, to: out, context: context)
 		// Non-text blocks render via NSTextAttachment hosting the existing
@@ -50,6 +77,18 @@ public enum MarkdownAttributedStringBuilder {
 		// inside the single-NSTextView path.
 		case .codeBlock, .image, .imageRow, .figure, .htmlBlock, .table, .details, .alert, .frontmatter:
 			appendBlockAttachment(block, to: out, context: context)
+		}
+	}
+
+	/// Maps a SwiftUI `HorizontalAlignment` to an `NSTextAlignment`. The block
+	/// parser only ever emits `.center` and `.trailing` from `.aligned`
+	/// wrappers; anything else collapses to `.natural` so we don't override the
+	/// document's default direction.
+	static func nsAlignment(for alignment: HorizontalAlignment) -> NSTextAlignment {
+		switch alignment {
+		case .center: .center
+		case .trailing: .right
+		default: .natural
 		}
 	}
 }
@@ -61,5 +100,8 @@ struct MarkdownRenderContext {
 	var availableWidth: CGFloat?
 	var listDepth: Int = 0
 	var blockquoteDepth: Int = 0
+	/// Set by an enclosing `.aligned` block so paragraph/heading/attachment
+	/// rendering can stamp the alignment onto the underlying paragraph style.
+	var paragraphAlignment: NSTextAlignment?
 }
 #endif

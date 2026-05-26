@@ -111,7 +111,24 @@ public enum MarkdownBlockParser {
 	}
 
 	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-		convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLHeadings(convertHTMLTables(convertDefinitionLists(blocks)))))))
+		removeCommentOnlyHTMLBlocks(convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLHeadings(convertHTMLTables(convertDefinitionLists(blocks))))))))
+	}
+
+	/// Drop HTML blocks that contain nothing but HTML comments — they'd
+	/// otherwise render as empty 24pt-tall attachments with paragraph spacing
+	/// on either side, producing a conspicuous gap around tooling pragmas
+	/// like `<!-- prettier-ignore-start -->` that the document author never
+	/// meant to be visible.
+	private static func removeCommentOnlyHTMLBlocks(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+		blocks.filter { block in
+			guard case .htmlBlock(let html, _) = block else { return true }
+			let stripped = html.replacingOccurrences(
+				of: "<!--[\\s\\S]*?-->",
+				with: "",
+				options: .regularExpression
+			).trimmingCharacters(in: .whitespacesAndNewlines)
+			return !stripped.isEmpty
+		}
 	}
 
 	/// Convert standalone `<h1>`…`<h6>` HTML blocks into native heading blocks
