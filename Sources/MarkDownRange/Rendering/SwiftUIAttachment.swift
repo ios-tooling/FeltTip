@@ -36,9 +36,18 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// Caching here keeps the rendered content alive across re-creations.
 	fileprivate var cachedHost: NSHostingView<AnyView>?
 
-	public init(width: CGFloat? = nil, usesContainerWidth: Bool = false, _ viewBuilder: @escaping () -> AnyView) {
+	/// Stable fingerprint of the block this attachment renders (theme, font
+	/// size, and the block's content). The renderer uses it to recognize
+	/// when a rebuilt textStorage carries the same attachment in the same
+	/// position, so it can patch the surrounding text in place instead of
+	/// replacing the whole storage — which would tear down and re-mount the
+	/// hosted views and flash the images.
+	let contentKey: String?
+
+	public init(width: CGFloat? = nil, usesContainerWidth: Bool = false, contentKey: String? = nil, _ viewBuilder: @escaping () -> AnyView) {
 		self.viewBuilder = viewBuilder
 		self.usesContainerWidth = usesContainerWidth
+		self.contentKey = contentKey
 		super.init(data: nil, ofType: nil)
 		// Measure the view via NSHostingController to get our static bounds,
 		// then assign a transparent NSImage of that size as the placeholder.

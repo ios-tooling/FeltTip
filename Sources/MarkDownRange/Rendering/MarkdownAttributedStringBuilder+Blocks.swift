@@ -61,7 +61,11 @@ extension MarkdownAttributedStringBuilder {
 			measurementWidth = nil
 			usesContainerWidth = false
 		}
-		let attachment = SwiftUIAttachment(width: measurementWidth, usesContainerWidth: usesContainerWidth) {
+		let attachment = SwiftUIAttachment(
+			width: measurementWidth,
+			usesContainerWidth: usesContainerWidth,
+			contentKey: Self.contentKey(for: block, theme: theme, fontSize: fontSize)
+		) {
 			AnyView(
 				MarkdownContentView.blockView(
 					for: block,
@@ -130,6 +134,51 @@ extension MarkdownAttributedStringBuilder {
 			.foregroundColor: NSColor(context.theme.secondaryColor),
 		]
 		out.append(NSAttributedString(string: text + "\n", attributes: attrs))
+	}
+
+	/// Stable content fingerprint for a block, used by the renderer's
+	/// in-place patch to tell whether a rebuilt attachment is the same as
+	/// the one already mounted. Theme + font size are folded in because they
+	/// change what the hosted view draws even when the block is unchanged.
+	private static func contentKey(for block: MarkdownBlock, theme: MarkdownTheme, fontSize: CGFloat) -> String {
+		"\(theme.signature)|\(fontSize)|\(blockFingerprint(block))"
+	}
+
+	private static func blockFingerprint(_ block: MarkdownBlock) -> String {
+		switch block {
+		case .image(let src, let alt, let w, let h, _):
+			return "image|\(src)|\(alt)|\(w ?? -1)|\(h ?? -1)"
+		case .imageRow(let images, _):
+			let parts = images.map { "\($0.source)~\($0.alt)~\($0.width ?? -1)~\($0.height ?? -1)~\($0.link?.absoluteString ?? "")" }
+			return "imageRow|" + parts.joined(separator: ";")
+		case .figure(let img, let caption, _):
+			return "figure|\(img.source)|\(img.alt)|\(img.width ?? -1)|\(img.height ?? -1)|\(caption)"
+		case .codeBlock(let code, let lang, _):
+			return "code|\(lang ?? "")|\(code)"
+		case .htmlBlock(let html, _):
+			return "html|\(html)"
+		case .table(let header, let rows, let aligns, _):
+			let h = header.map(cellFingerprint).joined(separator: "\t")
+			let r = rows.map { $0.map(cellFingerprint).joined(separator: "\t") }.joined(separator: "\n")
+			let a = aligns.map { String(describing: $0) }.joined(separator: ",")
+			return "table|\(a)|\(h)|\(r)"
+		case .details(let summary, let children, _):
+			return "details|\(summary)|" + children.map(blockFingerprint).joined(separator: "#")
+		case .alert(let type, let children, _):
+			return "alert|\(type)|" + children.map(blockFingerprint).joined(separator: "#")
+		case .frontmatter(let pairs, _):
+			return "front|" + pairs.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+		default:
+			return block.id
+		}
+	}
+
+	private static func cellFingerprint(_ cell: TableCell) -> String {
+		switch cell {
+		case .text(let str): return String(str.characters)
+		case .image(let src, let alt, let link, let w, let h):
+			return "img:\(src)~\(alt)~\(link?.absoluteString ?? "")~\(w ?? -1)~\(h ?? -1)"
+		}
 	}
 }
 #endif

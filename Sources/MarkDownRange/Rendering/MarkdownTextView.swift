@@ -130,10 +130,16 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func updateNSView(_ scrollView: NSScrollView, context: Context) {
 		guard let textView = scrollView.documentView as? NSTextView else { return }
 		context.coordinator.parent = self
-		scrollView.backgroundColor = NSColor(theme.backgroundColor)
-		textView.backgroundColor = NSColor(theme.backgroundColor)
+		// Reassigning a layer-backed view's backgroundColor — even to the
+		// same value — marks it for redisplay. On a no-op reload that flush
+		// briefly blanks every visible attachment's hosting view (a one-frame
+		// image flash), so only assign when the value actually changed.
+		let bgColor = NSColor(theme.backgroundColor)
+		if scrollView.backgroundColor != bgColor { scrollView.backgroundColor = bgColor }
+		if textView.backgroundColor != bgColor { textView.backgroundColor = bgColor }
 		if let backing = textView as? MarkdownTextViewBacking {
-			backing.blockquoteBarColor = NSColor(theme.linkColor)
+			let barColor = NSColor(theme.linkColor)
+			if backing.blockquoteBarColor != barColor { backing.blockquoteBarColor = barColor }
 		}
 		context.coordinator.attachFrameObserver(to: textView)
 		context.coordinator.applyHorizontalInset(to: textView)
@@ -211,8 +217,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 				inset = minInset
 			}
 			let changed = abs(textView.textContainerInset.width - inset) > 0.5
-			textView.textContainerInset = NSSize(width: inset, height: 0)
+			// Only assign when the inset actually moved — the setter
+			// invalidates text-container layout regardless of value, which on
+			// a no-op reload re-mounts visible attachments and flashes them.
 			if changed {
+				textView.textContainerInset = NSSize(width: inset, height: 0)
 				// availableContentWidth depends on the inset, so container-width
 				// attachments (tables) need to re-measure when the inset shifts.
 				handleWidthChange(in: textView)
@@ -304,6 +313,21 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// a window resize (or any other forced re-render) doesn't snap
 				// the user back to the top of the document.
 				let scrollFraction = self.currentScrollFraction(of: textView)
+
+				// Fast path: if the rebuilt content matches the existing
+				// storage (same attachments in the same positions, identical
+				// or near-identical surrounding text), patch the differing
+				// text spans in place and leave the attachment NSObjects —
+				// and their mounted NSHostingViews — untouched. A full
+				// setAttributedString would tear those views down and
+				// re-mount them, flashing every visible image on each reload.
+				if let storage = textView.textStorage,
+				   Self.applyAttributedStringInPlace(attributed, into: storage) {
+					progressCallback?(nil)
+					self.handleSelectedHeading(in: textView)
+					return
+				}
+
 				// Hand each already-mounted NSHostingView from the old storage
 				// to its same-position counterpart in the new storage. Avoids
 				// the flash and viewport-mount race that otherwise follow a
@@ -579,6 +603,106 @@ public struct MarkdownTextView: NSViewRepresentable {
 			return result
 		}
 
+		/// Apply `new` to `storage` by editing only the text spans between
+		/// attachments, leaving the attachment NSObjects (and their mounted
+		/// hosting views) in place. Returns `false` — so the caller falls
+		/// back to `setAttributedString` — when the attachment shape changed
+		/// (different count, a non-SwiftUIAttachment, or any pair whose
+		/// `contentKey` differs).
+		fileprivate static func applyAttributedStringInPlace(_ new: NSAttributedString, into storage: NSTextStorage) -> Bool {
+			guard case let .clean(oldSlots) = attachmentScan(of: storage),
+				  case let .clean(newSlots) = attachmentScan(of: new),
+				  oldSlots.count == newSlots.count else { return false }
+			for (oldSlot, newSlot) in zip(oldSlots, newSlots) {
+				guard let oldKey = oldSlot.attachment.contentKey,
+					  let newKey = newSlot.attachment.contentKey,
+					  oldKey == newKey else { return false }
+			}
+
+			// One text span per gap: before the first attachment, between
+			// each consecutive pair, and after the last.
+			var spans: [(old: NSRange, new: NSRange)] = []
+			var oldCursor = 0
+			var newCursor = 0
+			for (oldSlot, newSlot) in zip(oldSlots, newSlots) {
+				spans.append((
+					NSRange(location: oldCursor, length: oldSlot.location - oldCursor),
+					NSRange(location: newCursor, length: newSlot.location - newCursor)
+				))
+				oldCursor = oldSlot.location + 1
+				newCursor = newSlot.location + 1
+			}
+			spans.append((
+				NSRange(location: oldCursor, length: storage.length - oldCursor),
+				NSRange(location: newCursor, length: new.length - newCursor)
+			))
+
+			// Narrow each changed span to the smallest differing sub-range so
+			// layout invalidation stays away from attachment lines where
+			// possible. Skip spans whose visible text is identical — only the
+			// attribute objects churn there, which is invisible.
+			struct Edit { let range: NSRange; let replacement: NSAttributedString }
+			var edits: [Edit] = []
+			for span in spans {
+				let oldAttr = storage.attributedSubstring(from: span.old)
+				let newAttr = new.attributedSubstring(from: span.new)
+				if oldAttr.string == newAttr.string { continue }
+				let (innerOld, innerNew) = innerDiffRange(oldText: oldAttr.string, newText: newAttr.string)
+				let range = NSRange(location: span.old.location + innerOld.location, length: innerOld.length)
+				edits.append(Edit(range: range, replacement: newAttr.attributedSubstring(from: innerNew)))
+			}
+
+			guard !edits.isEmpty else { return true }
+
+			storage.beginEditing()
+			for edit in edits.sorted(by: { $0.range.location > $1.range.location }) {
+				storage.replaceCharacters(in: edit.range, with: edit.replacement)
+			}
+			storage.endEditing()
+			return true
+		}
+
+		private enum AttachmentScan {
+			case clean([(attachment: SwiftUIAttachment, location: Int)])
+			/// Storage contained an attachment we can't reason about (not a
+			/// SwiftUIAttachment, or a multi-character attachment range).
+			case unsupported
+		}
+
+		private static func attachmentScan(of str: NSAttributedString) -> AttachmentScan {
+			var slots: [(attachment: SwiftUIAttachment, location: Int)] = []
+			var unsupported = false
+			str.enumerateAttribute(.attachment, in: NSRange(location: 0, length: str.length)) { value, range, _ in
+				guard let value else { return }
+				if let attachment = value as? SwiftUIAttachment, range.length == 1 {
+					slots.append((attachment, range.location))
+				} else {
+					unsupported = true
+				}
+			}
+			return unsupported ? .unsupported : .clean(slots)
+		}
+
+		/// Smallest sub-range whose characters differ between `oldText` and
+		/// `newText` — strips the longest matching prefix and suffix.
+		private static func innerDiffRange(oldText: String, newText: String) -> (NSRange, NSRange) {
+			let oldChars = Array(oldText.utf16)
+			let newChars = Array(newText.utf16)
+			let minLen = min(oldChars.count, newChars.count)
+			var prefix = 0
+			while prefix < minLen && oldChars[prefix] == newChars[prefix] { prefix += 1 }
+			var suffix = 0
+			let suffixCap = min(oldChars.count - prefix, newChars.count - prefix)
+			while suffix < suffixCap
+					&& oldChars[oldChars.count - 1 - suffix] == newChars[newChars.count - 1 - suffix] {
+				suffix += 1
+			}
+			return (
+				NSRange(location: prefix, length: oldChars.count - prefix - suffix),
+				NSRange(location: prefix, length: newChars.count - prefix - suffix)
+			)
+		}
+
 		private static func availableContentWidth(in textView: NSTextView) -> CGFloat? {
 			let width = textView.bounds.width
 			guard width > 0 else { return nil }
@@ -761,7 +885,7 @@ final class MarkdownTextViewBacking: NSTextView {
 	}
 }
 
-private extension MarkdownTheme {
+extension MarkdownTheme {
 	/// Cheap identity key for memoizing renders. Theme is Equatable but using
 	/// a tag avoids comparing Color values per scroll. Must include every
 	/// field that influences the produced NSAttributedString, otherwise an
