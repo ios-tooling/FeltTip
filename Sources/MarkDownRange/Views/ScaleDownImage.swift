@@ -62,7 +62,12 @@ struct ScaleDownImage: View {
 				failurePlaceholder
 			} else if effectiveIsSVG {
 				#if os(macOS)
-				let size = displaySize ?? CGSize(width: 400, height: 200)
+				// Most unsized SVGs in real-world markdown are inline badges
+				// (shields.io, social icons). A 400x200 placeholder before
+				// measureSVG lands left huge holes between badge rows; a thin
+				// strip reflows up to the real size without dominating the
+				// page. The frame updates once `intrinsicSize` is recorded.
+				let size = displaySize ?? CGSize(width: 120, height: 24)
 				SVGImageView(
 					url: url,
 					maxWidth: size.width,
@@ -158,7 +163,12 @@ struct ScaleDownImage: View {
 	}
 
 	private func measureSVG() async {
-		guard isSVG, intrinsicSize == nil else { return }
+		// `effectiveIsSVG` (not `isSVG`) is the right gate: URLs that don't end
+		// in `.svg` but actually serve SVG (e.g. `img.shields.io/...`) fail the
+		// raster path, flip into the WebKit branch, and would otherwise never
+		// have their dimensions measured — leaving the placeholder frame at
+		// whatever cold-cache fallback the call site picked.
+		guard effectiveIsSVG, intrinsicSize == nil else { return }
 		guard let data = try? await ImageDataLoader.data(from: url) else {
 			svgLoadFailed = true
 			return
