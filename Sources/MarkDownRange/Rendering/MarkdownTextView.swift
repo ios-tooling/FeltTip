@@ -165,6 +165,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		/// updateNSView pass" (skip).
 		private var lastSelectedHeading: String?
 		private var flashTask: Task<Void, Never>?
+		private var remountTask: Task<Void, Never>?
 
 		init(parent: MarkdownTextView) {
 			self.parent = parent
@@ -176,6 +177,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 
 		deinit {
 			renderTask?.cancel()
+			remountTask?.cancel()
 			if let cacheToken { ImageDimensionCache.shared.unsubscribe(cacheToken) }
 			// frameObserver block uses [weak self]; once we're gone, its
 			// callback no-ops. Skipping removeObserver here avoids a
@@ -553,29 +555,45 @@ public struct MarkdownTextView: NSViewRepresentable {
 			guard textView.bounds.width > 0,
 				  let layoutManager = textView.textLayoutManager else { return }
 			layoutManager.textViewportLayoutController.layoutViewport()
-			Task { @MainActor [weak self, weak textView] in
+			remountTask?.cancel()
+			remountTask = Task { @MainActor [weak self, weak textView] in
 				try? await Task.sleep(for: .milliseconds(50))
-				guard let self, let textView else { return }
+				guard !Task.isCancelled, let self, let textView else { return }
 				self.remountAttachmentsIfNeeded(in: textView)
 			}
 		}
 
-		/// If any attachments exist in storage that TextKit hasn't mounted,
-		/// force an `ensureLayout` + `layoutViewport` so it nudges the view
-		/// providers. Below-the-fold attachments stay unmounted by design;
-		/// this only does meaningful work when the in-viewport set hasn't
-		/// been touched yet.
+		/// If an attachment *currently in the viewport* hasn't been mounted yet,
+		/// run a viewport-layout pass to nudge TextKit into asking its view
+		/// provider for a view. Scoped to the viewport on purpose: below-the-fold
+		/// attachments are unmounted by design, so a document-wide scan reports
+		/// "unmounted" on essentially every scroll-driven layout — and the old
+		/// `ensureLayout(documentRange)` it then ran re-laid-out the entire
+		/// document many times per second, which is what made table/image-heavy
+		/// docs scroll jerkily. Walking only the already-laid-out fragments
+		/// between the viewport's top and bottom keeps this cheap and never
+		/// forces layout of off-screen content.
 		private func remountAttachmentsIfNeeded(in textView: NSTextView) {
 			guard let storage = textView.textStorage,
-				  let layoutManager = textView.textLayoutManager else { return }
+				  let layoutManager = textView.textLayoutManager,
+				  let contentManager = layoutManager.textContentManager else { return }
+			let viewport = layoutManager.textViewportLayoutController.viewportBounds
+			guard let topFragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: viewport.minY)) else { return }
+			let docStart = contentManager.documentRange.location
 			var hasUnmounted = false
-			storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
-				guard let attachment = value as? SwiftUIAttachment, !attachment.isMounted else { return }
-				hasUnmounted = true
-				stop.pointee = true
+			layoutManager.enumerateTextLayoutFragments(from: topFragment.rangeInElement.location, options: []) { fragment in
+				guard fragment.layoutFragmentFrame.minY <= viewport.maxY else { return false }
+				let start = contentManager.offset(from: docStart, to: fragment.rangeInElement.location)
+				let length = contentManager.offset(from: fragment.rangeInElement.location, to: fragment.rangeInElement.endLocation)
+				guard length > 0, start >= 0, start + length <= storage.length else { return true }
+				storage.enumerateAttribute(.attachment, in: NSRange(location: start, length: length)) { value, _, stop in
+					guard let attachment = value as? SwiftUIAttachment, !attachment.isMounted else { return }
+					hasUnmounted = true
+					stop.pointee = true
+				}
+				return !hasUnmounted
 			}
 			guard hasUnmounted else { return }
-			layoutManager.ensureLayout(for: layoutManager.documentRange)
 			layoutManager.textViewportLayoutController.layoutViewport()
 			textView.needsDisplay = true
 		}
