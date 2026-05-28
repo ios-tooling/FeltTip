@@ -38,6 +38,18 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// committed to the text view. The hosting screen uses this to drive a
 	/// determinate progress bar in the loading overlay.
 	public var onRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
+	/// Reports the scroll viewport as fractions of the document's rendered
+	/// height — `topFraction` is the y-offset of the top of the visible area
+	/// (0 at the top, 1 at the bottom), `visibleFraction` is what proportion
+	/// of the document is currently on screen. Used by external scrubbers /
+	/// minimaps to show "where am I" without owning the scroll view.
+	public var onScrollFractionChanged: (@MainActor @Sendable (_ topFraction: CGFloat, _ visibleFraction: CGFloat) -> Void)?
+	/// Imperative scroll request. Set a new target (with a unique `token`) and
+	/// the renderer scrolls so `topFraction` of the document's rendered height
+	/// is centered in the visible area. Used by external scrubbers; the token
+	/// is what lets repeated requests for the same fraction (e.g. continuous
+	/// drag updates) re-fire instead of being deduped by SwiftUI equality.
+	public var scrollTarget: MarkdownScrollTarget?
 	@Environment(LinkDisplayState.self) private var linkDisplay
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, contentMaxWidth: CGFloat? = nil) {
@@ -80,6 +92,26 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func onRenderProgress(_ callback: @escaping @MainActor @Sendable (Double?) -> Void) -> Self {
 		var copy = self
 		copy.onRenderProgress = callback
+		return copy
+	}
+
+	/// Subscribe to scroll-viewport changes (see `onScrollFractionChanged`).
+	/// Fires on every clip-view bounds change, plus once at attach time so
+	/// hosts can show the right viewport rectangle without waiting for a
+	/// scroll event.
+	public func onScrollFractionChanged(_ callback: @escaping @MainActor @Sendable (CGFloat, CGFloat) -> Void) -> Self {
+		var copy = self
+		copy.onScrollFractionChanged = callback
+		return copy
+	}
+
+	/// Drive the renderer's scroll position from outside (minimap drag-scrub,
+	/// for instance). Bumping the target's `token` is what triggers the scroll;
+	/// the renderer ignores updates whose token it has already handled, so
+	/// state-driven callers can leave the binding set without re-firing.
+	public func scrollTarget(_ target: MarkdownScrollTarget?) -> Self {
+		var copy = self
+		copy.scrollTarget = target
 		return copy
 	}
 
@@ -142,9 +174,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 			if backing.blockquoteBarColor != barColor { backing.blockquoteBarColor = barColor }
 		}
 		context.coordinator.attachFrameObserver(to: textView)
+		context.coordinator.attachScrollObserver(to: scrollView)
 		context.coordinator.applyHorizontalInset(to: textView)
 		context.coordinator.render(into: textView)
 		context.coordinator.handleSelectedHeading(in: textView)
+		context.coordinator.handleScrollTarget(in: textView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -166,6 +200,8 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private var lastSelectedHeading: String?
 		private var flashTask: Task<Void, Never>?
 		private var remountTask: Task<Void, Never>?
+		private var scrollObserver: NSObjectProtocol?
+		private var lastScrollTargetToken: Int?
 
 		init(parent: MarkdownTextView) {
 			self.parent = parent
@@ -201,6 +237,75 @@ public struct MarkdownTextView: NSViewRepresentable {
 					self.handleWidthChange(in: textView)
 				}
 			}
+		}
+
+		/// Observe the scroll view's clip-view bounds so external scrubbers
+		/// (minimaps) can track the visible region. Fires the parent's
+		/// `onScrollFractionChanged` callback on every change. Same once-and-done
+		/// installation pattern as `attachFrameObserver`.
+		func attachScrollObserver(to scrollView: NSScrollView) {
+			guard scrollObserver == nil else { return }
+			let clipView = scrollView.contentView
+			clipView.postsBoundsChangedNotifications = true
+			scrollObserver = NotificationCenter.default.addObserver(
+				forName: NSView.boundsDidChangeNotification,
+				object: clipView,
+				queue: .main
+			) { [weak self] _ in
+				MainActor.assumeIsolated {
+					self?.reportScrollFraction()
+				}
+			}
+			// Seed the host with the initial viewport so it doesn't have to
+			// wait for the first scroll event to populate the scrubber.
+			reportScrollFraction()
+		}
+
+		func reportScrollFraction() {
+			guard let callback = parent.onScrollFractionChanged,
+				  let textView,
+				  let scrollView = textView.enclosingScrollView else { return }
+			let docHeight = textView.bounds.height
+			let visibleHeight = scrollView.contentView.bounds.height
+			guard docHeight > 0 else { callback(0, 1); return }
+			let topY = scrollView.contentView.bounds.origin.y
+			let top = max(0, min(1, topY / docHeight))
+			let visible = max(0, min(1, visibleHeight / docHeight))
+			callback(top, visible)
+		}
+
+		/// Drive the scroll position from outside (e.g. a minimap drag-scrub).
+		/// Token-gated so a binding that stays set across unrelated body
+		/// re-renders doesn't repeatedly re-scroll: the renderer remembers the
+		/// last token it acted on and ignores updates with the same one.
+		func handleScrollTarget(in textView: NSTextView) {
+			guard let target = parent.scrollTarget,
+				  target.token != lastScrollTargetToken else { return }
+			lastScrollTargetToken = target.token
+			scrollToFraction(target.topFraction, in: textView)
+		}
+
+		/// Scroll so the doc point at `fraction` of the rendered height sits at
+		/// the viewport center — keeps the scrubber indicator under the cursor
+		/// during a drag (rather than jumping the indicator's top to wherever
+		/// the click landed). Clamps to the scrollable range.
+		private func scrollToFraction(_ fraction: CGFloat, in textView: NSTextView) {
+			guard let scrollView = textView.enclosingScrollView else { return }
+			let docHeight = textView.bounds.height
+			let visibleHeight = scrollView.contentView.bounds.height
+			let maxY = max(docHeight - visibleHeight, 0)
+			let centerY = max(0, min(1, fraction)) * docHeight
+			let y = max(0, min(maxY, centerY - visibleHeight / 2))
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+			// NSClipView.scroll(to:) doesn't reliably post a bounds-change
+			// notification, so the scroll-fraction observer the host
+			// (e.g. the minimap) relies on doesn't fire on programmatic
+			// scrolls. Report explicitly — and defer to the next runloop
+			// tick so the SwiftUI @State assignments in the host's
+			// callback don't happen inside an in-flight body evaluation
+			// (which would cause SwiftUI to suppress them).
+			DispatchQueue.main.async { [weak self] in self?.reportScrollFraction() }
 		}
 
 		/// Sets the text view's horizontal container inset so the rendered text
@@ -369,6 +474,10 @@ public struct MarkdownTextView: NSViewRepresentable {
 					// the viewport layout so attachments newly inside the
 					// visible area get their hosting views mounted.
 					textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+					// Document height changed; nudge any scrubber listening on
+					// the scroll-fraction callback so it shows the right
+					// viewport rectangle without waiting for a user scroll.
+					self?.reportScrollFraction()
 				}
 				// Belt-and-suspenders: TextKit's first viewport pass can still
 				// race with the run loop on cold launches and miss the topmost
@@ -779,6 +888,20 @@ public struct MarkdownTextView: NSViewRepresentable {
 		let themeID: String
 		let fontSize: CGFloat
 		let headerToken: AnyHashable?
+	}
+}
+
+/// A scroll request expressed as a fraction of the document's rendered height,
+/// paired with a token. The token is what makes the request distinct across
+/// state-driven callers — two updates with the same `topFraction` but
+/// different tokens both fire, while repeating an unchanged target is a no-op.
+public struct MarkdownScrollTarget: Equatable, Sendable {
+	public let topFraction: CGFloat
+	public let token: Int
+
+	public init(topFraction: CGFloat, token: Int) {
+		self.topFraction = topFraction
+		self.token = token
 	}
 }
 
