@@ -13,6 +13,8 @@ import Foundation
 public enum SuperSubProcessor {
 
 	public static func process(_ text: String) -> String {
+		// Doc-level fast-fail: nothing to do if neither marker is present.
+		guard text.contains("^") || text.contains("~") else { return text }
 		var output: [String] = []
 		var inFence = false
 		for line in text.components(separatedBy: "\n") {
@@ -22,6 +24,9 @@ public enum SuperSubProcessor {
 				output.append(line); continue
 			}
 			if inFence { output.append(line); continue }
+			// Per-line fast-fail: the char-by-char scan in `processLine` is the
+			// expensive part. Skip lines that can't possibly contain a marker.
+			if !line.contains("^") && !line.contains("~") { output.append(line); continue }
 			output.append(processLine(line))
 		}
 		return output.joined(separator: "\n")

@@ -21,6 +21,13 @@ public enum EmoticonShortcodes {
 				output.append(line); continue
 			}
 			if inFence { output.append(line); continue }
+			// Per-line fast-fail: the char-by-char scan in `processLine` is
+			// the expensive part. Prose lines often have none of the seed
+			// characters, so skipping them up front saves repeated O(n) work.
+			if !line.contains(":") && !line.contains(";")
+				&& !line.contains("8") && !line.contains("=") {
+				output.append(line); continue
+			}
 			output.append(processLine(line))
 		}
 		return output.joined(separator: "\n")
