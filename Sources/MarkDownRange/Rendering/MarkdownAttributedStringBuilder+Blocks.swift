@@ -18,11 +18,11 @@ extension MarkdownAttributedStringBuilder {
 		para.paragraphSpacingBefore = level <= 2 ? 24 : 16
 		para.paragraphSpacing = level <= 2 ? 12 : 8
 		if let alignment = context.paragraphAlignment { para.alignment = alignment }
-		let inner = nsAttributedString(from: content, font: font, defaultColor: color, boldColor: NSColor(context.theme.textColor), fontFamily: context.theme.fontFamily)
 		let start = out.length
-		out.append(decorate(inner, paragraphStyle: para))
+		appendInline(from: content, to: out, font: font, defaultColor: color, boldColor: NSColor(context.theme.textColor), fontFamily: context.theme.fontFamily)
 		let headingRange = NSRange(location: start, length: out.length - start)
 		if headingRange.length > 0 {
+			out.addAttribute(.paragraphStyle, value: para, range: headingRange)
 			out.addAttribute(.markdownHeadingLevel, value: level, range: headingRange)
 		}
 		out.append(NSAttributedString(string: "\n"))
@@ -35,8 +35,12 @@ extension MarkdownAttributedStringBuilder {
 		para.paragraphSpacing = 10
 		para.lineHeightMultiple = 1.4
 		if let alignment = context.paragraphAlignment { para.alignment = alignment }
-		let inner = nsAttributedString(from: content, font: font, defaultColor: color, fontFamily: context.theme.fontFamily)
-		out.append(decorate(inner, paragraphStyle: para))
+		let start = out.length
+		appendInline(from: content, to: out, font: font, defaultColor: color, fontFamily: context.theme.fontFamily)
+		let range = NSRange(location: start, length: out.length - start)
+		if range.length > 0 {
+			out.addAttribute(.paragraphStyle, value: para, range: range)
+		}
 		out.append(NSAttributedString(string: "\n"))
 	}
 

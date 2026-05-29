@@ -23,6 +23,17 @@ extension MarkdownAttributedStringBuilder {
 	/// stays heading-sized).
 	static func nsAttributedString(from inline: AttributedString, font: NSFont, defaultColor: NSColor, boldColor: NSColor? = nil, fontFamily: MarkdownFontFamily = .system) -> NSAttributedString {
 		let result = NSMutableAttributedString()
+		appendInline(from: inline, to: result, font: font, defaultColor: defaultColor, boldColor: boldColor, fontFamily: fontFamily)
+		return result
+	}
+
+	/// Writes the inline runs directly into `out`. Avoids the per-paragraph
+	/// intermediate `NSMutableAttributedString` that `nsAttributedString(from:)`
+	/// + `decorate(_:)` used to allocate (and then immediately copy into the
+	/// shared output) — on a 200-section document that's ~3000 allocations
+	/// saved per cold open. Block-level callers can then apply paragraph
+	/// styles directly to the contiguous range they just appended.
+	static func appendInline(from inline: AttributedString, to out: NSMutableAttributedString, font: NSFont, defaultColor: NSColor, boldColor: NSColor? = nil, fontFamily: MarkdownFontFamily = .system) {
 		for run in inline.runs {
 			let substring = String(inline[run.range].characters)
 			let traits = run.inlineFontTraits ?? []
@@ -38,9 +49,8 @@ extension MarkdownAttributedStringBuilder {
 			if run.underlineStyle != nil { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
 			if run.strikethroughStyle != nil { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
 			if let baseline = run.baselineOffset { attrs[.baselineOffset] = baseline }
-			result.append(NSAttributedString(string: substring, attributes: attrs))
+			out.append(NSAttributedString(string: substring, attributes: attrs))
 		}
-		return result
 	}
 }
 
