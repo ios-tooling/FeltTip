@@ -33,6 +33,15 @@ public enum EmoticonShortcodes {
 		return output.joined(separator: "\n")
 	}
 
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
+	static func applyLine(_ line: String) -> String {
+		if !line.contains(":") && !line.contains(";")
+			&& !line.contains("8") && !line.contains("=") {
+			return line
+		}
+		return processLine(line)
+	}
+
 	private static func processLine(_ line: String) -> String {
 		var result = ""
 		var i = line.startIndex

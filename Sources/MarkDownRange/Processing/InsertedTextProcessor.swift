@@ -27,6 +27,12 @@ public enum InsertedTextProcessor {
 		return output.joined(separator: "\n")
 	}
 
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
+	static func applyLine(_ line: String) -> String {
+		if !line.contains("++") { return line }
+		return processLine(line)
+	}
+
 	private static func processLine(_ line: String) -> String {
 		guard line.contains("++") else { return line }
 		var pieces: [String] = []

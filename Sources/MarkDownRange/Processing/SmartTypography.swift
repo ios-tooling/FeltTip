@@ -55,6 +55,17 @@ public enum SmartTypography {
 		text.contains("(") || text.contains("+-") || text.contains("...") || text.contains("--")
 	}
 
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
+	static func applyLine(_ line: String) -> String {
+		// `needsProcessing` is the same predicate the top-level `process`
+		// uses; checking per-line lets us skip prose without the seed
+		// substrings (`(`, `+-`, `...`, `--`).
+		if !needsProcessing(line) { return line }
+		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		if isStructuralDashLine(trimmed) { return line }
+		return processLine(line)
+	}
+
 	private static func processLine(_ line: String) -> String {
 		var result = ""
 		var i = line.startIndex

@@ -27,6 +27,14 @@ enum HeadingSpaceInjector {
 		return output.joined(separator: "\n")
 	}
 
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`. Bakes
+	/// in the doc-level "no `#`" fast-fail so the merged pass doesn't need
+	/// to know which lines are candidates.
+	static func applyLine(_ line: String) -> String {
+		if !line.contains("#") { return line }
+		return injectSpace(into: line)
+	}
+
 	private static func injectSpace(into line: String) -> String {
 		// Preserve any leading indentation — `   ##Heading` is still a
 		// candidate up to three spaces of indent under CommonMark.

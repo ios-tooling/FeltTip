@@ -32,6 +32,14 @@ public enum SuperSubProcessor {
 		return output.joined(separator: "\n")
 	}
 
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`. Bakes
+	/// in the doc-level marker fast-fail so the merged pass doesn't need
+	/// to know which lines are candidates.
+	static func applyLine(_ line: String) -> String {
+		if !line.contains("^") && !line.contains("~") { return line }
+		return processLine(line)
+	}
+
 	private static func processLine(_ line: String) -> String {
 		var pieces: [String] = []
 		var pending = ""

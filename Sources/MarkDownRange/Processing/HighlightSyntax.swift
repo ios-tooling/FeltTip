@@ -6,6 +6,18 @@
 import Foundation
 
 public enum HighlightSyntax {
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
+	static func applyLine(_ line: String) -> String {
+		if !line.contains("==") { return line }
+		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		// Setext H1 underlines look like `===`; treating them as `==…==`
+		// highlights would break the heading.
+		if !trimmed.isEmpty, trimmed.allSatisfy({ $0 == "=" || $0.isWhitespace }) {
+			return line
+		}
+		return String(line.replacing(/==([^=].*?)==/) { "<mark>\($0.1)</mark>" })
+	}
+
 	public static func process(_ text: String) -> String {
 		guard text.contains("==") else { return text }
 		var output: [String] = []

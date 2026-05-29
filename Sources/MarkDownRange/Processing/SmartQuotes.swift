@@ -41,6 +41,16 @@ public enum SmartQuotes {
 		return after < trimmed.endIndex && trimmed[after] == ":"
 	}
 
+	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
+	static func applyLine(_ line: String) -> String {
+		if !line.contains("\"") && !line.contains("'") { return line }
+		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		// Link reference definitions need their title quotes left as ASCII
+		// or the CommonMark parser stops recognising them.
+		if isLinkReferenceDefinition(trimmed) { return line }
+		return processLine(line)
+	}
+
 	private static func processLine(_ line: String) -> String {
 		var pieces: [String] = []
 		var pending = ""
