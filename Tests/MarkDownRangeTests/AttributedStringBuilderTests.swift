@@ -212,12 +212,12 @@ import AppKit
 		#expect(!traits.contains(.monoSpace))
 	}
 
-	@Test func onProgress_firesMonotonicallyAndReachesOne() async {
-		// The loading overlay's determinate bar depends on the progress
-		// callback firing in-order, ending at exactly 1.0 so the overlay
-		// can dismiss. Updates are coarse (the builder throttles to ~12
-		// calls regardless of block count) so the @Observable on the host
-		// doesn't invalidate views per-block.
+	@Test func onProgress_firesOnceAtCompletion() async {
+		// Build invokes onProgress only at the very end with value 1.0.
+		// Mid-build yields are off because each one drains queued main-actor
+		// work from the per-attachment NSHostingController sizing and so
+		// costs ~200ms per yield independent of the host. When the sizing
+		// path is replaced (Step 3) we can re-introduce intermediate ticks.
 		let md = LargeMarkdownGeneratorMini.generate(sections: 30)
 		let blocks = MarkdownBlockParser.parse(md)
 		var values: [Double] = []
@@ -227,10 +227,7 @@ import AppKit
 			fontSize: 16,
 			onProgress: { values.append($0) }
 		)
-		#expect(values.count >= 6 && values.count <= 20, "Callback should fire a coarse number of times (got \(values.count))")
-		#expect(values == values.sorted(), "Progress should never decrease")
-		#expect(values.last == 1.0, "Final value should be exactly 1.0 so the overlay can dismiss")
-		#expect(values.first ?? 0 > 0, "First value should be > 0 (not the pre-render 0)")
+		#expect(values == [1.0], "Build should fire onProgress exactly once with 1.0 (got \(values))")
 	}
 
 	@Test func largeDocumentDoesNotCrash() async {

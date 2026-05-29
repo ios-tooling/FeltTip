@@ -50,6 +50,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// is what lets repeated requests for the same fraction (e.g. continuous
 	/// drag updates) re-fire instead of being deduped by SwiftUI equality.
 	public var scrollTarget: MarkdownScrollTarget?
+	/// Per-phase timings for each render pass — benchmarking hook. See
+	/// `MarkdownRenderPhases`.
+	public var onRenderPhases: (@MainActor @Sendable (MarkdownRenderPhases) -> Void)?
 	@Environment(LinkDisplayState.self) private var linkDisplay
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, contentMaxWidth: CGFloat? = nil) {
@@ -112,6 +115,14 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func scrollTarget(_ target: MarkdownScrollTarget?) -> Self {
 		var copy = self
 		copy.scrollTarget = target
+		return copy
+	}
+
+	/// Subscribe to per-phase render timings. Fires once per render pass
+	/// (parse + build + commit + initial layout). Benchmarking only.
+	public func onRenderPhases(_ callback: @escaping @MainActor @Sendable (MarkdownRenderPhases) -> Void) -> Self {
+		var copy = self
+		copy.onRenderPhases = callback
 		return copy
 	}
 
@@ -384,12 +395,15 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let baseURL = parent.baseURL
 			let header = parent.header
 			let progressCallback = parent.onRenderProgress
+			let phasesCallback = parent.onRenderPhases
 			progressCallback?(0)
 
+			let t0 = CFAbsoluteTimeGetCurrent()
 			renderTask = Task { @MainActor [weak self, weak textView] in
 				let blocks = await Task.detached(priority: .userInitiated) {
 					MarkdownBlockParser.parse(text)
 				}.value
+				let tAfterParse = CFAbsoluteTimeGetCurrent()
 				// Cancelled tasks return silently — the replacement render
 				// has already fired its own progress(0). Firing progress(nil)
 				// here would briefly drop the overlay between the two
@@ -397,6 +411,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 				guard !Task.isCancelled, let self, let textView else { return }
 
 				self.prefetchImages(in: blocks, baseURL: baseURL)
+				let tAfterPrefetch = CFAbsoluteTimeGetCurrent()
 
 				let availableWidth = Self.availableContentWidth(in: textView)
 				let body = await MarkdownAttributedStringBuilder.build(
@@ -415,6 +430,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 					attributed.append(NSAttributedString(string: "\n"))
 				}
 				attributed.append(body)
+				let tAfterBuild = CFAbsoluteTimeGetCurrent()
 
 				// Capture the current scroll fraction so a rebuild triggered by
 				// a window resize (or any other forced re-render) doesn't snap
@@ -431,6 +447,22 @@ public struct MarkdownTextView: NSViewRepresentable {
 				if let storage = textView.textStorage,
 				   Self.applyAttributedStringInPlace(attributed, into: storage) {
 					progressCallback?(nil)
+					let tAfterCommit = CFAbsoluteTimeGetCurrent()
+					let fastMetrics = MarkdownAttributedStringBuilder.lastBuildMetrics
+					phasesCallback?(MarkdownRenderPhases(
+						parse: (tAfterParse - t0) * 1000,
+						prefetch: (tAfterPrefetch - tAfterParse) * 1000,
+						build: (tAfterBuild - tAfterPrefetch) * 1000,
+						commit: (tAfterCommit - tAfterBuild) * 1000,
+						initialLayout: 0,
+						total: (tAfterCommit - t0) * 1000,
+						tookFastPath: true,
+						attachMs: fastMetrics?.attachMs,
+						attachCount: fastMetrics?.attachCount,
+						textMs: fastMetrics?.textMs,
+						textCount: fastMetrics?.textCount,
+						yieldMs: fastMetrics?.yieldMs
+					))
 					self.handleSelectedHeading(in: textView)
 					return
 				}
@@ -441,6 +473,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// setAttributedString call on a doc containing attachments.
 				Self.inheritAttachmentHosts(into: attributed, from: textView.textStorage)
 				textView.textStorage?.setAttributedString(attributed)
+				let tAfterCommit = CFAbsoluteTimeGetCurrent()
 				// Render committed — drop the loading overlay before the next
 				// runloop tick runs the post-set layout pass.
 				progressCallback?(nil)
@@ -478,6 +511,22 @@ public struct MarkdownTextView: NSViewRepresentable {
 					// the scroll-fraction callback so it shows the right
 					// viewport rectangle without waiting for a user scroll.
 					self?.reportScrollFraction()
+					let tAfterLayout = CFAbsoluteTimeGetCurrent()
+					let fullMetrics = MarkdownAttributedStringBuilder.lastBuildMetrics
+					phasesCallback?(MarkdownRenderPhases(
+						parse: (tAfterParse - t0) * 1000,
+						prefetch: (tAfterPrefetch - tAfterParse) * 1000,
+						build: (tAfterBuild - tAfterPrefetch) * 1000,
+						commit: (tAfterCommit - tAfterBuild) * 1000,
+						initialLayout: (tAfterLayout - tAfterCommit) * 1000,
+						total: (tAfterLayout - t0) * 1000,
+						tookFastPath: false,
+						attachMs: fullMetrics?.attachMs,
+						attachCount: fullMetrics?.attachCount,
+						textMs: fullMetrics?.textMs,
+						textCount: fullMetrics?.textCount,
+						yieldMs: fullMetrics?.yieldMs
+					))
 				}
 				// Belt-and-suspenders: TextKit's first viewport pass can still
 				// race with the run loop on cold launches and miss the topmost
@@ -889,6 +938,28 @@ public struct MarkdownTextView: NSViewRepresentable {
 		let fontSize: CGFloat
 		let headerToken: AnyHashable?
 	}
+}
+
+/// Per-phase wall-clock timings for a render pass, in milliseconds. Emitted
+/// through `MarkdownTextView.onRenderPhases` for benchmarking; not meant to
+/// drive product behavior.
+public struct MarkdownRenderPhases: Sendable {
+	public let parse: Double
+	public let prefetch: Double
+	public let build: Double
+	public let commit: Double
+	public let initialLayout: Double
+	public let total: Double
+	public let tookFastPath: Bool
+	/// Build-time breakdown by block category (sourced from
+	/// `MarkdownAttributedStringBuilder.lastBuildMetrics`). Nil when no
+	/// metrics were captured (defensive — should never happen on the full
+	/// render path).
+	public let attachMs: Double?
+	public let attachCount: Int?
+	public let textMs: Double?
+	public let textCount: Int?
+	public let yieldMs: Double?
 }
 
 /// A scroll request expressed as a fraction of the document's rendered height,

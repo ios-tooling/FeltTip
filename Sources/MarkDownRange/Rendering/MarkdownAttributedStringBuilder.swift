@@ -14,12 +14,15 @@ import SwiftUI
 
 @MainActor
 public enum MarkdownAttributedStringBuilder {
-	/// Builds an attributed string from `blocks`. Async so the work can yield
-	/// to the main run loop between blocks — each attachment-bearing block
-	/// runs NSHostingController.sizeThatFits, which is the dominant cost on
-	/// a large document. Yielding lets a `@Observable` progress value tick
-	/// the loading overlay's determinate bar instead of jumping 0→100 at
-	/// the end. `onProgress` is called after each block with a value in 0...1.
+	/// Builds an attributed string from `blocks`. Async so callers can await
+	/// without blocking, but internally the loop is synchronous and yields
+	/// only once at the end. Intermediate yields previously fed a determinate
+	/// progress bar, but each yield drained ~200 ms of main-actor work queued
+	/// by the per-attachment `NSHostingController.sizeThatFits` calls — on a
+	/// 200-section document that accounted for ~70% of build time. The
+	/// overlay is now indeterminate during build; `onProgress` is invoked
+	/// only at the end. (The bottleneck is the synchronous SwiftUI sizing —
+	/// addressing it would let us re-introduce progress cheaply.)
 	public static func build(
 		blocks: [MarkdownBlock],
 		theme: MarkdownTheme,
@@ -30,26 +33,54 @@ public enum MarkdownAttributedStringBuilder {
 	) async -> NSAttributedString {
 		let context = MarkdownRenderContext(theme: theme, fontSize: fontSize, baseURL: baseURL, availableWidth: availableWidth)
 		let result = NSMutableAttributedString()
-		let total = max(blocks.count, 1)
-		// Fire progress + yield at the same coarse interval. Each progress
-		// update lights up the @Observable hosting it, invalidating views
-		// that read it; firing per-block on a 200-block document burns
-		// ~200 view-tree diffs that the user can't even perceive. Update
-		// 12-ish times instead.
-		let yieldInterval = max(1, blocks.count / 12)
+		// Benchmarking instrumentation; rides out via `lastBuildMetrics`.
+		var textTotal: Double = 0
+		var attachTotal: Double = 0
+		var attachCount: Int = 0
+		var textCount: Int = 0
 		for (index, block) in blocks.enumerated() {
+			let isAttachment = block.isAttachmentRendered
+			let t0 = CFAbsoluteTimeGetCurrent()
 			append(block, to: result, context: context)
 			if index < blocks.count - 1, !result.string.hasSuffix("\n") {
 				result.append(NSAttributedString(string: "\n"))
 			}
-			let isLast = index == blocks.count - 1
-			if index % yieldInterval == yieldInterval - 1 || isLast {
-				onProgress?(Double(index + 1) / Double(total))
-				await Task.yield()
+			let elapsed = CFAbsoluteTimeGetCurrent() - t0
+			if isAttachment {
+				attachTotal += elapsed
+				attachCount += 1
+			} else {
+				textTotal += elapsed
+				textCount += 1
 			}
 		}
+		onProgress?(1.0)
+		let yt0 = CFAbsoluteTimeGetCurrent()
+		await Task.yield()
+		let yieldTotal = CFAbsoluteTimeGetCurrent() - yt0
+		Self.lastBuildMetrics = BuildMetrics(
+			attachMs: attachTotal * 1000,
+			attachCount: attachCount,
+			textMs: textTotal * 1000,
+			textCount: textCount,
+			yieldMs: yieldTotal * 1000
+		)
 		return result
 	}
+
+	/// Per-category breakdown of the most recent `build` invocation. Read by
+	/// the renderer immediately after build returns and folded into the
+	/// `MarkdownRenderPhases` callback. Lives at the type level because build
+	/// is a static function and we don't want to thread an out-parameter
+	/// through every call site.
+	public struct BuildMetrics: Sendable {
+		public let attachMs: Double
+		public let attachCount: Int
+		public let textMs: Double
+		public let textCount: Int
+		public let yieldMs: Double
+	}
+	public static var lastBuildMetrics: BuildMetrics?
 
 	static func append(_ block: MarkdownBlock, to out: NSMutableAttributedString, context: MarkdownRenderContext) {
 		switch block {
@@ -89,6 +120,20 @@ public enum MarkdownAttributedStringBuilder {
 		case .center: .center
 		case .trailing: .right
 		default: .natural
+		}
+	}
+}
+
+extension MarkdownBlock {
+	/// Whether this block renders via `appendBlockAttachment` (a SwiftUI
+	/// hosted attachment, costed in NSHostingController.sizeThatFits) rather
+	/// than inline text. Used by the benchmarking split inside `build`.
+	var isAttachmentRendered: Bool {
+		switch self {
+		case .codeBlock, .image, .imageRow, .figure, .htmlBlock, .table, .details, .alert, .frontmatter:
+			return true
+		default:
+			return false
 		}
 	}
 }
