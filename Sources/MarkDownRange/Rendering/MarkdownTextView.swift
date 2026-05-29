@@ -50,6 +50,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// is what lets repeated requests for the same fraction (e.g. continuous
 	/// drag updates) re-fire instead of being deduped by SwiftUI equality.
 	public var scrollTarget: MarkdownScrollTarget?
+	/// Relative scroll request: nudges the current scroll position by
+	/// `deltaY` pixels. Used by an external scroll-wheel handler (the
+	/// minimap forwards wheel events here) so the doc scrolls without
+	/// having to know its own height. Token-gated like `scrollTarget`.
+	public var scrollDelta: MarkdownScrollDelta?
 	/// Per-phase timings for each render pass — benchmarking hook. See
 	/// `MarkdownRenderPhases`.
 	public var onRenderPhases: (@MainActor @Sendable (MarkdownRenderPhases) -> Void)?
@@ -115,6 +120,16 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func scrollTarget(_ target: MarkdownScrollTarget?) -> Self {
 		var copy = self
 		copy.scrollTarget = target
+		return copy
+	}
+
+	/// Apply a relative scroll delta from outside the renderer (e.g. the
+	/// minimap forwarding scroll-wheel events). Token-gated so a state-
+	/// driven binding that survives unrelated body re-renders doesn't
+	/// re-scroll.
+	public func scrollDelta(_ delta: MarkdownScrollDelta?) -> Self {
+		var copy = self
+		copy.scrollDelta = delta
 		return copy
 	}
 
@@ -190,6 +205,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		context.coordinator.render(into: textView)
 		context.coordinator.handleSelectedHeading(in: textView)
 		context.coordinator.handleScrollTarget(in: textView)
+		context.coordinator.handleScrollDelta(in: textView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -213,6 +229,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private var remountTask: Task<Void, Never>?
 		private var scrollObserver: NSObjectProtocol?
 		private var lastScrollTargetToken: Int?
+		private var lastScrollDeltaToken: Int?
 
 		init(parent: MarkdownTextView) {
 			self.parent = parent
@@ -294,6 +311,23 @@ public struct MarkdownTextView: NSViewRepresentable {
 				  target.token != lastScrollTargetToken else { return }
 			lastScrollTargetToken = target.token
 			scrollToFraction(target.topFraction, in: textView)
+		}
+
+		/// Apply a pixel-based scroll delta from outside (the minimap's
+		/// scroll-wheel handler). Same token gating as `handleScrollTarget`.
+		func handleScrollDelta(in textView: NSTextView) {
+			guard let delta = parent.scrollDelta,
+				  delta.token != lastScrollDeltaToken else { return }
+			lastScrollDeltaToken = delta.token
+			guard let scrollView = textView.enclosingScrollView else { return }
+			let docHeight = textView.bounds.height
+			let visibleHeight = scrollView.contentView.bounds.height
+			let maxY = max(docHeight - visibleHeight, 0)
+			let currentY = scrollView.contentView.bounds.origin.y
+			let newY = max(0, min(maxY, currentY + delta.deltaY))
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: newY))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+			reportScrollFraction()
 		}
 
 		/// Scroll so the doc point at `fraction` of the rendered height sits at
@@ -980,6 +1014,19 @@ public struct MarkdownRenderPhases: Sendable {
 /// paired with a token. The token is what makes the request distinct across
 /// state-driven callers — two updates with the same `topFraction` but
 /// different tokens both fire, while repeating an unchanged target is a no-op.
+/// A relative scroll request expressed in pixels (positive deltaY scrolls
+/// content down), paired with a token so two updates with the same delta
+/// across separate gestures both fire.
+public struct MarkdownScrollDelta: Equatable, Sendable {
+	public let deltaY: CGFloat
+	public let token: Int
+
+	public init(deltaY: CGFloat, token: Int) {
+		self.deltaY = deltaY
+		self.token = token
+	}
+}
+
 public struct MarkdownScrollTarget: Equatable, Sendable {
 	public let topFraction: CGFloat
 	public let token: Int
