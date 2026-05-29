@@ -46,22 +46,53 @@ public enum MarkdownPreprocessor {
 	/// Step shared with `FormattedMarkdownScreen`, which parses citations and
 	/// footnotes itself so it can keep handles on them.
 	public static func common(after withFootnotes: String, options: MarkdownOptions = .default) -> String {
+		func timed<T>(_ label: String, _ work: () -> T) -> T {
+			let t = CFAbsoluteTimeGetCurrent()
+			let result = work()
+			Self.recordTiming(label, ms: (CFAbsoluteTimeGetCurrent() - t) * 1000)
+			return result
+		}
 		let withHeadings = options.headingsRequireSpaceAfterHash
 			? withFootnotes
-			: HeadingSpaceInjector.process(withFootnotes)
-		let withAbbreviations = AbbreviationProcessor.process(withHeadings)
-		let withContainers = CustomContainerProcessor.process(withAbbreviations)
-		let withSuperSub = SuperSubProcessor.process(withContainers)
-		let withInserted = InsertedTextProcessor.process(withSuperSub)
-		let withEmoticons = EmoticonShortcodes.process(withInserted)
-		let withQuotes = SmartQuotes.process(withEmoticons)
-		let withTypography = SmartTypography.process(withQuotes)
-		return WikilinkProcessor.process(
-			DefinitionListProcessor.process(
-				HighlightSyntax.process(
-					EmojiShortcodes.process(withTypography)
-				)
-			)
-		)
+			: timed("HeadingSpace") { HeadingSpaceInjector.process(withFootnotes) }
+		let withAbbreviations = timed("Abbreviation") { AbbreviationProcessor.process(withHeadings) }
+		let withContainers = timed("CustomContainer") { CustomContainerProcessor.process(withAbbreviations) }
+		let withSuperSub = timed("SuperSub") { SuperSubProcessor.process(withContainers) }
+		let withInserted = timed("Inserted") { InsertedTextProcessor.process(withSuperSub) }
+		let withEmoticons = timed("Emoticon") { EmoticonShortcodes.process(withInserted) }
+		let withQuotes = timed("SmartQuotes") { SmartQuotes.process(withEmoticons) }
+		let withTypography = timed("SmartTypography") { SmartTypography.process(withQuotes) }
+		let withEmoji = timed("Emoji") { EmojiShortcodes.process(withTypography) }
+		let withHighlight = timed("Highlight") { HighlightSyntax.process(withEmoji) }
+		let withDefList = timed("DefinitionList") { DefinitionListProcessor.process(withHighlight) }
+		let withWikilinks = timed("Wikilink") { WikilinkProcessor.process(withDefList) }
+		return withWikilinks
+	}
+
+	/// Per-processor timings (ms) accumulated across a single preprocess
+	/// pass. Reset by the host between runs. Benchmarking only.
+	///
+	/// Tests run in parallel and used to crash the runner here because two
+	/// concurrent `process` calls would mutate the dict from different
+	/// threads simultaneously. The lock makes the bookkeeping correct (or
+	/// at least non-crashing) under parallel access — values can still
+	/// interleave between concurrent parses, which is fine for benchmarking
+	/// where only one parse runs at a time.
+	private static let recordedLock = NSLock()
+	public static var recordedTimings: [String: Double] {
+		get {
+			recordedLock.lock(); defer { recordedLock.unlock() }
+			return _recordedTimings
+		}
+		set {
+			recordedLock.lock(); defer { recordedLock.unlock() }
+			_recordedTimings = newValue
+		}
+	}
+	nonisolated(unsafe) private static var _recordedTimings: [String: Double] = [:]
+
+	fileprivate static func recordTiming(_ label: String, ms: Double) {
+		recordedLock.lock(); defer { recordedLock.unlock() }
+		_recordedTimings[label, default: 0] += ms
 	}
 }

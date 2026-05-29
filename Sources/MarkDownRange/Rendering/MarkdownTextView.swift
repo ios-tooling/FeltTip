@@ -461,7 +461,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 						attachCount: fastMetrics?.attachCount,
 						textMs: fastMetrics?.textMs,
 						textCount: fastMetrics?.textCount,
-						yieldMs: fastMetrics?.yieldMs
+						yieldMs: fastMetrics?.yieldMs,
+						parsePreprocessMs: MarkdownBlockParser.lastParseMetrics?.preprocessMs,
+						parseDocInitMs: MarkdownBlockParser.lastParseMetrics?.docInitMs,
+						parseBlockBuildMs: MarkdownBlockParser.lastParseMetrics?.blockBuildMs,
+						parsePostProcessMs: MarkdownBlockParser.lastParseMetrics?.postProcessMs
 					))
 					self.handleSelectedHeading(in: textView)
 					return
@@ -525,7 +529,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 						attachCount: fullMetrics?.attachCount,
 						textMs: fullMetrics?.textMs,
 						textCount: fullMetrics?.textCount,
-						yieldMs: fullMetrics?.yieldMs
+						yieldMs: fullMetrics?.yieldMs,
+						parsePreprocessMs: MarkdownBlockParser.lastParseMetrics?.preprocessMs,
+						parseDocInitMs: MarkdownBlockParser.lastParseMetrics?.docInitMs,
+						parseBlockBuildMs: MarkdownBlockParser.lastParseMetrics?.blockBuildMs,
+						parsePostProcessMs: MarkdownBlockParser.lastParseMetrics?.postProcessMs
 					))
 				}
 				// Belt-and-suspenders: TextKit's first viewport pass can still
@@ -960,6 +968,12 @@ public struct MarkdownRenderPhases: Sendable {
 	public let textMs: Double?
 	public let textCount: Int?
 	public let yieldMs: Double?
+	/// Parse sub-phases (preprocess / Document init / block build /
+	/// post-process). Sourced from `MarkdownBlockParser.lastParseMetrics`.
+	public let parsePreprocessMs: Double?
+	public let parseDocInitMs: Double?
+	public let parseBlockBuildMs: Double?
+	public let parsePostProcessMs: Double?
 }
 
 /// A scroll request expressed as a fraction of the document's rendered height,

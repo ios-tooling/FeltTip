@@ -7,6 +7,18 @@ import Foundation
 import Markdown
 
 public enum MarkdownBlockParser {
+	/// Per-sub-phase timings for the most recent parse pass, in milliseconds.
+	/// Written from the detached background task that runs `parse`; safe to
+	/// read on the main actor after that task's `.value` has been awaited
+	/// (the await provides the happens-before). Benchmarking only.
+	public struct ParseMetrics: Sendable {
+		public let preprocessMs: Double
+		public let docInitMs: Double
+		public let blockBuildMs: Double
+		public let postProcessMs: Double
+	}
+	public nonisolated(unsafe) static var lastParseMetrics: ParseMetrics?
+
 	public static func parse(
 		_ content: some MarkdownContent,
 		theme: MarkdownTheme = .default,
@@ -18,18 +30,31 @@ public enum MarkdownBlockParser {
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body) = extractFrontmatter(markdown)
+		let tPre0 = CFAbsoluteTimeGetCurrent()
+		MarkdownPreprocessor.recordedTimings = [:]
 		let processed: String
 		if preprocessed {
 			processed = body
 		} else {
 			processed = MarkdownPreprocessor.process(body, options: options)
 		}
+		let tDoc0 = CFAbsoluteTimeGetCurrent()
 		let document = Document(parsing: processed)
+		let tBuild0 = CFAbsoluteTimeGetCurrent()
 		let counter = CheckboxCounter(checkboxOffset)
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		if let fm = frontmatter { blocks.insert(fm, at: 0) }
-		return postProcess(blocks)
+		let tPost0 = CFAbsoluteTimeGetCurrent()
+		let result = postProcess(blocks)
+		let tEnd = CFAbsoluteTimeGetCurrent()
+		Self.lastParseMetrics = ParseMetrics(
+			preprocessMs: (tDoc0 - tPre0) * 1000,
+			docInitMs: (tBuild0 - tDoc0) * 1000,
+			blockBuildMs: (tPost0 - tBuild0) * 1000,
+			postProcessMs: (tEnd - tPost0) * 1000
+		)
+		return result
 	}
 
 	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String) {
