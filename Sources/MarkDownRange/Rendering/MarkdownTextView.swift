@@ -327,7 +327,13 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let newY = max(0, min(maxY, currentY + delta.deltaY))
 			scrollView.contentView.scroll(to: NSPoint(x: 0, y: newY))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
-			reportScrollFraction()
+			// Same caveat as `scrollToFraction`: NSClipView's programmatic
+			// scroll doesn't reliably post the bounds-change notification
+			// the scrub observer listens for, and reporting synchronously
+			// from updateNSView writes to SwiftUI @State inside an in-flight
+			// body evaluation (which gets suppressed). Defer to the next
+			// runloop tick.
+			DispatchQueue.main.async { [weak self] in self?.reportScrollFraction() }
 		}
 
 		/// Scroll so the doc point at `fraction` of the rendered height sits at
@@ -693,6 +699,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 				  let range = Self.range(ofHeadingAt: index, in: storage) else { return }
 			textView.scrollRangeToVisible(range)
 			flashHeading(range: range, in: textView)
+			// `scrollRangeToVisible` reaches the clipView through the same
+			// programmatic path that doesn't reliably post the bounds-change
+			// notification, so the scrub observer wouldn't fire and the
+			// minimap's viewport indicator would stay where it was. Report
+			// explicitly on the next runloop tick.
+			DispatchQueue.main.async { [weak self] in self?.reportScrollFraction() }
 		}
 
 		private static func range(ofHeadingAt targetIndex: Int, in storage: NSTextStorage) -> NSRange? {
