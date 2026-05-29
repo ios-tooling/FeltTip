@@ -61,8 +61,16 @@ extension MarkdownAttributedStringBuilder {
 			measurementWidth = nil
 			usesContainerWidth = false
 		}
+		// Two structurally-identical attachments (e.g. two code blocks of
+		// the same line count) measure to the same height. Reusing a cached
+		// height skips the per-occurrence NSHostingController.sizeThatFits,
+		// which used to dominate cold-open time on large documents.
+		let effectiveWidth = measurementWidth ?? SwiftUIAttachment.defaultMeasurementWidth
+		let sizeKey = MarkdownAttachmentSizeCache.key(for: block, fontSize: fontSize, width: effectiveWidth)
+		let cachedHeight = sizeKey.flatMap { MarkdownAttachmentSizeCache.shared[$0] }
 		let attachment = SwiftUIAttachment(
 			width: measurementWidth,
+			estimatedHeight: cachedHeight,
 			usesContainerWidth: usesContainerWidth,
 			contentKey: Self.contentKey(for: block, theme: theme, fontSize: fontSize)
 		) {
@@ -75,6 +83,12 @@ extension MarkdownAttributedStringBuilder {
 					onLinkHover: nil
 				)
 			)
+		}
+		if cachedHeight == nil, let sizeKey {
+			// First sighting of this size class — stash the height we just
+			// measured so the next occurrence skips the synchronous SwiftUI
+			// sizing path.
+			MarkdownAttachmentSizeCache.shared[sizeKey] = attachment.bounds.height
 		}
 		let para = NSMutableParagraphStyle()
 		para.paragraphSpacingBefore = 14

@@ -44,7 +44,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// hosted views and flash the images.
 	let contentKey: String?
 
-	public init(width: CGFloat? = nil, usesContainerWidth: Bool = false, contentKey: String? = nil, _ viewBuilder: @escaping () -> AnyView) {
+	public init(width: CGFloat? = nil, estimatedHeight: CGFloat? = nil, usesContainerWidth: Bool = false, contentKey: String? = nil, _ viewBuilder: @escaping () -> AnyView) {
 		self.viewBuilder = viewBuilder
 		self.usesContainerWidth = usesContainerWidth
 		self.contentKey = contentKey
@@ -60,16 +60,33 @@ public final class SwiftUIAttachment: NSTextAttachment {
 		// correct size avoids both — the gap before loadView is just empty
 		// space, and the cached host eliminates re-entry flashes.
 		let measureWidth = max(width ?? Self.measurementWidth, 1)
-		let controller = NSHostingController(
-			rootView: viewBuilder()
-				.frame(maxWidth: measureWidth, alignment: .leading)
-				.fixedSize(horizontal: false, vertical: true)
-		)
-		let fitting = controller.sizeThatFits(in: CGSize(width: measureWidth, height: CGFloat.greatestFiniteMagnitude))
-		let size = CGSize(width: measureWidth, height: max(fitting.height, 24))
+		let measuredHeight: CGFloat
+		if let estimatedHeight {
+			// Skip the synchronous NSHostingController.sizeThatFits — the
+			// caller has supplied a pre-cached height for this block's size
+			// class. Building 400 NSHostingControllers up front was costing
+			// ~2 s per cold open of a 200-section document; reusing a single
+			// measurement per size class brings that down to one measurement
+			// per *kind* of block, not per *occurrence*.
+			measuredHeight = max(estimatedHeight, 24)
+		} else {
+			let controller = NSHostingController(
+				rootView: viewBuilder()
+					.frame(maxWidth: measureWidth, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			)
+			let fitting = controller.sizeThatFits(in: CGSize(width: measureWidth, height: CGFloat.greatestFiniteMagnitude))
+			measuredHeight = max(fitting.height, 24)
+		}
+		let size = CGSize(width: measureWidth, height: measuredHeight)
 		self.bounds = CGRect(origin: .zero, size: size)
 		self.image = Self.transparentImage(size: size)
 	}
+
+	/// Width used for the synchronous NSHostingController measurement, when
+	/// no explicit width is provided. Exposed so the size cache can key on
+	/// the same width the measurement would have used.
+	public static var defaultMeasurementWidth: CGFloat { Self.measurementWidth }
 
 	public required init?(coder: NSCoder) { nil }
 
