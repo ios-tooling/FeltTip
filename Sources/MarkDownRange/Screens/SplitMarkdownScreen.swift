@@ -18,6 +18,9 @@ public struct SplitMarkdownScreen: View {
 	@State private var scrollSource: ScrollSource = .none
 	@State private var lockoutTask: Task<Void, Never>?
 	@State private var highlightedSectionID: String?
+	/// Bumped each time the raw pane drives the scroll, so the token-gated
+	/// `scrollTarget` on the native preview re-applies the latest fraction.
+	@State private var previewScrollToken = 0
 	private static let scrollLockoutMs: Int = 200
 
 	public init(
@@ -42,40 +45,46 @@ public struct SplitMarkdownScreen: View {
 
 	public var body: some View {
 		#if os(macOS)
-		GeometryReader { geo in
-			HSplitView {
-				RawMarkdownScreen(
-					text: $text,
-					selectedHeadingID: $selectedHeadingID,
-					fontSize: fontSize,
-					onVisibleHeadingChanged: { id in
-						if let id { onVisibleSectionChanged?(id) }
-					},
-					onScrollFractionChanged: { fraction in didScroll(.raw, fraction: fraction) },
-					syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
-					typewriterMode: typewriterMode,
-					theme: theme,
-					onCursorPositionChanged: { line, col, sel, charOffset in
-						onCursorPositionChanged?(line, col, sel, charOffset)
-						let heading = MarkdownHeading.heading(atCharacterOffset: charOffset, in: text)
-						highlightedSectionID = heading?.id ?? "preamble"
-					},
-					scrollToCharacterOffset: nil
-				)
-				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
-				FormattedMarkdownScreen(
-					text: text,
-					selectedHeadingID: $selectedHeadingID,
-					theme: theme,
-					fontSize: fontSize,
-					syncScrollFraction: scrollSource == .raw ? scrollFraction : nil,
-					focusModeEnabled: focusModeEnabled,
-					onScrollFractionChanged: { fraction in didScroll(.formatted, fraction: fraction) },
-					highlightedSectionID: highlightedSectionID,
-					onVisibleSectionChanged: onVisibleSectionChanged
-				)
-				.frame(minWidth: 150, idealWidth: geo.size.width / 2)
-			}
+		// No GeometryReader / geo-derived idealWidth here on purpose: deriving
+		// each pane's width from the container's geometry re-invalidates layout
+		// on every tick of an animated container resize (e.g. the sidebar
+		// collapsing on open), which spins AppKit's update-constraints loop past
+		// its per-window limit and crashes. HSplitView already shares width
+		// evenly between two `maxWidth: .infinity` panes.
+		HSplitView {
+			RawMarkdownScreen(
+				text: $text,
+				selectedHeadingID: $selectedHeadingID,
+				fontSize: fontSize,
+				onVisibleHeadingChanged: { id in
+					if let id { onVisibleSectionChanged?(id) }
+				},
+				onScrollFractionChanged: { fraction in didScroll(.raw, fraction: fraction) },
+				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
+				typewriterMode: typewriterMode,
+				theme: theme,
+				onCursorPositionChanged: { line, col, sel, charOffset in
+					onCursorPositionChanged?(line, col, sel, charOffset)
+					let heading = MarkdownHeading.heading(atCharacterOffset: charOffset, in: text)
+					highlightedSectionID = heading?.id ?? "preamble"
+				},
+				scrollToCharacterOffset: nil
+			)
+			.frame(minWidth: 150, maxWidth: .infinity)
+			// Preview pane uses the NSTextView-based renderer (same as the
+			// standalone formatted view), not the SwiftUI FormattedMarkdownScreen.
+			// The SwiftUI renderer's LazyVStack + per-section GeometryReaders
+			// re-lay-out on every synced programmatic scroll, accumulating
+			// constraint passes until AppKit raises under sustained scrolling —
+			// the split-mode crash. Scroll sync is driven via scrollTarget
+			// (incoming) and onScrollFractionChanged (outgoing).
+			MarkdownTextView(text: text, theme: theme, fontSize: fontSize)
+				.selectedHeading($selectedHeadingID)
+				.scrollTarget(scrollSource == .raw
+					? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)
+					: nil)
+				.onScrollFractionChanged { top, _ in didScroll(.formatted, fraction: Double(top)) }
+				.frame(minWidth: 150, maxWidth: .infinity)
 		}
 		#else
 		GeometryReader { geometry in
@@ -108,6 +117,9 @@ public struct SplitMarkdownScreen: View {
 		if scrollSource != .none && scrollSource != source { return }
 		scrollSource = source
 		scrollFraction = fraction
+		// Re-arm the native preview's token-gated scrollTarget so it follows the
+		// raw pane. (Formatted→raw sync uses RawMarkdownScreen.syncScrollFraction.)
+		if source == .raw { previewScrollToken += 1 }
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
