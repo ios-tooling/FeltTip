@@ -72,6 +72,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		scrollView.documentView = textView
 		scrollView.hasVerticalScroller = true
+		scrollView.hasHorizontalScroller = false
+		// Text wraps to the view width, so there's nothing to scroll to
+		// horizontally; disable the elastic horizontal overscroll so the pane
+		// only moves up and down.
+		scrollView.horizontalScrollElasticity = .none
 		scrollView.autohidesScrollers = true
 		scrollView.contentView.postsBoundsChangedNotifications = true
 		applyTheme(to: textView, scrollView: scrollView)

@@ -145,6 +145,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 		let scrollView = NSScrollView()
 		scrollView.hasVerticalScroller = true
 		scrollView.hasHorizontalScroller = false
+		// Content wraps to the view width, so disable the elastic horizontal
+		// overscroll — the pane should only move up and down.
+		scrollView.horizontalScrollElasticity = .none
 		scrollView.autohidesScrollers = true
 		scrollView.borderType = .noBorder
 		scrollView.drawsBackground = true
