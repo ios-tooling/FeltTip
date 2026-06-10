@@ -376,15 +376,35 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			parent.onCursorPositionChanged?(lines.count, (lines.last?.count ?? 0) + 1, range.length, insertion)
 		}
 
+		/// Typewriter scrolling with a dead band. Rather than hard-snapping the
+		/// caret line to dead center on every keystroke — which reads as constant
+		/// jitter — this leaves the scroll position alone while the caret sits
+		/// within the comfortable middle band of the viewport, and only recenters
+		/// once the caret has drifted past the band's top or bottom edge.
 		private func centerCursor(in textView: NSTextView) {
 			guard let scrollView = textView.enclosingScrollView,
 					let layoutManager = textView.layoutManager else { return }
+			let visibleHeight = scrollView.contentView.bounds.height
+			guard visibleHeight > 0 else { return }
 			let insertionPoint = textView.selectedRange().location
 			let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: insertionPoint, length: 0), actualCharacterRange: nil)
 			let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-			let visibleHeight = scrollView.contentView.bounds.height
-			let targetY = lineRect.midY + textView.textContainerOrigin.y - visibleHeight / 2
-			scrollView.contentView.scroll(to: NSPoint(x: 0, y: max(0, targetY)))
+
+			let lineMidY = lineRect.midY + textView.textContainerOrigin.y
+			let currentTop = scrollView.contentView.bounds.origin.y
+			let caretInViewport = lineMidY - currentTop
+
+			// Comfortable band: the middle ~40% of the viewport. While the caret
+			// stays inside it, don't scroll at all.
+			let center = visibleHeight / 2
+			let bandHalf = visibleHeight * 0.2
+			guard caretInViewport < center - bandHalf || caretInViewport > center + bandHalf else { return }
+
+			// Drifted out of the band — recenter the caret line.
+			let maxTop = max(0, (scrollView.documentView?.frame.height ?? 0) - visibleHeight)
+			let targetTop = max(0, min(maxTop, lineMidY - center))
+			guard abs(targetTop - currentTop) > 0.5 else { return }
+			scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetTop))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
 		}
 	}
