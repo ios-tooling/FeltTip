@@ -59,6 +59,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// `MarkdownRenderPhases`.
 	public var onRenderPhases: (@MainActor @Sendable (MarkdownRenderPhases) -> Void)?
 	@Environment(LinkDisplayState.self) private var linkDisplay
+	@Environment(\.markdownLinkAccessScope) private var linkAccessScope
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil, contentMaxWidth: CGFloat? = nil) {
 		self.text = text
@@ -952,12 +953,84 @@ public struct MarkdownTextView: NSViewRepresentable {
 		}
 
 		public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-			let url: URL? = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
-			guard let url else { return false }
-			if handleFootnoteJump(url: url, in: textView) { return true }
-			NSWorkspace.shared.open(url)
+			guard let target = resolvedLinkTarget(link) else { return false }
+			if handleFootnoteJump(url: target, in: textView) { return true }
+			if target.isFileURL, openLocalFile(target) { return true }
+			NSWorkspace.shared.open(target)
 			return true
 		}
+
+		/// Resolves a clicked link to an absolute URL. Links that already carry a
+		/// scheme (http, mailto, the footnote schemes, file) are used as-is;
+		/// scheme-less links — e.g. a relative `OverallPlan.md` — are resolved
+		/// against the document's `baseURL` so they point at the real file on
+		/// disk instead of being handed to the system as a bare path (which
+		/// fails to open with error -50).
+		private func resolvedLinkTarget(_ link: Any) -> URL? {
+			if let url = link as? URL {
+				if url.scheme != nil { return url }
+				return resolvedRelativeFile(url.relativeString)
+			}
+			if let string = link as? String {
+				if let url = URL(string: string), url.scheme != nil { return url }
+				return resolvedRelativeFile(string)
+			}
+			return nil
+		}
+
+		private func resolvedRelativeFile(_ raw: String) -> URL? {
+			// In-page anchors aren't files; ignore rather than mis-resolve them.
+			guard !raw.hasPrefix("#"), let base = parent.baseURL else { return nil }
+			let path = raw.removingPercentEncoding ?? raw
+			return URL(fileURLWithPath: path, relativeTo: base).standardizedFileURL
+		}
+
+		/// Opens a local file referenced by a link. Markdown files open in a new
+		/// document window; anything else returns false so the caller falls back
+		/// to the system's default app.
+		private func openLocalFile(_ url: URL) -> Bool {
+			guard Self.markdownLinkExtensions.contains(url.pathExtension.lowercased()) else { return false }
+			if FileManager.default.isReadableFile(atPath: url.path) {
+				openMarkdownDocument(at: url)
+			} else {
+				// Sandboxed and the file sits outside what the user has granted
+				// (e.g. a sibling of the opened document). Ask for access via the
+				// open panel — pointed at the file's folder — then open whatever
+				// the user confirms.
+				requestAccessThenOpen(url)
+			}
+			return true
+		}
+
+		private func openMarkdownDocument(at url: URL) {
+			NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { document, _, _ in
+				if document == nil { NSWorkspace.shared.open(url) }
+			}
+		}
+
+		private func requestAccessThenOpen(_ url: URL) {
+			let folder = url.deletingLastPathComponent()
+			let panel = NSOpenPanel()
+			panel.allowsMultipleSelection = false
+			panel.directoryURL = folder
+			panel.prompt = "Open"
+			switch parent.linkAccessScope {
+			case .file:
+				panel.canChooseFiles = true
+				panel.canChooseDirectories = false
+				panel.message = "Marker needs your permission to open “\(url.lastPathComponent)”."
+			case .folder:
+				panel.canChooseFiles = false
+				panel.canChooseDirectories = true
+				panel.message = "Marker needs your permission to open files in “\(folder.lastPathComponent)”."
+			}
+			guard panel.runModal() == .OK, let granted = panel.url else { return }
+			// File scope: open the file the user selected. Folder scope: the
+			// grant now covers the folder, so open the originally-linked file.
+			openMarkdownDocument(at: parent.linkAccessScope == .folder ? url : granted)
+		}
+
+		private static let markdownLinkExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
 
 		/// Footnotes link both directions: `footnote://id` (the reference)
 		/// jumps to `footnote-anchor://id` (the body opener), and
