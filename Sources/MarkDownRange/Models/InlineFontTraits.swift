@@ -29,6 +29,7 @@ public enum InlineFontTraitsAttribute: AttributedStringKey {
 extension AttributeScopes {
 	public struct MarkDownRangeAttributes: AttributeScope {
 		public let inlineFontTraits: InlineFontTraitsAttribute
+		public let markdownSourceOffset: MarkdownSourceOffsetAttribute
 	}
 
 	public var markDownRange: MarkDownRangeAttributes.Type { MarkDownRangeAttributes.self }

@@ -49,6 +49,7 @@ extension MarkdownAttributedStringBuilder {
 			if run.underlineStyle != nil { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
 			if run.strikethroughStyle != nil { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
 			if let baseline = run.baselineOffset { attrs[.baselineOffset] = baseline }
+			if let sourceOffset = run.markdownSourceOffset { attrs[.markdownSourceOffset] = sourceOffset }
 			out.append(NSAttributedString(string: substring, attributes: attrs))
 		}
 	}

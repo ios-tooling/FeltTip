@@ -26,6 +26,7 @@ public enum MarkdownBlockParser {
 		checkboxOffset: Int = 0,
 		preprocessed: Bool = false,
 		linkifyURLs: Bool = true,
+		trackSourceOffsets: Bool = false,
 		options: MarkdownOptions = .default
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
@@ -42,7 +43,10 @@ public enum MarkdownBlockParser {
 		let document = Document(parsing: processed)
 		let tBuild0 = CFAbsoluteTimeGetCurrent()
 		let counter = CheckboxCounter(checkboxOffset)
-		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter)
+		// Offsets map into `processed`; valid against the caller's source only
+		// when parsing raw (preprocessed) text with no stripped frontmatter.
+		let converter = trackSourceOffsets ? SourceOffsetConverter(processed) : nil
+		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		if let fm = frontmatter { blocks.insert(fm, at: 0) }
 		let tPost0 = CFAbsoluteTimeGetCurrent()

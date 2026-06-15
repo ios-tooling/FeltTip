@@ -18,12 +18,15 @@ struct BlockBuilder: MarkupWalker {
 	let fontSize: CGFloat
 	let checkboxCounter: CheckboxCounter
 	var linkifyURLs: Bool = true
+	/// Forwarded to each InlineBuilder so text runs carry source offsets.
+	let sourceConverter: SourceOffsetConverter?
 	private var blocks: [MarkdownBlock] = []
 	private var counter = 0
 
-	init(theme: MarkdownTheme, fontSize: CGFloat, checkboxCounter: CheckboxCounter = CheckboxCounter()) {
+	init(theme: MarkdownTheme, fontSize: CGFloat, checkboxCounter: CheckboxCounter = CheckboxCounter(), sourceConverter: SourceOffsetConverter? = nil) {
 		self.theme = theme
 		self.fontSize = fontSize
+		self.sourceConverter = sourceConverter
 		self.checkboxCounter = checkboxCounter
 	}
 
@@ -34,7 +37,7 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitHeading(_ heading: Heading) {
-		var builder = InlineBuilder(theme: theme, fontSize: fontSize)
+		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
 		let inline = builder.build(from: heading, linkifyURLs: linkifyURLs)
 		blocks.append(.heading(level: heading.level, content: inline.attributed, id: nextID()))
 	}
@@ -223,7 +226,7 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	private mutating func buildParagraph(from children: [Markup]) -> MarkdownBlock {
-		var builder = InlineBuilder(theme: theme, fontSize: fontSize)
+		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
 		for child in children { builder.visit(child) }
 		let inline = builder.finalize(linkifyURLs: linkifyURLs)
 		return .paragraph(content: inline.attributed, links: inline.links, id: nextID())
@@ -284,7 +287,7 @@ struct BlockBuilder: MarkupWalker {
 
 	private func makeCell(_ cell: Markdown.Table.Cell) -> TableCell {
 		if let imageCell = imageOnlyTableCell(from: cell) { return imageCell }
-		var builder = InlineBuilder(theme: theme, fontSize: fontSize)
+		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
 		return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
 	}
 

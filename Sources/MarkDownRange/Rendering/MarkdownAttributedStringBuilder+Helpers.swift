@@ -86,5 +86,10 @@ extension NSAttributedString.Key {
 	/// positions in the rendered storage, where the raw markdown's character
 	/// offsets no longer line up.
 	public static let markdownHeadingLevel = NSAttributedString.Key("markdownHeadingLevel")
+
+	/// Records where a run's text begins in the raw Markdown source (UTF-16
+	/// offset). Present only when the document was parsed with source-offset
+	/// tracking; used by the styled editor to translate edits back to source.
+	public static let markdownSourceOffset = NSAttributedString.Key("markdownSourceOffset")
 }
 #endif

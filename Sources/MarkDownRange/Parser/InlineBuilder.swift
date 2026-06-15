@@ -15,10 +15,14 @@ public struct InlineResult: Sendable {
 struct InlineBuilder: MarkupWalker {
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
+	/// When set, each text run is stamped with its UTF-16 offset in the source
+	/// so styled-text edits can be translated back into the Markdown.
+	let sourceConverter: SourceOffsetConverter?
 
-	init(theme: MarkdownTheme, fontSize: CGFloat) {
+	init(theme: MarkdownTheme, fontSize: CGFloat, sourceConverter: SourceOffsetConverter? = nil) {
 		self.theme = theme
 		self.fontSize = fontSize
+		self.sourceConverter = sourceConverter
 	}
 
 	// `internal` rather than `private(set)` so the linkify extension (in its
@@ -58,6 +62,10 @@ struct InlineBuilder: MarkupWalker {
 	mutating func visitText(_ text: Markdown.Text) {
 		var str = AttributedString(text.string)
 		applyCurrentStyle(&str)
+		if let converter = sourceConverter, let loc = text.range?.lowerBound,
+		   let offset = converter.utf16Offset(line: loc.line, column: loc.column) {
+			str.markdownSourceOffset = offset
+		}
 		result += str
 		charOffset += text.string.count
 	}
