@@ -14,9 +14,16 @@ public struct SplitMarkdownScreen: View {
 	var typewriterMode: Bool = false
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	var onVisibleSectionChanged: ((String) -> Void)?
+	/// Scroll position (0…1 of scrollable height) to apply to both panes once
+	/// on appear, so switching into split mode keeps the reader's place.
+	var initialScrollFraction: Double?
+	/// Reports the panes' shared scroll position outward as it changes, so the
+	/// host can carry it to the other view modes.
+	var onScrollFractionChanged: ((Double) -> Void)?
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 	@State private var lockoutTask: Task<Void, Never>?
+	@State private var didRestoreScroll = false
 	@State private var highlightedSectionID: String?
 	/// Bumped each time the raw pane drives the scroll, so the token-gated
 	/// `scrollTarget` on the native preview re-applies the latest fraction.
@@ -31,7 +38,9 @@ public struct SplitMarkdownScreen: View {
 		focusModeEnabled: Bool = false,
 		typewriterMode: Bool = false,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
-		onVisibleSectionChanged: ((String) -> Void)? = nil
+		onVisibleSectionChanged: ((String) -> Void)? = nil,
+		initialScrollFraction: Double? = nil,
+		onScrollFractionChanged: ((Double) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -41,6 +50,8 @@ public struct SplitMarkdownScreen: View {
 		self.typewriterMode = typewriterMode
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.onVisibleSectionChanged = onVisibleSectionChanged
+		self.initialScrollFraction = initialScrollFraction
+		self.onScrollFractionChanged = onScrollFractionChanged
 	}
 
 	public var body: some View {
@@ -80,12 +91,14 @@ public struct SplitMarkdownScreen: View {
 			// (incoming) and onScrollFractionChanged (outgoing).
 			MarkdownTextView(text: text, theme: theme, fontSize: fontSize)
 				.selectedHeading($selectedHeadingID)
+				.initialScrollFraction(initialScrollFraction)
 				.scrollTarget(scrollSource == .raw
 					? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)
 					: nil)
 				.onScrollFractionChanged { top, _ in didScroll(.formatted, fraction: Double(top)) }
 				.frame(minWidth: 150, maxWidth: .infinity)
 		}
+		.onAppear { restoreInitialScroll() }
 		#else
 		GeometryReader { geometry in
 			if geometry.size.width > 600 {
@@ -117,9 +130,27 @@ public struct SplitMarkdownScreen: View {
 		if scrollSource != .none && scrollSource != source { return }
 		scrollSource = source
 		scrollFraction = fraction
+		onScrollFractionChanged?(fraction)
 		// Re-arm the native preview's token-gated scrollTarget so it follows the
 		// raw pane. (Formatted→raw sync uses RawMarkdownScreen.syncScrollFraction.)
 		if source == .raw { previewScrollToken += 1 }
+		lockoutTask?.cancel()
+		lockoutTask = Task { @MainActor in
+			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
+			guard !Task.isCancelled else { return }
+			scrollSource = .none
+		}
+	}
+
+	/// Restore both panes to `initialScrollFraction` once on appear. Drives the
+	/// raw pane through the formatted→raw sync path; the preview restores via
+	/// its own `initialScrollFraction`. The source is released after the lockout
+	/// so normal pane-to-pane syncing resumes.
+	private func restoreInitialScroll() {
+		guard !didRestoreScroll, let fraction = initialScrollFraction else { return }
+		didRestoreScroll = true
+		scrollFraction = fraction
+		scrollSource = .formatted
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))

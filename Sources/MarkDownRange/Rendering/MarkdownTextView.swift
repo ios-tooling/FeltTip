@@ -67,6 +67,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// is on. The host should store this as the document's text; the view has
 	/// already applied the matching visible edit, so no re-render is forced.
 	public var onSourceEdit: ((String) -> Void)?
+	/// Scroll position to apply once, after the first render lays the document
+	/// out — a fraction (0…1) of the scrollable height. Lets a host restore the
+	/// reader's place when this view is mounted fresh (e.g. switching into the
+	/// formatted view mode). Applied a single time; later changes are ignored.
+	public var initialScrollFraction: Double?
 	@Environment(LinkDisplayState.self) private var linkDisplay
 	@Environment(\.markdownLinkAccessScope) private var linkAccessScope
 
@@ -159,6 +164,14 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func onSourceEdit(_ callback: @escaping (String) -> Void) -> Self {
 		var copy = self
 		copy.onSourceEdit = callback
+		return copy
+	}
+
+	/// Apply `fraction` (0…1 of scrollable height) once, after the first render.
+	/// See `initialScrollFraction`.
+	public func initialScrollFraction(_ fraction: Double?) -> Self {
+		var copy = self
+		copy.initialScrollFraction = fraction
 		return copy
 	}
 
@@ -268,6 +281,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private var scrollObserver: NSObjectProtocol?
 		private var lastScrollTargetToken: Int?
 		private var lastScrollDeltaToken: Int?
+		/// Whether `parent.initialScrollFraction` has been consumed — it's a
+		/// one-shot restore applied after the first render lays the doc out.
+		private var hasAppliedInitialScroll = false
 
 		init(parent: MarkdownTextView) {
 			self.parent = parent
@@ -464,6 +480,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		func render(into textView: NSTextView, force: Bool = false) {
 			let key = RenderKey(text: parent.text, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken, editable: parent.isEditable)
 			if !force, key == lastRenderKey { return }
+			let isFirstRender = lastRenderKey == nil
 			lastRenderKey = key
 
 			renderTask?.cancel()
@@ -531,7 +548,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// `.markdownSourceOffset` attributes that styled-text editing
 				// depends on wouldn't land when toggling editing on over
 				// unchanged text — leaving every edit unmappable.
-				if !editable, let storage = textView.textStorage,
+				//
+				// Also skipped on the first render so the full path's
+				// post-layout scroll restore runs and `initialScrollFraction`
+				// can take effect (there are no mounted attachments to flash
+				// on a fresh mount anyway).
+				if !editable, !isFirstRender, let storage = textView.textStorage,
 				   Self.applyAttributedStringInPlace(attributed, into: storage) {
 					progressCallback?(nil)
 					let tAfterCommit = CFAbsoluteTimeGetCurrent()
@@ -593,7 +615,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 						layoutManager.textViewportLayoutController.layoutViewport()
 					}
 					textView.needsDisplay = true
-					if let scrollFraction { self?.restoreScrollFraction(scrollFraction, in: textView) }
+					// On the first render, honor the host's one-shot
+					// `initialScrollFraction` (restoring the reader's place from
+					// another view mode); otherwise keep the pre-rebuild position.
+					let restoreTarget = (isFirstRender ? self?.consumeInitialScrollFraction() : nil) ?? scrollFraction
+					if let restoreTarget { self?.restoreScrollFraction(restoreTarget, in: textView) }
 					// After scrolling to the user's previous position, re-run
 					// the viewport layout so attachments newly inside the
 					// visible area get their hosting views mounted.
@@ -644,6 +670,14 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let scrollable = max(docHeight - visibleHeight, 0)
 			guard scrollable > 0 else { return 0 }
 			return min(max(scrollView.contentView.bounds.origin.y / scrollable, 0), 1)
+		}
+
+		/// Returns the host's one-shot initial scroll fraction the first time
+		/// it's called (then never again), or nil when there's nothing to apply.
+		private func consumeInitialScrollFraction() -> CGFloat? {
+			guard !hasAppliedInitialScroll, let fraction = parent.initialScrollFraction else { return nil }
+			hasAppliedInitialScroll = true
+			return CGFloat(fraction)
 		}
 
 		private func restoreScrollFraction(_ fraction: CGFloat, in textView: NSTextView) {
