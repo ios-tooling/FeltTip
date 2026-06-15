@@ -58,6 +58,10 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// Per-phase timings for each render pass — benchmarking hook. See
 	/// `MarkdownRenderPhases`.
 	public var onRenderPhases: (@MainActor @Sendable (MarkdownRenderPhases) -> Void)?
+	/// When true the view renders from the raw Markdown (no preprocessing) with
+	/// per-run source offsets and becomes an editable, rich-text NSTextView —
+	/// the foundation for editing the styled text. Off by default.
+	public var isEditable: Bool = false
 	@Environment(LinkDisplayState.self) private var linkDisplay
 	@Environment(\.markdownLinkAccessScope) private var linkAccessScope
 
@@ -134,6 +138,15 @@ public struct MarkdownTextView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Render from raw Markdown and make the text view editable (rich text).
+	/// Edits inherit the caret's style; translating them back to the source is
+	/// handled by the host. Off by default.
+	public func editable(_ flag: Bool) -> Self {
+		var copy = self
+		copy.isEditable = flag
+		return copy
+	}
+
 	/// Subscribe to per-phase render timings. Fires once per render pass
 	/// (parse + build + commit + initial layout). Benchmarking only.
 	public func onRenderPhases(_ callback: @escaping @MainActor @Sendable (MarkdownRenderPhases) -> Void) -> Self {
@@ -154,9 +167,10 @@ public struct MarkdownTextView: NSViewRepresentable {
 		scrollView.drawsBackground = true
 
 		let textView = MarkdownTextViewBacking(frame: .zero)
-		textView.isEditable = false
+		textView.isEditable = isEditable
 		textView.isSelectable = true
-		textView.allowsUndo = false
+		textView.isRichText = isEditable
+		textView.allowsUndo = isEditable
 		textView.drawsBackground = false
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
@@ -192,6 +206,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func updateNSView(_ scrollView: NSScrollView, context: Context) {
 		guard let textView = scrollView.documentView as? NSTextView else { return }
 		context.coordinator.parent = self
+		if textView.isEditable != isEditable {
+			textView.isEditable = isEditable
+			textView.isRichText = isEditable
+			textView.allowsUndo = isEditable
+		}
 		// Reassigning a layer-backed view's backgroundColor — even to the
 		// same value — marks it for redisplay. On a no-op reload that flush
 		// briefly blanks every visible attachment's hosting view (a one-frame
@@ -428,11 +447,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 		/// lets the window present blank immediately and fill in once the
 		/// pipeline finishes (typically well under a second for large docs).
 		func render(into textView: NSTextView, force: Bool = false) {
-			let key = RenderKey(text: parent.text, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken)
+			let key = RenderKey(text: parent.text, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken, editable: parent.isEditable)
 			if !force, key == lastRenderKey { return }
 			lastRenderKey = key
 
 			renderTask?.cancel()
+			let editable = parent.isEditable
 			let text = parent.text
 			let theme = parent.theme
 			let fontSize = parent.fontSize
@@ -445,7 +465,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let t0 = CFAbsoluteTimeGetCurrent()
 			renderTask = Task { @MainActor [weak self, weak textView] in
 				let blocks = await Task.detached(priority: .userInitiated) {
-					MarkdownBlockParser.parse(text)
+					// In editable mode, parse the raw Markdown (no preprocessing)
+					// and carry source offsets so edits can map back to source.
+					MarkdownBlockParser.parse(text, preprocessed: editable, trackSourceOffsets: editable)
 				}.value
 				let tAfterParse = CFAbsoluteTimeGetCurrent()
 				// Cancelled tasks return silently — the replacement render
@@ -1067,6 +1089,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		let themeID: String
 		let fontSize: CGFloat
 		let headerToken: AnyHashable?
+		let editable: Bool
 	}
 }
 
