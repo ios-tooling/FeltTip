@@ -237,7 +237,7 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
-		var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
+		var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter, sourceConverter: sourceConverter)
 		inner.linkifyURLs = linkifyURLs
 		let children = inner.build(from: blockQuote as Markup)
 		blocks.append(.blockquote(children: children, id: nextID()))
@@ -245,7 +245,7 @@ struct BlockBuilder: MarkupWalker {
 
 	mutating func visitOrderedList(_ list: OrderedList) {
 		let items = Array(list.listItems).map { item -> ListItemContent in
-			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
+			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter, sourceConverter: sourceConverter)
 			inner.linkifyURLs = linkifyURLs
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
@@ -256,7 +256,7 @@ struct BlockBuilder: MarkupWalker {
 
 	mutating func visitUnorderedList(_ list: UnorderedList) {
 		let items = Array(list.listItems).map { item -> ListItemContent in
-			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter)
+			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter, sourceConverter: sourceConverter)
 			inner.linkifyURLs = linkifyURLs
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil

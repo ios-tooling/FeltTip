@@ -30,7 +30,7 @@ public enum MarkdownBlockParser {
 		options: MarkdownOptions = .default
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
-		let (frontmatter, body) = extractFrontmatter(markdown)
+		let (frontmatter, body, bodyOffset, frontmatterRaw) = extractFrontmatter(markdown)
 		let tPre0 = CFAbsoluteTimeGetCurrent()
 		MarkdownPreprocessor.recordedTimings = [:]
 		let processed: String
@@ -43,12 +43,20 @@ public enum MarkdownBlockParser {
 		let document = Document(parsing: processed)
 		let tBuild0 = CFAbsoluteTimeGetCurrent()
 		let counter = CheckboxCounter(checkboxOffset)
-		// Offsets map into `processed`; valid against the caller's source only
-		// when parsing raw (preprocessed) text with no stripped frontmatter.
-		let converter = trackSourceOffsets ? SourceOffsetConverter(processed) : nil
+		// Offsets map into `processed` (the stripped body); `bodyOffset` shifts
+		// them back onto the caller's full source so frontmatter doesn't throw
+		// the mapping off. Only meaningful when parsing raw (preprocessed) text.
+		let converter = trackSourceOffsets ? SourceOffsetConverter(processed, baseOffset: bodyOffset) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
-		if let fm = frontmatter { blocks.insert(fm, at: 0) }
+		// Normally the frontmatter renders as a read-only card. With offset
+		// tracking on (styled-text editing) emit it as plain editable text at
+		// source offset 0 instead, so the user can edit the frontmatter too.
+		if trackSourceOffsets, let raw = frontmatterRaw {
+			blocks.insert(editableFrontmatterBlock(raw), at: 0)
+		} else if let fm = frontmatter {
+			blocks.insert(fm, at: 0)
+		}
 		let tPost0 = CFAbsoluteTimeGetCurrent()
 		let result = postProcess(blocks)
 		let tEnd = CFAbsoluteTimeGetCurrent()
@@ -61,11 +69,16 @@ public enum MarkdownBlockParser {
 		return result
 	}
 
-	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String) {
+	/// Splits any leading YAML frontmatter from the document. Returns the
+	/// frontmatter card block, the remaining body, the UTF-16 offset at which
+	/// the body begins in the full source (0 when there's no frontmatter), and
+	/// the raw frontmatter text (the `---…---` block, nil when absent) for the
+	/// editable rendering path.
+	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String, Int, String?) {
 		let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard trimmed.hasPrefix("---") else { return (nil, markdown) }
+		guard trimmed.hasPrefix("---") else { return (nil, markdown, 0, nil) }
 		let lines = markdown.components(separatedBy: .newlines)
-		guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return (nil, markdown) }
+		guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return (nil, markdown, 0, nil) }
 
 		var endIndex: Int?
 		for i in 1..<lines.count {
@@ -74,7 +87,7 @@ public enum MarkdownBlockParser {
 				endIndex = i; break
 			}
 		}
-		guard let end = endIndex, end > 1 else { return (nil, markdown) }
+		guard let end = endIndex, end > 1 else { return (nil, markdown, 0, nil) }
 
 		// Strict check: every non-blank line in the fenced block must look like
 		// a YAML key:value pair (or an indented continuation). Without this,
@@ -86,17 +99,30 @@ public enum MarkdownBlockParser {
 			let stripped = line.trimmingCharacters(in: .whitespaces)
 			if stripped.isEmpty { continue }
 			if line.first?.isWhitespace == true, !pairs.isEmpty { continue }
-			guard let colonIdx = line.firstIndex(of: ":") else { return (nil, markdown) }
+			guard let colonIdx = line.firstIndex(of: ":") else { return (nil, markdown, 0, nil) }
 			let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
-			guard isValidFrontmatterKey(key) else { return (nil, markdown) }
+			guard isValidFrontmatterKey(key) else { return (nil, markdown, 0, nil) }
 			let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
 			pairs.append((key, value))
 		}
-		guard !pairs.isEmpty else { return (nil, markdown) }
+		guard !pairs.isEmpty else { return (nil, markdown, 0, nil) }
 
 		let body = lines[(end + 1)...].joined(separator: "\n")
+		// The `---…---` block, without its trailing newline. The body begins one
+		// newline after it, so its UTF-16 offset is the block's length + 1.
+		let frontText = lines[0...end].joined(separator: "\n")
+		let bodyOffset = (frontText as NSString).length + 1
 		let block = MarkdownBlock.frontmatter(pairs: pairs, id: "frontmatter")
-		return (block, body)
+		return (block, body, bodyOffset, frontText)
+	}
+
+	/// The frontmatter as a plain editable paragraph stamped with source offset
+	/// 0 (it's verbatim at the start of the source), used in the styled-text
+	/// editing path in place of the read-only frontmatter card.
+	private static func editableFrontmatterBlock(_ raw: String) -> MarkdownBlock {
+		var attributed = AttributedString(raw)
+		attributed.markdownSourceOffset = 0
+		return .paragraph(content: attributed, links: [], id: "frontmatter")
 	}
 
 	private static func isValidFrontmatterKey(_ key: String) -> Bool {

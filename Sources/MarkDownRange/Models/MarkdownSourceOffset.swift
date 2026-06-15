@@ -22,8 +22,13 @@ public enum MarkdownSourceOffsetAttribute: AttributedStringKey {
 struct SourceOffsetConverter {
 	private let lineStartBytes: [Int]   // UTF-8 byte offset of each line's start
 	private let byteToUTF16: [Int]      // UTF-8 byte offset → UTF-16 offset
+	/// Added to every returned offset. Lets the parsed string be a suffix of
+	/// the caller's source (e.g. the body after frontmatter was stripped) while
+	/// the offsets still address the full source.
+	private let baseOffset: Int
 
-	init(_ source: String) {
+	init(_ source: String, baseOffset: Int = 0) {
+		self.baseOffset = baseOffset
 		var lineStarts = [0]
 		var byteMap: [Int] = []
 		byteMap.reserveCapacity(source.utf8.count + 1)
@@ -44,6 +49,6 @@ struct SourceOffsetConverter {
 		guard line >= 1, line <= lineStartBytes.count else { return nil }
 		let byte = lineStartBytes[line - 1] + (column - 1)
 		guard byte >= 0, byte < byteToUTF16.count else { return nil }
-		return byteToUTF16[byte]
+		return byteToUTF16[byte] + baseOffset
 	}
 }

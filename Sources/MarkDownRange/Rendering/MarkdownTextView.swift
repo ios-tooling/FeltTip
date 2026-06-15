@@ -62,6 +62,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// per-run source offsets and becomes an editable, rich-text NSTextView —
 	/// the foundation for editing the styled text. Off by default.
 	public var isEditable: Bool = false
+	/// Called with the new Markdown source after an edit in the styled view has
+	/// been mapped back onto it (see `editable`). Only fires when `isEditable`
+	/// is on. The host should store this as the document's text; the view has
+	/// already applied the matching visible edit, so no re-render is forced.
+	public var onSourceEdit: ((String) -> Void)?
 	@Environment(LinkDisplayState.self) private var linkDisplay
 	@Environment(\.markdownLinkAccessScope) private var linkAccessScope
 
@@ -144,6 +149,16 @@ public struct MarkdownTextView: NSViewRepresentable {
 	public func editable(_ flag: Bool) -> Self {
 		var copy = self
 		copy.isEditable = flag
+		return copy
+	}
+
+	/// Receive the rewritten Markdown source after a styled-view edit has been
+	/// mapped back onto it. Pair with `editable(true)` to make styled edits
+	/// persist; edits the mapper can't translate safely are rejected (the
+	/// source is never corrupted) rather than reported here.
+	public func onSourceEdit(_ callback: @escaping (String) -> Void) -> Self {
+		var copy = self
+		copy.onSourceEdit = callback
 		return copy
 	}
 
@@ -510,7 +525,13 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// and their mounted NSHostingViews — untouched. A full
 				// setAttributedString would tear those views down and
 				// re-mount them, flashing every visible image on each reload.
-				if let storage = textView.textStorage,
+				//
+				// Skipped in editable mode: the fast path only rewrites spans
+				// whose *visible* text changed, so the (invisible)
+				// `.markdownSourceOffset` attributes that styled-text editing
+				// depends on wouldn't land when toggling editing on over
+				// unchanged text — leaving every edit unmappable.
+				if !editable, let storage = textView.textStorage,
 				   Self.applyAttributedStringInPlace(attributed, into: storage) {
 					progressCallback?(nil)
 					let tAfterCommit = CFAbsoluteTimeGetCurrent()
@@ -972,6 +993,78 @@ public struct MarkdownTextView: NSViewRepresentable {
 			if let url = URL(string: source), url.scheme != nil { return url }
 			if let base = baseURL, let url = URL(string: source, relativeTo: base) { return url }
 			return URL(string: source)
+		}
+
+		// MARK: Styled-text write-back
+
+		/// Translate an edit made in the styled view back onto the Markdown
+		/// source before letting AppKit apply it. Each rendered run carries the
+		/// UTF-16 offset of its source text (`.markdownSourceOffset`), and
+		/// swift-markdown reports the *inner* text node's position, so interiors
+		/// of paragraphs, headings, list items and inline emphasis map cleanly.
+		/// Anything we can't translate unambiguously — multi-cursor edits,
+		/// synthesized runs (list bullets), block boundaries, or a source slice
+		/// that doesn't match what's visually being replaced — is rejected with
+		/// a beep so the source file is never silently corrupted.
+		public func textView(_ textView: NSTextView, shouldChangeTextInRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
+			guard parent.isEditable, let onSourceEdit = parent.onSourceEdit,
+				  let storage = textView.textStorage else { return true }
+			guard affectedRanges.count == 1,
+				  let replacement = replacementStrings?.first,
+				  let sourceRange = sourceRange(for: affectedRanges[0].rangeValue, in: storage) else {
+				NSSound.beep()
+				return false
+			}
+			let newSource = (parent.text as NSString).replacingCharacters(in: sourceRange, with: replacement)
+			// We're about to let AppKit apply the identical change to the visible
+			// storage, so pin the render key to the new source — otherwise the
+			// session.text update would trigger a full rebuild that tears down
+			// attachments and jumps the caret.
+			lastRenderKey = RenderKey(text: newSource, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken, editable: true)
+			onSourceEdit(newSource)
+			return true
+		}
+
+		/// Map a rendered character range to the matching range in the Markdown
+		/// source, or nil when the mapping isn't safe to apply.
+		private func sourceRange(for affected: NSRange, in storage: NSTextStorage) -> NSRange? {
+			let nsSource = parent.text as NSString
+			guard let start = sourceLocation(forRenderedIndex: affected.location, in: storage),
+				  start <= nsSource.length else { return nil }
+			// Pure insertion: a valid insertion point is enough; there's no
+			// existing source text to verify against.
+			guard affected.length > 0 else { return NSRange(location: start, length: 0) }
+			guard let end = sourceLocation(forRenderedIndex: NSMaxRange(affected), in: storage),
+				  end >= start, end <= nsSource.length else { return nil }
+			let srcRange = NSRange(location: start, length: end - start)
+			// Only delete/replace where the source characters are exactly the
+			// characters the user sees being replaced. Headings, emphasis, etc.
+			// strip syntax, so any mismatch means the offset mapping is unsafe.
+			guard nsSource.substring(with: srcRange) == (storage.string as NSString).substring(with: affected) else { return nil }
+			return srcRange
+		}
+
+		/// The source UTF-16 offset that a rendered character index maps to,
+		/// using the run's `.markdownSourceOffset` plus the offset within the
+		/// run. Block separators and the trailing newline are synthesized and
+		/// carry no offset, so we walk back to the nearest run that has one and
+		/// extend linearly — that lands end-of-line/paragraph edits at the end
+		/// of the preceding text. Clamped to the source length so the synthetic
+		/// trailing newline (which has no source counterpart) can't overshoot.
+		/// Returns nil only when nothing at or before `index` carries an offset
+		/// (e.g. a leading attachment), which the caller rejects.
+		private func sourceLocation(forRenderedIndex index: Int, in storage: NSTextStorage) -> Int? {
+			guard storage.length > 0 else { return index == 0 ? 0 : nil }
+			let sourceLength = (parent.text as NSString).length
+			var probe = min(index, storage.length - 1)
+			while probe >= 0 {
+				var effective = NSRange()
+				if let offset = storage.attribute(.markdownSourceOffset, at: probe, effectiveRange: &effective) as? Int {
+					return min(max(offset + (index - effective.location), 0), sourceLength)
+				}
+				probe -= 1
+			}
+			return nil
 		}
 
 		public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
