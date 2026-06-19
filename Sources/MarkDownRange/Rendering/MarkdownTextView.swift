@@ -306,9 +306,25 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private var scrollObserver: NSObjectProtocol?
 		private var lastScrollTargetToken: Int?
 		private var lastScrollDeltaToken: Int?
+		private var pendingScrollReport = false
+		private var pendingScrollReportForce = false
+		private var lastScrollReportMetrics: ScrollReportMetrics?
+		private static let scrollReportPixelThreshold: CGFloat = 0.5
 		/// Whether `parent.initialScrollFraction` has been consumed — it's a
 		/// one-shot restore applied after the first render lays the doc out.
 		private var hasAppliedInitialScroll = false
+
+		private struct ScrollReportMetrics {
+			let topY: CGFloat
+			let visibleHeight: CGFloat
+			let docHeight: CGFloat
+
+			func isApproximatelyEqual(to other: ScrollReportMetrics, threshold: CGFloat) -> Bool {
+				abs(topY - other.topY) <= threshold &&
+					abs(visibleHeight - other.visibleHeight) <= threshold &&
+					abs(docHeight - other.docHeight) <= threshold
+			}
+		}
 
 		init(parent: MarkdownTextView) {
 			self.parent = parent
@@ -347,8 +363,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		}
 
 		/// Observe the scroll view's clip-view bounds so external scrubbers
-		/// (minimaps) can track the visible region. Fires the parent's
-		/// `onScrollFractionChanged` callback on every change. Same once-and-done
+		/// (minimaps) can track the visible region. Same once-and-done
 		/// installation pattern as `attachFrameObserver`.
 		func attachScrollObserver(to scrollView: NSScrollView) {
 			guard scrollObserver == nil else { return }
@@ -360,22 +375,42 @@ public struct MarkdownTextView: NSViewRepresentable {
 				queue: .main
 			) { [weak self] _ in
 				MainActor.assumeIsolated {
-					self?.reportScrollFraction()
+					self?.scheduleScrollFractionReport()
 				}
 			}
 			// Seed the host with the initial viewport so it doesn't have to
 			// wait for the first scroll event to populate the scrubber.
-			reportScrollFraction()
+			scheduleScrollFractionReport(force: true)
 		}
 
-		func reportScrollFraction() {
+		func scheduleScrollFractionReport(force: Bool = false) {
+			pendingScrollReportForce = pendingScrollReportForce || force
+			guard !pendingScrollReport else { return }
+			pendingScrollReport = true
+			DispatchQueue.main.async { [weak self] in
+				guard let self else { return }
+				let force = self.pendingScrollReportForce
+				self.pendingScrollReport = false
+				self.pendingScrollReportForce = false
+				self.reportScrollFraction(force: force)
+			}
+		}
+
+		func reportScrollFraction(force: Bool = false) {
 			guard let callback = parent.onScrollFractionChanged,
 				  let textView,
 				  let scrollView = textView.enclosingScrollView else { return }
 			let docHeight = textView.bounds.height
 			let visibleHeight = scrollView.contentView.bounds.height
-			guard docHeight > 0 else { callback(0, 1); return }
 			let topY = scrollView.contentView.bounds.origin.y
+			let metrics = ScrollReportMetrics(topY: topY, visibleHeight: visibleHeight, docHeight: docHeight)
+			if !force,
+			   let lastScrollReportMetrics,
+			   metrics.isApproximatelyEqual(to: lastScrollReportMetrics, threshold: Self.scrollReportPixelThreshold) {
+				return
+			}
+			lastScrollReportMetrics = metrics
+			guard docHeight > 0 else { callback(0, 1); return }
 			let top = max(0, min(1, topY / docHeight))
 			let visible = max(0, min(1, visibleHeight / docHeight))
 			callback(top, visible)
@@ -412,7 +447,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// from updateNSView writes to SwiftUI @State inside an in-flight
 			// body evaluation (which gets suppressed). Defer to the next
 			// runloop tick.
-			DispatchQueue.main.async { [weak self] in self?.reportScrollFraction() }
+			scheduleScrollFractionReport(force: true)
 		}
 
 		/// Scroll so the doc point at `fraction` of the rendered height sits at
@@ -435,7 +470,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// tick so the SwiftUI @State assignments in the host's
 			// callback don't happen inside an in-flight body evaluation
 			// (which would cause SwiftUI to suppress them).
-			DispatchQueue.main.async { [weak self] in self?.reportScrollFraction() }
+			scheduleScrollFractionReport(force: true)
 		}
 
 		/// Sets the text view's horizontal container inset so the rendered text
@@ -652,7 +687,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 					// Document height changed; nudge any scrubber listening on
 					// the scroll-fraction callback so it shows the right
 					// viewport rectangle without waiting for a user scroll.
-					self?.reportScrollFraction()
+					self?.scheduleScrollFractionReport(force: true)
 					let tAfterLayout = CFAbsoluteTimeGetCurrent()
 					let fullMetrics = MarkdownAttributedStringBuilder.lastBuildMetrics
 					phasesCallback?(MarkdownRenderPhases(
@@ -810,7 +845,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// notification, so the scrub observer wouldn't fire and the
 			// minimap's viewport indicator would stay where it was. Report
 			// explicitly on the next runloop tick.
-			DispatchQueue.main.async { [weak self] in self?.reportScrollFraction() }
+			scheduleScrollFractionReport(force: true)
 		}
 
 		private static func range(ofHeadingAt targetIndex: Int, in storage: NSTextStorage) -> NSRange? {
