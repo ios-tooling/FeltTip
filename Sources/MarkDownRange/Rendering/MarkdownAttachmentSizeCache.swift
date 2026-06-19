@@ -30,6 +30,12 @@ public final class MarkdownAttachmentSizeCache {
 		set { storage[key] = newValue }
 	}
 
+	/// Empties the cache. Exposed mainly so benchmarks can measure cold
+	/// (cache-miss) rendering; not used in normal operation.
+	public func removeAll() {
+		storage.removeAll()
+	}
+
 	/// Returns a key when the block has a deterministic structural shape we
 	/// can reuse a measurement for. Returns nil for blocks whose rendered
 	/// height genuinely depends on the unique content (HTML, deeply nested
