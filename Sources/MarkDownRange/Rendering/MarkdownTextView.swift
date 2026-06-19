@@ -72,6 +72,11 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// reader's place when this view is mounted fresh (e.g. switching into the
 	/// formatted view mode). Applied a single time; later changes are ignored.
 	public var initialScrollFraction: Double?
+	/// Called when the user picks "Edit Link URL" from a link's context menu.
+	/// Receives the link's current destination and its 0-based ordinal among
+	/// links sharing that destination, so the host can present an editor and
+	/// rewrite the source (see `MarkdownLinkRewriter`).
+	public var onRequestEditLinkURL: ((_ currentURL: String, _ occurrence: Int) -> Void)?
 	@Environment(LinkDisplayState.self) private var linkDisplay
 	@Environment(\.markdownLinkAccessScope) private var linkAccessScope
 
@@ -175,6 +180,14 @@ public struct MarkdownTextView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Handle the link context menu's "Edit Link URL" command. See
+	/// `onRequestEditLinkURL`.
+	public func onRequestEditLinkURL(_ callback: @escaping (_ currentURL: String, _ occurrence: Int) -> Void) -> Self {
+		var copy = self
+		copy.onRequestEditLinkURL = callback
+		return copy
+	}
+
 	/// Subscribe to per-phase render timings. Fires once per render pass
 	/// (parse + build + commit + initial layout). Benchmarking only.
 	public func onRenderPhases(_ callback: @escaping @MainActor @Sendable (MarkdownRenderPhases) -> Void) -> Self {
@@ -220,6 +233,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 		textView.onLinkHover = { [linkDisplay] url in
 			if linkDisplay.displayedURL != url { linkDisplay.displayedURL = url }
 		}
+		(textView as? MarkdownTextViewBacking)?.onEditLinkRequested = { [weak coordinator = context.coordinator] index in
+			coordinator?.requestEditLinkURL(atRenderedIndex: index)
+		}
 		// AppKit fires this after the text view has been laid out inside the
 		// scroll view's clip view — the only reliably-non-zero moment we
 		// have to mount any attachments TextKit skipped because the earlier
@@ -249,7 +265,16 @@ public struct MarkdownTextView: NSViewRepresentable {
 		if let backing = textView as? MarkdownTextViewBacking {
 			let barColor = NSColor(theme.linkColor)
 			if backing.blockquoteBarColor != barColor { backing.blockquoteBarColor = barColor }
+			backing.supportsLinkEditing = onRequestEditLinkURL != nil
 		}
+		// Control link appearance through the text view's link attributes rather
+		// than per-run styling: NSTextView underlines links by default, so this
+		// is what actually turns underlining on/off per the theme.
+		textView.linkTextAttributes = [
+			.foregroundColor: NSColor(theme.linkColor),
+			.underlineStyle: theme.underlineLinks ? NSUnderlineStyle.single.rawValue : 0,
+			.cursor: NSCursor.pointingHand
+		]
 		context.coordinator.attachFrameObserver(to: textView)
 		context.coordinator.attachScrollObserver(to: scrollView)
 		context.coordinator.applyHorizontalInset(to: textView)
@@ -1101,6 +1126,30 @@ public struct MarkdownTextView: NSViewRepresentable {
 			return nil
 		}
 
+		/// Resolve the link at `index`, count how many earlier links share its
+		/// destination (so the host can target the right one in the source), and
+		/// hand off to the host's editor.
+		func requestEditLinkURL(atRenderedIndex index: Int) {
+			guard let callback = parent.onRequestEditLinkURL,
+				  let storage = textView?.textStorage,
+				  index >= 0, index < storage.length else { return }
+			var range = NSRange()
+			guard let value = storage.attribute(.link, at: index, effectiveRange: &range) else { return }
+			let currentURL = Self.urlString(from: value)
+			guard !currentURL.isEmpty else { return }
+			var occurrence = 0
+			storage.enumerateAttribute(.link, in: NSRange(location: 0, length: range.location)) { other, _, _ in
+				if let other, Self.urlString(from: other) == currentURL { occurrence += 1 }
+			}
+			callback(currentURL, occurrence)
+		}
+
+		private static func urlString(from value: Any) -> String {
+			if let url = value as? URL { return url.absoluteString }
+			if let string = value as? String { return string }
+			return ""
+		}
+
 		public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
 			guard let target = resolvedLinkTarget(link) else { return false }
 			if handleFootnoteJump(url: target, in: textView) { return true }
@@ -1293,12 +1342,41 @@ final class MarkdownTextViewBacking: NSTextView {
 	/// from the active theme so the bar matches link/accent colour rather
 	/// than the secondary text tone.
 	var blockquoteBarColor: NSColor = NSColor.controlAccentColor
+	/// Whether the host wired up link editing — gates the "Edit Link URL"
+	/// context-menu item so it never appears as a dead command.
+	var supportsLinkEditing = false
+	/// Invoked with the clicked character index when the user chooses "Edit
+	/// Link URL" from the context menu.
+	var onEditLinkRequested: ((Int) -> Void)?
+	private var pendingLinkEditIndex: Int?
 	private var hoverTrackingArea: NSTrackingArea?
 	private var lastReportedURL: String?
 
 	override func layout() {
 		super.layout()
 		onDidLayout?()
+	}
+
+	/// Add "Edit Link URL" to the top of the context menu when the click lands
+	/// on a link and the host supports editing.
+	override func menu(for event: NSEvent) -> NSMenu? {
+		let menu = super.menu(for: event) ?? NSMenu()
+		guard supportsLinkEditing, onEditLinkRequested != nil,
+			  let storage = textStorage, storage.length > 0 else { return menu }
+		let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+		guard index >= 0, index < storage.length,
+			  storage.attribute(.link, at: index, effectiveRange: nil) != nil else { return menu }
+		pendingLinkEditIndex = index
+		let item = NSMenuItem(title: "Edit Link URL…", action: #selector(editLinkURL), keyEquivalent: "")
+		item.target = self
+		menu.insertItem(item, at: 0)
+		menu.insertItem(.separator(), at: 1)
+		return menu
+	}
+
+	@objc private func editLinkURL() {
+		guard let index = pendingLinkEditIndex else { return }
+		onEditLinkRequested?(index)
 	}
 
 	override func drawBackground(in rect: NSRect) {

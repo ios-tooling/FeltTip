@@ -49,6 +49,9 @@ public struct MarkdownTheme: Equatable, Sendable {
 	/// Font family used for body and heading text in the rendered output.
 	/// Inline code and code blocks always use monospaced regardless of this.
 	public var fontFamily: MarkdownFontFamily
+	/// Whether links are drawn underlined. Off by default; links still carry
+	/// the link color so they remain distinguishable.
+	public var underlineLinks: Bool
 
 	public init(
 		textColor: Color = .primary,
@@ -59,6 +62,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		backgroundColor: Color = Color(.textBackgroundColor),
 		headingColor: Color? = nil,
 		alternateRowBackground: Color? = nil,
+		underlineLinks: Bool = false,
 		fontFamily: MarkdownFontFamily = .system
 	) {
 		self.textColor = textColor
@@ -69,6 +73,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		self.backgroundColor = backgroundColor
 		self.headingColor = headingColor ?? linkColor
 		self.alternateRowBackground = alternateRowBackground
+		self.underlineLinks = underlineLinks
 		self.fontFamily = fontFamily
 	}
 
