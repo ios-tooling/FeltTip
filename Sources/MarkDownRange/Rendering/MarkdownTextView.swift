@@ -560,7 +560,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 					// In editable mode, carry source offsets so edits map back to
 					// source. Preprocessing still runs (offsets are tracked through
 					// it) so highlight/smart-quotes/emoji render while editing.
-					MarkdownBlockParser.parse(text, preprocessed: false, trackSourceOffsets: editable)
+					MarkdownBlockParser.parse(text, theme: theme, fontSize: fontSize, preprocessed: false, trackSourceOffsets: editable)
 				}.value
 				let tAfterParse = CFAbsoluteTimeGetCurrent()
 				// Cancelled tasks return silently — the replacement render

@@ -92,6 +92,7 @@ struct InlineBuilder: MarkupWalker {
 		var str = AttributedString(code.code)
 		str.font = .system(size: fontSize, design: .monospaced)
 		str.foregroundColor = theme.codeForeground
+		str.backgroundColor = theme.codeBackground
 		str.inlineFontTraits = .monospaced
 		result += str
 		charOffset += code.code.count
@@ -213,6 +214,7 @@ struct InlineBuilder: MarkupWalker {
 		if kbd || inlineCode {
 			str.font = .system(size: fontSize, design: .monospaced)
 			str.foregroundColor = theme.codeForeground
+			str.backgroundColor = theme.codeBackground
 		} else {
 			var font = Font.system(size: superscript || subscript_ ? fontSize * 0.75 : fontSize)
 			if bold { font = font.bold() }

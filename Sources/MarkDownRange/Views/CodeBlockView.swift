@@ -22,21 +22,24 @@ struct CodeBlockView: View {
 	// implicit animation, redrawing the whole block for 150ms. Now only the copy
 	// button reacts to hover.
 	var body: some View {
-		ZStack(alignment: .topTrailing) {
-			CodeBlockContent(code: trimmedCode, theme: theme, showLineNumbers: showLineNumbers)
-
-			CodeBlockCopyButton(
-				code: trimmedCode,
-				language: language,
-				theme: theme,
-				isContentHovering: isContentHovering,
-				isButtonHovering: $isButtonHovering
-			)
-		}
-		.background(theme.codeBackground, in: RoundedRectangle(cornerRadius: 8))
-		.contentShape(Rectangle())
-		.onHover { isContentHovering = $0 }
-		.padding(.vertical, 4)
+		// The copy button is an overlay, not a ZStack sibling: an overlay floats
+		// on top without contributing to the block's measured size. As a sibling
+		// its height padded the block out, leaving a phantom empty line below
+		// short snippets.
+		CodeBlockContent(code: trimmedCode, theme: theme, showLineNumbers: showLineNumbers)
+			.overlay(alignment: .topTrailing) {
+				CodeBlockCopyButton(
+					code: trimmedCode,
+					language: language,
+					theme: theme,
+					isContentHovering: isContentHovering,
+					isButtonHovering: $isButtonHovering
+				)
+			}
+			.background(theme.codeBackground, in: RoundedRectangle(cornerRadius: 8))
+			.contentShape(Rectangle())
+			.onHover { isContentHovering = $0 }
+			.padding(.vertical, 4)
 	}
 }
 
@@ -44,39 +47,49 @@ private struct CodeBlockContent: View {
 	let code: String
 	let theme: MarkdownTheme
 	let showLineNumbers: Bool
-	@State private var highlightedText: Text?
+	@State private var highlightedLines: [Text]?
 
-	private var lineCount: Int { code.components(separatedBy: .newlines).count }
+	private var rawLines: [String] { code.components(separatedBy: .newlines) }
+	private var lineCount: Int { rawLines.count }
+
+	// Line numbers are noise on a one- or two-line snippet, so they're reserved
+	// for longer blocks.
+	private var showsLineNumbers: Bool { showLineNumbers && lineCount > 2 }
 
 	var body: some View {
-		PassThroughHorizontalScroll {
-			HStack(alignment: .top, spacing: 0) {
-				if showLineNumbers {
-					VStack(alignment: .trailing, spacing: 0) {
-						ForEach(1...max(1, lineCount), id: \.self) { num in
-							Text("\(num)")
-								.font(.system(size: 13, design: .monospaced))
+		// Each source line is its own row so it can wrap to the content width
+		// like body text. Its line number stays pinned to the line's first
+		// visual row (.topLeading) — the wrapped remainder carries no number,
+		// so numbering tracks real source lines rather than visual ones.
+		let lines = highlightedLines ?? rawLines.map { $0.isEmpty ? Text(" ") : Text($0) }
+		VStack(alignment: .leading, spacing: 0) {
+			ForEach(Array(lines.enumerated()), id: \.offset) { index, lineText in
+				HStack(alignment: .top, spacing: 8) {
+					if showsLineNumbers {
+						// A hidden copy of the widest number sizes the gutter so
+						// every number right-aligns in the same column without a
+						// hard-coded width.
+						ZStack(alignment: .trailing) {
+							Text("\(lineCount)").hidden()
+							Text("\(index + 1)")
 								.foregroundStyle(theme.secondaryColor.opacity(0.5))
 						}
 					}
-					.padding(.leading, 12)
-					.padding(.trailing, 8)
-					.padding(.vertical, 12)
-
-					Divider().padding(.vertical, 4)
+					// maxWidth caps the code at the row's remaining width so long
+					// lines wrap to the next visual row instead of overflowing.
+					lineText
+						.textSelection(.enabled)
+						.frame(maxWidth: .infinity, alignment: .leading)
 				}
-
-				(highlightedText ?? Text(code))
-					.font(.system(size: 13, design: .monospaced))
-					.textSelection(.enabled)
-					.padding(12)
-					.padding(.trailing, 24)
 			}
 		}
+		.font(.system(size: 13, design: .monospaced))
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(12)
+		.padding(.trailing, 24)
 		.task(id: code) {
 			let source = code
-			let text = await Task.detached { Tokenizer.highlightedText(source) }.value
-			highlightedText = text
+			highlightedLines = await Task.detached { Tokenizer.highlightedLines(source) }.value
 		}
 	}
 }

@@ -76,6 +76,26 @@ public enum Tokenizer {
 		}
 	}
 
+	/// Highlights `code` and returns one `Text` per source line, so a renderer
+	/// can lay each line out as its own row — a wrapped line then shares its
+	/// single line number with the continuation rows below it. Multi-line tokens
+	/// (block comments, strings) keep their kind across the split, and empty
+	/// lines render a space so they still occupy a row.
+	public static func highlightedLines(_ code: String) -> [Text] {
+		var lines: [[Token]] = [[]]
+		for token in coalesce(tokenize(code)) {
+			let parts = token.text.components(separatedBy: "\n")
+			for (offset, part) in parts.enumerated() {
+				if offset > 0 { lines.append([]) }
+				if !part.isEmpty { lines[lines.count - 1].append(Token(text: part, kind: token.kind)) }
+			}
+		}
+		return lines.map { tokens in
+			guard !tokens.isEmpty else { return Text(" ") }
+			return tokens.reduce(Text("")) { $0 + Text($1.text).foregroundColor($1.color) }
+		}
+	}
+
 	/// Highlights `code` as an HTML fragment: each non-plain token becomes a
 	/// `<span class="tok-…">`, plain runs pass through escaped. Powers the HTML
 	/// renderer (webview / QuickLook / export); the CSS for the classes lives in

@@ -47,7 +47,8 @@ extension MarkdownHTMLRenderer {
 			color: \(rgba(theme.codeForeground));
 			padding: 16px;
 			border-radius: 6px;
-			overflow-x: auto;
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
 		}
 		pre code { background: none; padding: 0; }
 		/* Server-side syntax highlighting (see Tokenizer.highlightedHTML).
