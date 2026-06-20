@@ -25,7 +25,28 @@ import Testing
 	@Test func rendersFencedCode() {
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: "```swift\nlet x = 1\n```", theme: .default)
 		#expect(html.contains("<pre"))
-		#expect(html.contains("let x = 1"))
+		// Code is syntax-highlighted server-side, so tokens are wrapped in
+		// spans rather than emitted as one contiguous string.
+		#expect(html.contains("<span class=\"tok-keyword\">let</span>"))
+		#expect(html.contains("<span class=\"tok-number\">1</span>"))
+		#expect(html.contains(" x = "))   // plain text passes through between spans
+	}
+
+	@Test func highlightsStringsAndComments() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "```swift\n// note\nlet s = \"hi\"\n```", theme: .default)
+		#expect(html.contains("<span class=\"tok-comment\">// note</span>"))
+		#expect(html.contains("<span class=\"tok-string\">&quot;hi&quot;</span>"))
+		#expect(html.contains(".tok-keyword"))   // the palette CSS is embedded
+	}
+
+	@Test func mermaidCodeKeepsRawSourceUnhighlighted() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "```mermaid\ngraph TD\n  A --> B\n```", theme: .default)
+		// Mermaid source must stay intact (a diagram engine consumes it), so it
+		// is not tokenized/wrapped.
+		#expect(html.contains("graph TD"))
+		#expect(!html.contains("<span class=\"tok-"))
 	}
 
 	@Test func rendersTables() {

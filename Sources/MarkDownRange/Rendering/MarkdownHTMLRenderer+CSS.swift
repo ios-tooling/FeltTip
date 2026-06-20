@@ -50,6 +50,21 @@ extension MarkdownHTMLRenderer {
 			overflow-x: auto;
 		}
 		pre code { background: none; padding: 0; }
+		/* Server-side syntax highlighting (see Tokenizer.highlightedHTML).
+		   Standard system-color palette, legible on light and dark code
+		   backgrounds alike. */
+		.tok-keyword { color: #AF52DE; }
+		.tok-type    { color: #30B0C7; }
+		.tok-string  { color: #D70015; }
+		.tok-number  { color: #0A84FF; }
+		.tok-comment { color: #8E8E93; font-style: italic; }
+		@media (prefers-color-scheme: dark) {
+			.tok-keyword { color: #DA8FFF; }
+			.tok-type    { color: #5AC8FA; }
+			.tok-string  { color: #FF6961; }
+			.tok-number  { color: #64D2FF; }
+			.tok-comment { color: #98989D; }
+		}
 		blockquote {
 			border-left: 4px solid \(rgba(theme.secondaryColor, alpha: 0.4));
 			margin: 1em 0;

@@ -11,18 +11,18 @@ extension Tokenizer {
 		let end = s.firstIndex(of: "\n") ?? s.endIndex
 		let text = String(s[s.startIndex..<end])
 		s = s[end...]
-		return Token(text: text, color: .gray)
+		return Token(text: text, kind: .comment)
 	}
 
 	static func matchBlockComment(_ s: inout Substring) -> Token? {
 		guard s.hasPrefix("/*") else { return nil }
 		guard let endRange = s.range(of: "*/") else {
 			let text = String(s); s = s[s.endIndex...]
-			return Token(text: text, color: .gray)
+			return Token(text: text, kind: .comment)
 		}
 		let text = String(s[s.startIndex..<endRange.upperBound])
 		s = s[endRange.upperBound...]
-		return Token(text: text, color: .gray)
+		return Token(text: text, kind: .comment)
 	}
 
 	static func matchString(_ s: inout Substring, quote: Character) -> Token? {
@@ -36,7 +36,7 @@ extension Tokenizer {
 		}
 		let text = String(s[s.startIndex..<i])
 		s = s[i...]
-		return Token(text: text, color: Color(.systemRed))
+		return Token(text: text, kind: .string)
 	}
 
 	static func matchNumber(_ s: inout Substring) -> Token? {
@@ -48,7 +48,7 @@ extension Tokenizer {
 			|| (s[i].isHexDigit && s.hasPrefix("0x")) { i = s.index(after: i) }
 		let text = String(s[s.startIndex..<i])
 		s = s[i...]
-		return Token(text: text, color: Color(.systemBlue))
+		return Token(text: text, kind: .number)
 	}
 
 	static func matchKeyword(_ s: inout Substring) -> Token? {
@@ -60,7 +60,7 @@ extension Tokenizer {
 		let prev = s.startIndex == s.base.startIndex ? nil : s.base[s.base.index(before: s.startIndex)]
 		if let prev, prev.isLetter || prev == "_" { return nil }
 		s = s[i...]
-		return Token(text: word, color: Color(.systemPurple))
+		return Token(text: word, kind: .keyword)
 	}
 
 	static func matchType(_ s: inout Substring) -> Token? {
@@ -72,7 +72,7 @@ extension Tokenizer {
 		let prev = s.startIndex == s.base.startIndex ? nil : s.base[s.base.index(before: s.startIndex)]
 		if let prev, prev.isLetter || prev == "_" { return nil }
 		s = s[i...]
-		return Token(text: word, color: Color(.systemTeal))
+		return Token(text: word, kind: .type)
 	}
 
 	private static let keywords: Set<String> = [

@@ -5,6 +5,7 @@
 
 import Foundation
 import SwiftUI
+import MarkdownSyntaxHighlighting
 
 extension MarkdownHTMLRenderer {
 	static func renderBlock(_ block: MarkdownBlock) -> String {
@@ -18,7 +19,12 @@ extension MarkdownHTMLRenderer {
 
 		case .codeBlock(let code, let language, _):
 			let classAttr = language.map { " class=\"language-\(escape($0))\"" } ?? ""
-			return "<pre><code\(classAttr)>\(escape(code))</code></pre>"
+			// Syntax-highlight server-side so the webview / QuickLook / export
+			// paths get colored code without bundling a JS highlighter. Mermaid
+			// keeps its raw source untouched (a diagram engine consumes it).
+			let isMermaid = language?.lowercased() == "mermaid"
+			let body = isMermaid ? escape(code) : Tokenizer.highlightedHTML(code, escape: { escape($0) })
+			return "<pre><code\(classAttr)>\(body)</code></pre>"
 
 		case .blockquote(let children, _):
 			var html = "<blockquote>"
@@ -93,7 +99,11 @@ extension MarkdownHTMLRenderer {
 			result += "<li>"
 			if let state = item.checkbox {
 				let checked = state == .checked ? " checked" : ""
-				result += "<input type=\"checkbox\" disabled\(checked)> "
+				if emitInteractiveCheckboxes, let index = item.checkboxIndex {
+					result += "<input type=\"checkbox\" data-cb=\"\(index)\"\(checked)> "
+				} else {
+					result += "<input type=\"checkbox\" disabled\(checked)> "
+				}
 			}
 			// Tight-list heuristic — a lone paragraph child renders without
 			// its `<p>` wrapper so simple bullet lists don't gain stray

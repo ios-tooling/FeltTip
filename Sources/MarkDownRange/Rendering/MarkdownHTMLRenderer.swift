@@ -19,6 +19,14 @@ public enum MarkdownHTMLRenderer {
 	/// and a foreground editable render don't clobber each other's flag.
 	@TaskLocal static var emitSourceOffsets = false
 
+	/// When true, task-list `<input type="checkbox">` elements render enabled
+	/// (not `disabled`) and carry a `data-cb` attribute with their
+	/// document-wide checkbox index, so an interactive host (the QuickLook
+	/// webview) can map a click back to the source. Exports/PDF leave this off
+	/// so their checkboxes stay static. Scoped per-render like
+	/// `emitSourceOffsets`.
+	@TaskLocal static var emitInteractiveCheckboxes = false
+
 	/// Renders the given parsed blocks to a body-only HTML fragment — no
 	/// `<html>`/`<head>`/`<body>` wrapper. Caller-supplied themes apply at
 	/// the document level (see `renderDocument`).
@@ -38,7 +46,8 @@ public enum MarkdownHTMLRenderer {
 		theme: MarkdownTheme = .default,
 		fontSize: CGFloat = 16,
 		options: MarkdownOptions = .default,
-		includeSourceOffsets: Bool = false
+		includeSourceOffsets: Bool = false,
+		interactiveCheckboxes: Bool = false
 	) -> String {
 		// Editable rendering tracks source offsets through preprocessing so the
 		// `data-s` offsets address the caller's text while highlight/smart
@@ -46,7 +55,9 @@ public enum MarkdownHTMLRenderer {
 		let blocks = includeSourceOffsets
 			? MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true, options: options)
 			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
-		let body = $emitSourceOffsets.withValue(includeSourceOffsets) { renderBlocks(blocks) }
+		let body = $emitSourceOffsets.withValue(includeSourceOffsets) {
+			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) { renderBlocks(blocks) }
+		}
 		return """
 		<!DOCTYPE html>
 		<html>
