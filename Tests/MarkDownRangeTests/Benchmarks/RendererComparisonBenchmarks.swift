@@ -24,8 +24,10 @@ struct RendererComparisonBenchmarks {
 	private static let inset: CGFloat = 24
 
 	@MainActor
-	private func textViewMs(_ markdown: String) async -> (build: Double, layout: Double) {
+	private func textViewMs(_ markdown: String) async -> (parse: Double, build: Double, layout: Double) {
+		let p0 = CFAbsoluteTimeGetCurrent()
 		let blocks = MarkdownBlockParser.parse(markdown)
+		let parseMs = (CFAbsoluteTimeGetCurrent() - p0) * 1000
 		let b0 = CFAbsoluteTimeGetCurrent()
 		let attributed = await MarkdownAttributedStringBuilder.build(
 			blocks: blocks, theme: .default, fontSize: 16, availableWidth: Self.width - Self.inset * 2)
@@ -48,7 +50,7 @@ struct RendererComparisonBenchmarks {
 			lm.ensureLayout(for: lm.documentRange)
 			layoutMs = (CFAbsoluteTimeGetCurrent() - l0) * 1000
 		}
-		return (buildMs, layoutMs)
+		return (parseMs, buildMs, layoutMs)
 	}
 
 	@MainActor
@@ -99,15 +101,17 @@ struct RendererComparisonBenchmarks {
 		}
 	}
 
-	private func report(_ label: String, tv: (build: Double, layout: Double), wv: (html: Double, load: Double, kb: Int)) {
+	private func report(_ label: String, tv: (parse: Double, build: Double, layout: Double), wv: (html: Double, load: Double, kb: Int)) {
 		func f(_ v: Double) -> String { String(format: "%7.1f", v) }
-		let tvTotal = tv.build + tv.layout
+		// Both totals include parse (the webview's `html` = renderDocument, which
+		// parses internally; the NSTextView side adds parse explicitly).
+		let tvTotal = tv.parse + tv.build + tv.layout
 		let wvTotal = wv.html + wv.load
 		let winner = tvTotal < wvTotal ? "NSTextView" : "WebView"
 		let ratio = String(format: "%.1f×", max(tvTotal, wvTotal) / max(0.1, min(tvTotal, wvTotal)))
 		let head = label.padding(toLength: 20, withPad: " ", startingAt: 0)
-		print("\(head) | NSTextView build \(f(tv.build)) layout \(f(tv.layout)) = \(f(tvTotal)) | "
-			+ "WebView html \(f(wv.html)) load \(f(wv.load)) = \(f(wvTotal)) | \(winner) by \(ratio) | \(wv.kb)KB html")
+		print("\(head) | NSTextView parse \(f(tv.parse)) build \(f(tv.build)) layout \(f(tv.layout)) = \(f(tvTotal)) | "
+			+ "WebView html(+parse) \(f(wv.html)) load \(f(wv.load)) = \(f(wvTotal)) | \(winner) by \(ratio)")
 	}
 }
 

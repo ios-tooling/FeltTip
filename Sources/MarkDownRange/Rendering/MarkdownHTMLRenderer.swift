@@ -14,17 +14,17 @@ import SwiftUI
 
 public enum MarkdownHTMLRenderer {
 	/// When true, `renderInline` tags each run with a `data-s` source offset for
-	/// the editable webview. Set only for the duration of an editable
-	/// `renderDocument` call (synchronous), so normal export output is
-	/// unaffected. (A spike shortcut — thread a parameter through if this
-	/// graduates.)
-	nonisolated(unsafe) static var emitSourceOffsets = false
+	/// the editable webview. Scoped per-render via a task-local (set by
+	/// `renderDocument`) so it's concurrency-safe — a background export render
+	/// and a foreground editable render don't clobber each other's flag.
+	@TaskLocal static var emitSourceOffsets = false
 
 	/// Renders the given parsed blocks to a body-only HTML fragment — no
 	/// `<html>`/`<head>`/`<body>` wrapper. Caller-supplied themes apply at
 	/// the document level (see `renderDocument`).
 	public static func renderBlocks(_ blocks: [MarkdownBlock]) -> String {
 		var output = ""
+		output.reserveCapacity(blocks.count * 256)
 		for block in blocks { output += renderBlock(block) }
 		return output
 	}
@@ -46,10 +46,7 @@ public enum MarkdownHTMLRenderer {
 		let blocks = includeSourceOffsets
 			? MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true, options: options)
 			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
-		let previous = emitSourceOffsets
-		emitSourceOffsets = includeSourceOffsets
-		defer { emitSourceOffsets = previous }
-		let body = renderBlocks(blocks)
+		let body = $emitSourceOffsets.withValue(includeSourceOffsets) { renderBlocks(blocks) }
 		return """
 		<!DOCTYPE html>
 		<html>

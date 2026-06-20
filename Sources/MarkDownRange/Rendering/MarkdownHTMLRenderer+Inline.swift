@@ -14,29 +14,28 @@ extension MarkdownHTMLRenderer {
 	/// handle it identically.
 	static func renderInline(_ attributed: AttributedString) -> String {
 		var result = ""
+		// Append tags directly instead of rewrapping each run's string per
+		// formatting layer — the latter reallocates the growing run string once
+		// per trait/link/span, which dominated HTML generation on inline-heavy
+		// documents. Nesting (outer→inner): span > a > strong > em > code.
 		for run in attributed.runs {
-			let substring = attributed[run.range]
-			let text = escape(String(substring.characters))
+			let text = escape(String(attributed[run.range].characters))
 			guard !text.isEmpty else { continue }
-
-			var wrapped = text
 			let traits = run.inlineFontTraits ?? []
-			if traits.contains(.monospaced) { wrapped = "<code>\(wrapped)</code>" }
-			if traits.contains(.italic) { wrapped = "<em>\(wrapped)</em>" }
-			if traits.contains(.bold) { wrapped = "<strong>\(wrapped)</strong>" }
-
+			let offset = emitSourceOffsets ? run.markdownSourceOffset : nil
+			if let offset { result += "<span data-s=\"\(offset)\">" }
 			if let url = run.link {
-				let href = attributeValue(url.absoluteString, allowedSchemes: linkSchemes)
-				wrapped = "<a href=\"\(href)\">\(wrapped)</a>"
+				result += "<a href=\"\(attributeValue(url.absoluteString, allowedSchemes: linkSchemes))\">"
 			}
-			// In editable rendering, tag each run with its source offset so the
-			// contentEditable bridge can map a caret position back to the
-			// Markdown source. The span wraps the whole run so its text content
-			// equals the run's text (keeps the caret math simple).
-			if emitSourceOffsets, let offset = run.markdownSourceOffset {
-				wrapped = "<span data-s=\"\(offset)\">\(wrapped)</span>"
-			}
-			result += wrapped
+			if traits.contains(.bold) { result += "<strong>" }
+			if traits.contains(.italic) { result += "<em>" }
+			if traits.contains(.monospaced) { result += "<code>" }
+			result += text
+			if traits.contains(.monospaced) { result += "</code>" }
+			if traits.contains(.italic) { result += "</em>" }
+			if traits.contains(.bold) { result += "</strong>" }
+			if run.link != nil { result += "</a>" }
+			if offset != nil { result += "</span>" }
 		}
 		return result
 	}
@@ -47,6 +46,11 @@ extension MarkdownHTMLRenderer {
 	/// HTML-escapes the five characters that change meaning inside element
 	/// content or attribute values.
 	static func escape(_ text: String) -> String {
+		// Fast path: most runs contain none of the five special characters, so
+		// skip the per-character rebuild entirely.
+		if !text.utf8.contains(where: { $0 == 0x26 || $0 == 0x3C || $0 == 0x3E || $0 == 0x22 || $0 == 0x27 }) {
+			return text
+		}
 		var result = ""
 		result.reserveCapacity(text.count)
 		for ch in text {
@@ -67,12 +71,34 @@ extension MarkdownHTMLRenderer {
 	/// the scheme isn't on it. Prevents `javascript:`/`data:` smuggling in
 	/// link contexts while still letting images use `data:` URIs.
 	static func attributeValue(_ value: String, allowedSchemes: Set<String>? = nil) -> String {
-		let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-		if let allowedSchemes,
-		   let match = trimmed.firstMatch(of: /^([A-Za-z][A-Za-z0-9+.-]*):/),
-		   !allowedSchemes.contains(String(match.1).lowercased()) {
+		if let allowedSchemes, let scheme = schemePrefix(of: value), !allowedSchemes.contains(scheme) {
 			return "#"
 		}
 		return escape(value)
+	}
+
+	/// The lowercased URL scheme if `value` begins with one
+	/// (`ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"`), skipping leading
+	/// whitespace; nil for scheme-less (relative) values. Hand-scanned rather
+	/// than a regex, which ran per-link and dominated HTML generation on
+	/// link-heavy documents.
+	static func schemePrefix(of value: String) -> String? {
+		var scheme = ""
+		var started = false
+		for scalar in value.unicodeScalars {
+			let c = scalar.value
+			if !started {
+				if c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D { continue }   // leading whitespace
+				guard (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) else { return nil }   // must start ALPHA
+			} else if c == 0x3A {
+				return scheme   // ':'
+			} else if !((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || (c >= 0x30 && c <= 0x39) || c == 0x2B || c == 0x2D || c == 0x2E) {
+				return nil   // non-scheme char before ':'
+			}
+			started = true
+			let lower = (c >= 0x41 && c <= 0x5A) ? c + 0x20 : c
+			scheme.unicodeScalars.append(Unicode.Scalar(lower)!)
+		}
+		return nil
 	}
 }
