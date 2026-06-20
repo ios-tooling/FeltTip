@@ -25,6 +25,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	var baseURL: URL?
 	var isEditable = false
 	var onSourceEdit: ((String) -> Void)?
+	var onCheckboxToggle: ((Int, Bool) -> Void)?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -45,6 +46,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func onSourceEdit(_ callback: @escaping (String) -> Void) -> Self {
 		var copy = self
 		copy.onSourceEdit = callback
+		return copy
+	}
+
+	/// Makes task-list checkboxes clickable; the callback receives the toggled
+	/// checkbox's document-wide index and its new checked state. Used by the
+	/// QuickLook preview to write the change back to the file.
+	public func onCheckboxToggle(_ callback: @escaping (Int, Bool) -> Void) -> Self {
+		var copy = self
+		copy.onCheckboxToggle = callback
 		return copy
 	}
 
@@ -79,6 +89,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 		/// Last scroll position reported by the page, restored after any reload
 		/// so re-renders don't jump to the top.
 		private var lastScrollY: Double = 0
+		/// Source offset to place the caret at after a structural re-render.
+		private var pendingCaret: Int?
+		/// The source the DOM currently reflects. Advanced synchronously on every
+		/// edit so rapid edits chain off the right base — `parent.text` lags
+		/// because the SwiftUI round-trip back into `updateNSView` is async.
+		private var currentSource: String?
 		/// Flip to true to log the edit bridge to the console.
 		static let debugEditing = false
 
@@ -87,7 +103,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 		}
 
 		private func renderKey(text: String) -> String {
-			"\(parent.isEditable)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(text.hashValue)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(text.hashValue)"
 		}
 
 		func load(into webView: WKWebView) {
@@ -100,18 +116,28 @@ public struct MarkdownWebView: NSViewRepresentable {
 			let key = renderKey(text: parent.text)
 			guard key != lastKey else { return }
 			lastKey = key
+			currentSource = parent.text
 			let html = MarkdownHTMLRenderer.renderDocument(
 				markdown: parent.text, theme: parent.theme, fontSize: parent.fontSize,
-				includeSourceOffsets: parent.isEditable)
+				includeSourceOffsets: parent.isEditable,
+				interactiveCheckboxes: parent.onCheckboxToggle != nil)
 			webView.loadHTMLString(html, baseURL: parent.baseURL)
 		}
 
 		// MARK: Navigation
 
 		public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+			if parent.onCheckboxToggle != nil {
+				webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
+			}
 			guard parent.isEditable else { return }
 			webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
-			if lastScrollY > 0 {
+			if let caret = pendingCaret {
+				pendingCaret = nil
+				// The caret placement scrolls it into view, so it supersedes
+				// scroll restoration after a structural edit.
+				webView.evaluateJavaScript("window.__mdPlaceCaret && window.__mdPlaceCaret(\(caret));", completionHandler: nil)
+			} else if lastScrollY > 0 {
 				webView.evaluateJavaScript("window.scrollTo(0, \(lastScrollY));", completionHandler: nil)
 			}
 		}
@@ -157,10 +183,24 @@ public struct MarkdownWebView: NSViewRepresentable {
 				if let y = body["y"] as? Double { lastScrollY = y }
 				return
 			}
-			guard let start = body["start"] as? Int,
-				  let end = body["end"] as? Int,
-				  let replacement = body["text"] as? String else { return }
-			let source = parent.text as NSString
+			if body["type"] as? String == "error" {
+				log("JS error: \(body["message"] as? String ?? "?")")
+				return
+			}
+			if body["type"] as? String == "ready" {
+				log("editor ready (bridge=\(body["bridge"] as? Bool ?? false))")
+				return
+			}
+			// Task-list checkbox click (QuickLook): map index → source and write.
+			if body["type"] as? String == "checkbox" {
+				if let index = body["index"] as? Int, let checked = body["checked"] as? Bool {
+					parent.onCheckboxToggle?(index, checked)
+				}
+				return
+			}
+			log("message \(body)")
+			guard let start = body["start"] as? Int, let end = body["end"] as? Int else { return }
+			let source = (currentSource ?? parent.text) as NSString
 			let expected = body["expected"] as? String ?? ""
 			// If we can't map the edit safely, leave the source untouched and the
 			// DOM as-is (non-destructive) rather than reverting the user's edit.
@@ -172,19 +212,36 @@ public struct MarkdownWebView: NSViewRepresentable {
 			let range = NSRange(location: start, length: end - start)
 			let actual = source.substring(with: range)
 			guard actual == expected else {
-				log("verify mismatch range=\(range) expected=\(quoted(expected)) actual=\(quoted(actual)) replacement=\(quoted(replacement))")
+				log("verify mismatch range=\(range) expected=\(quoted(expected)) actual=\(quoted(actual))")
 				return
 			}
-			let newSource = source.replacingCharacters(in: range, with: replacement)
-			log("applied range=\(range) replacement=\(quoted(replacement))")
-			// Skip the reload this triggers — the DOM already shows the change.
-			selfEditedText = newSource
-			lastKey = renderKey(text: newSource)
-			parent.onSourceEdit?(newSource)
+			let newSource: String
+			if body["op"] as? String == "wrap", let marker = body["marker"] as? String {
+				newSource = source.substring(to: start) + marker + actual + marker + source.substring(from: end)
+			} else if let replacement = body["text"] as? String {
+				newSource = source.replacingCharacters(in: range, with: replacement)
+			} else {
+				return
+			}
+			currentSource = newSource
+			log("applied range=\(range) newLen=\(newSource.count)")
+			if let caret = body["caret"] as? Int {
+				// Structural edit: re-render (re-stamps data-s) and restore the
+				// caret. Don't suppress the reload.
+				pendingCaret = caret
+				parent.onSourceEdit?(newSource)
+			} else {
+				// In-place edit: the DOM already shows it, so skip the reload.
+				selfEditedText = newSource
+				lastKey = renderKey(text: newSource)
+				parent.onSourceEdit?(newSource)
+			}
 		}
 
 		private func log(_ message: String) {
-			if Self.debugEditing { print("[MarkdownWebView] \(message)") }
+			guard Self.debugEditing else { return }
+			print("[MarkdownWebView] \(message)")
+			NSLog("[MarkdownWebView] %@", message)
 		}
 
 		private func quoted(_ s: String) -> String {
@@ -204,14 +261,43 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 }
 
 extension MarkdownWebView.Coordinator {
+	/// Injected when a checkbox-toggle callback is wired (QuickLook). Reports a
+	/// task-list checkbox click — by its `data-cb` document-wide index — so the
+	/// host can rewrite the source. Works whether or not the page is editable.
+	static let checkboxScript = """
+	(function () {
+	  document.body.addEventListener('change', function (e) {
+	    var t = e.target;
+	    if (t && t.tagName === 'INPUT' && t.type === 'checkbox' && t.hasAttribute('data-cb')) {
+	      var idx = parseInt(t.getAttribute('data-cb'), 10);
+	      if (!isNaN(idx)) {
+	        window.webkit.messageHandlers.mdedit.postMessage({ type: 'checkbox', index: idx, checked: t.checked });
+	      }
+	    }
+	  });
+	})();
+	"""
+
 	/// Injected after each editable load. Maps contentEditable edits to source
 	/// splices via `data-s` offsets, vetoing anything it can't map.
 	static let editorScript = """
 	(function () {
-	  if (window.__mdEditorInstalled) { document.body.contentEditable = 'true'; return; }
-	  window.__mdEditorInstalled = true;
+	  // Surface any uncaught JS error (incl. in event listeners) to Swift so a
+	  // silent failure in the bridge is diagnosable.
+	  window.onerror = function (msg, src, line, col) {
+	    try { window.webkit.messageHandlers.mdedit.postMessage({ type: 'error', message: String(msg) + ' @' + line + ':' + col }); } catch (e) {}
+	  };
+	  // Confirm the script ran AND the message bridge is reachable.
+	  try {
+	    window.webkit.messageHandlers.mdedit.postMessage({ type: 'ready', bridge: !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mdedit) });
+	  } catch (e) {}
 	  document.body.contentEditable = 'true';
 	  document.body.style.outline = 'none';
+	  // Blocks we can't map edits inside become read-only islands, so the caret
+	  // can't land somewhere a keystroke would be silently vetoed.
+	  document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+	    el.contentEditable = 'false';
+	  });
 	  var pending = null;
 
 	  function textLength(n) {
@@ -249,27 +335,55 @@ extension MarkdownWebView.Coordinator {
 	    if (chars == null) return null;
 	    return base + chars;
 	  }
-	  function topLevelParagraph(node) {
-	    var el = node.nodeType === 3 ? node.parentNode : node;
-	    var block = el && el.closest ? el.closest('p,h1,h2,h3,h4,h5,h6') : null;
-	    return block && block.parentElement === document.body;
-	  }
-	  function replacementFor(type, data, range) {
-	    switch (type) {
-	      case 'insertText':
-	      case 'insertReplacementText':
-	        return data == null ? null : data;
-	      case 'insertParagraph':
-	        return topLevelParagraph(range.startContainer) ? '\\n\\n' : null;
-	      case 'deleteContentBackward':
-	      case 'deleteContentForward':
-	      case 'deleteWordBackward':
-	      case 'deleteWordForward':
-	      case 'deleteByCut':
-	        return '';
-	      default:
-	        return null; // styles, lists, line breaks, paste — not yet mapped
+	  // Place the caret at a source offset after a structural re-render.
+	  window.__mdPlaceCaret = function (offset) {
+	    var spans = document.querySelectorAll('[data-s]');
+	    for (var i = 0; i < spans.length; i++) {
+	      var base = parseInt(spans[i].getAttribute('data-s'), 10);
+	      var len = textLength(spans[i]);
+	      if (offset >= base && offset <= base + len) {
+	        var spot = locate(spans[i], offset - base);
+	        if (spot) {
+	          var sel = window.getSelection(), r = document.createRange();
+	          r.setStart(spot.node, spot.offset); r.collapse(true);
+	          sel.removeAllRanges(); sel.addRange(r);
+	          spans[i].scrollIntoView({ block: 'nearest' });
+	        }
+	        return;
+	      }
 	    }
+	  };
+	  // DOM position for the `target`-th character inside `root`.
+	  function locate(root, target) {
+	    var count = 0, found = null;
+	    function walk(n) {
+	      if (found) return;
+	      if (n.nodeType === 3) {
+	        if (target <= count + n.nodeValue.length) { found = { node: n, offset: target - count }; return; }
+	        count += n.nodeValue.length;
+	      } else { for (var i = 0; i < n.childNodes.length; i++) { walk(n.childNodes[i]); if (found) return; } }
+	    }
+	    walk(root);
+	    return found;
+	  }
+	  // List-item continuation marker, or null when not in a list.
+	  function listItemMarker(node) {
+	    var el = node.nodeType === 3 ? node.parentNode : node;
+	    var li = el && el.closest ? el.closest('li') : null;
+	    if (!li) return null;
+	    return li.parentElement && li.parentElement.tagName === 'OL' ? '\\n1. ' : '\\n- ';
+	  }
+	  function post(msg) { window.webkit.messageHandlers.mdedit.postMessage(msg); }
+	  // getTargetRanges() yields StaticRanges, whose toString() is useless
+	  // ("[object StaticRange]"). Build a live Range to read the replaced text.
+	  function rangeText(r) {
+	    if (r.collapsed) return '';
+	    try {
+	      var live = document.createRange();
+	      live.setStart(r.startContainer, r.startOffset);
+	      live.setEnd(r.endContainer, r.endOffset);
+	      return live.toString();
+	    } catch (e) { return ''; }
 	  }
 
 	  document.body.addEventListener('beforeinput', function (e) {
@@ -279,9 +393,38 @@ extension MarkdownWebView.Coordinator {
 	    var start = sourceOffsetOf(range.startContainer, range.startOffset);
 	    var end = sourceOffsetOf(range.endContainer, range.endOffset);
 	    if (start == null || end == null || end < start) { e.preventDefault(); return; }
-	    var replacement = replacementFor(e.inputType, e.data, range);
-	    if (replacement == null) { e.preventDefault(); return; }
-	    pending = { start: start, end: end, text: replacement, expected: range.toString() };
+	    var type = e.inputType, expected = rangeText(range);
+
+	    // Fast path: in-place text edits. Let the browser mutate the DOM and
+	    // mirror the change to the source (no reload).
+	    if (type === 'insertText' || type === 'insertReplacementText') {
+	      if (e.data == null) { e.preventDefault(); return; }
+	      pending = { start: start, end: end, text: e.data, expected: expected };
+	      return;
+	    }
+	    if (type === 'deleteContentBackward' || type === 'deleteContentForward' ||
+	        type === 'deleteWordBackward' || type === 'deleteWordForward' || type === 'deleteByCut') {
+	      pending = { start: start, end: end, text: '', expected: expected };
+	      return;
+	    }
+
+	    // Structural edits: splice the source and re-render (re-stamps data-s),
+	    // restoring the caret. Block the browser's own DOM mutation.
+	    if (type === 'insertParagraph') {
+	      e.preventDefault();
+	      var marker = listItemMarker(range.startContainer) || '\\n\\n';
+	      post({ start: start, end: end, text: marker, expected: expected, caret: start + marker.length });
+	      return;
+	    }
+	    if (type === 'formatBold' || type === 'formatItalic') {
+	      e.preventDefault();
+	      if (start === end) return;  // need a selection to wrap
+	      var m = type === 'formatBold' ? '**' : '*';
+	      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, caret: end + 2 * m.length });
+	      return;
+	    }
+
+	    e.preventDefault();  // line breaks, paste, etc. — not yet mapped
 	  });
 	  document.body.addEventListener('input', function () {
 	    if (pending) { window.webkit.messageHandlers.mdedit.postMessage(pending); pending = null; }
