@@ -26,9 +26,14 @@ struct SourceOffsetConverter {
 	/// the caller's source (e.g. the body after frontmatter was stripped) while
 	/// the offsets still address the full source.
 	private let baseOffset: Int
+	/// Optional processed-UTF16 → source-UTF16 map, for when the parsed string
+	/// is a preprocessed form of the source rather than the raw source. Nil
+	/// means the parsed string *is* the source.
+	private let map: [Int]?
 
-	init(_ source: String, baseOffset: Int = 0) {
+	init(_ source: String, baseOffset: Int = 0, map: [Int]? = nil) {
 		self.baseOffset = baseOffset
+		self.map = map
 		var lineStarts = [0]
 		var byteMap: [Int] = []
 		byteMap.reserveCapacity(source.utf8.count + 1)
@@ -49,6 +54,13 @@ struct SourceOffsetConverter {
 		guard line >= 1, line <= lineStartBytes.count else { return nil }
 		let byte = lineStartBytes[line - 1] + (column - 1)
 		guard byte >= 0, byte < byteToUTF16.count else { return nil }
-		return byteToUTF16[byte] + baseOffset
+		let processedOffset = byteToUTF16[byte]
+		let sourceOffset: Int
+		if let map {
+			sourceOffset = processedOffset < map.count ? map[processedOffset] : (map.last ?? processedOffset)
+		} else {
+			sourceOffset = processedOffset
+		}
+		return sourceOffset + baseOffset
 	}
 }

@@ -34,19 +34,29 @@ public enum MarkdownBlockParser {
 		let tPre0 = CFAbsoluteTimeGetCurrent()
 		MarkdownPreprocessor.recordedTimings = [:]
 		let processed: String
+		let offsetMap: [Int]?
 		if preprocessed {
 			processed = body
+			offsetMap = nil
+		} else if trackSourceOffsets {
+			// Editable rendering preprocesses too (so highlight, smart quotes,
+			// emoji, etc. render), but tracks a processed→source map so edits
+			// still resolve to the original source.
+			let tracked = MarkdownPreprocessor.processTrackingOffsets(body, options: options)
+			processed = tracked.processed
+			offsetMap = tracked.map
 		} else {
 			processed = MarkdownPreprocessor.process(body, options: options)
+			offsetMap = nil
 		}
 		let tDoc0 = CFAbsoluteTimeGetCurrent()
 		let document = Document(parsing: processed)
 		let tBuild0 = CFAbsoluteTimeGetCurrent()
 		let counter = CheckboxCounter(checkboxOffset)
-		// Offsets map into `processed` (the stripped body); `bodyOffset` shifts
-		// them back onto the caller's full source so frontmatter doesn't throw
-		// the mapping off. Only meaningful when parsing raw (preprocessed) text.
-		let converter = trackSourceOffsets ? SourceOffsetConverter(processed, baseOffset: bodyOffset) : nil
+		// Offsets come back through the preprocessing map (when present) and then
+		// `bodyOffset` shifts them past any stripped frontmatter, so the stamped
+		// offsets address the caller's full source.
+		let converter = trackSourceOffsets ? SourceOffsetConverter(processed, baseOffset: bodyOffset, map: offsetMap) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		// Normally the frontmatter renders as a read-only card. With offset

@@ -29,6 +29,13 @@ extension MarkdownHTMLRenderer {
 				let href = attributeValue(url.absoluteString, allowedSchemes: linkSchemes)
 				wrapped = "<a href=\"\(href)\">\(wrapped)</a>"
 			}
+			// In editable rendering, tag each run with its source offset so the
+			// contentEditable bridge can map a caret position back to the
+			// Markdown source. The span wraps the whole run so its text content
+			// equals the run's text (keeps the caret math simple).
+			if emitSourceOffsets, let offset = run.markdownSourceOffset {
+				wrapped = "<span data-s=\"\(offset)\">\(wrapped)</span>"
+			}
 			result += wrapped
 		}
 		return result

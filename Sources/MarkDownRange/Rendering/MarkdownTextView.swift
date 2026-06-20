@@ -557,9 +557,10 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let t0 = CFAbsoluteTimeGetCurrent()
 			renderTask = Task { @MainActor [weak self, weak textView] in
 				let blocks = await Task.detached(priority: .userInitiated) {
-					// In editable mode, parse the raw Markdown (no preprocessing)
-					// and carry source offsets so edits can map back to source.
-					MarkdownBlockParser.parse(text, preprocessed: editable, trackSourceOffsets: editable)
+					// In editable mode, carry source offsets so edits map back to
+					// source. Preprocessing still runs (offsets are tracked through
+					// it) so highlight/smart-quotes/emoji render while editing.
+					MarkdownBlockParser.parse(text, preprocessed: false, trackSourceOffsets: editable)
 				}.value
 				let tAfterParse = CFAbsoluteTimeGetCurrent()
 				// Cancelled tasks return silently — the replacement render

@@ -20,6 +20,47 @@ public enum MarkdownPreprocessor {
 		return common(after: withAppendedNotes, options: options)
 	}
 
+	/// Preprocesses `body` and also returns a map from each UTF-16 offset in the
+	/// processed output back to its UTF-16 offset in `body`. The editable
+	/// renderers use this so styled-text edits map to the original source even
+	/// though the rendered text reflects preprocessing (highlight, smart quotes,
+	/// emoji shortcodes, …).
+	///
+	/// The map is derived by diffing input against output rather than
+	/// instrumenting each pass: it covers every pass for free, and it's safe
+	/// because the editor verifies the source slice before splicing — an
+	/// imperfect mapping resyncs the view instead of corrupting the file.
+	public static func processTrackingOffsets(_ body: String, options: MarkdownOptions = .default) -> (processed: String, map: [Int]) {
+		let processed = process(body, options: options)
+		return (processed, offsetMap(from: body, to: processed))
+	}
+
+	/// For each UTF-16 position in `processed`, the UTF-16 position in `source`
+	/// it originated from. Surviving characters map to themselves; synthesized
+	/// characters (inserted markup) map to their nearest surviving neighbor.
+	static func offsetMap(from source: String, to processed: String) -> [Int] {
+		let src = Array(source.utf16)
+		let dst = Array(processed.utf16)
+		if src == dst { return Array(0..<dst.count) }
+		let diff = dst.difference(from: src)
+		// Transform an identity array of source offsets exactly as the diff
+		// transforms `src` into `dst`: drop removed positions (descending so
+		// offsets stay valid), then give each inserted position its nearest
+		// surviving neighbor's source offset.
+		var offsets = Array(0..<src.count)
+		for change in diff.removals.reversed() {
+			if case let .remove(offset, _, _) = change { offsets.remove(at: offset) }
+		}
+		for change in diff.insertions {
+			if case let .insert(offset, _, _) = change {
+				let neighbor = offset > 0 ? offsets[offset - 1]
+					: (offset < offsets.count ? offsets[offset] : (offsets.last ?? 0))
+				offsets.insert(neighbor, at: offset)
+			}
+		}
+		return offsets
+	}
+
 	/// Appends footnote bodies as a trailing section so renderers that don't
 	/// have their own footnote panel (the native `MarkdownTextView` and the
 	/// QuickLook preview) still show the actual note text — without this the
