@@ -95,7 +95,7 @@ public struct SplitMarkdownScreen: View {
 				.scrollTarget(scrollSource == .raw
 					? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)
 					: nil)
-				.onScrollFractionChanged { top, _ in didScroll(.formatted, fraction: Double(top)) }
+				.onScrollFractionChanged { top, _, _ in didScroll(.formatted, fraction: Double(top)) }
 				.frame(minWidth: 150, maxWidth: .infinity)
 		}
 		.onAppear { restoreInitialScroll() }

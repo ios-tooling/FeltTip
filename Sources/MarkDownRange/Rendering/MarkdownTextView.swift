@@ -41,9 +41,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// Reports the scroll viewport as fractions of the document's rendered
 	/// height — `topFraction` is the y-offset of the top of the visible area
 	/// (0 at the top, 1 at the bottom), `visibleFraction` is what proportion
-	/// of the document is currently on screen. Used by external scrubbers /
-	/// minimaps to show "where am I" without owning the scroll view.
-	public var onScrollFractionChanged: (@MainActor @Sendable (_ topFraction: CGFloat, _ visibleFraction: CGFloat) -> Void)?
+	/// of the document is currently on screen, and `contentFraction` is how much
+	/// of one viewport the whole document fills (1 when it's at least a full
+	/// viewport tall, less when it's shorter — so a minimap can shrink to match
+	/// a short document). Used by external scrubbers / minimaps to show "where
+	/// am I" without owning the scroll view.
+	public var onScrollFractionChanged: (@MainActor @Sendable (_ topFraction: CGFloat, _ visibleFraction: CGFloat, _ contentFraction: CGFloat) -> Void)?
 	/// Imperative scroll request. Set a new target (with a unique `token`) and
 	/// the renderer scrolls so `topFraction` of the document's rendered height
 	/// is centered in the visible area. Used by external scrubbers; the token
@@ -127,7 +130,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 	/// Fires on every clip-view bounds change, plus once at attach time so
 	/// hosts can show the right viewport rectangle without waiting for a
 	/// scroll event.
-	public func onScrollFractionChanged(_ callback: @escaping @MainActor @Sendable (CGFloat, CGFloat) -> Void) -> Self {
+	public func onScrollFractionChanged(_ callback: @escaping @MainActor @Sendable (CGFloat, CGFloat, CGFloat) -> Void) -> Self {
 		var copy = self
 		copy.onScrollFractionChanged = callback
 		return copy
@@ -410,10 +413,18 @@ public struct MarkdownTextView: NSViewRepresentable {
 				return
 			}
 			lastScrollReportMetrics = metrics
-			guard docHeight > 0 else { callback(0, 1); return }
+			guard docHeight > 0 else { callback(0, 1, 1); return }
 			let top = max(0, min(1, topY / docHeight))
 			let visible = max(0, min(1, visibleHeight / docHeight))
-			callback(top, visible)
+			// How much of a viewport the whole document fills: 1 once it's at
+			// least a viewport tall, less when it's shorter. Lets a minimap size
+			// itself to the content instead of always filling the strip. The text
+			// view's bounds are floored to the clip view, so a short document
+			// still reports a full-viewport height there — use the laid-out
+			// content height from the layout manager instead.
+			let contentHeight = textView.textLayoutManager?.usageBoundsForTextContainer.height ?? docHeight
+			let contentFraction = visibleHeight > 0 ? min(1, max(contentHeight, 1) / visibleHeight) : 1
+			callback(top, visible, contentFraction)
 		}
 
 		/// Drive the scroll position from outside (e.g. a minimap drag-scrub).

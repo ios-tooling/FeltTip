@@ -11,7 +11,7 @@ import AppKit
 
 	private func makeScrollHarness(
 		text: String = "Scroll test",
-		onReport: @escaping @MainActor @Sendable (CGFloat, CGFloat) -> Void
+		onReport: @escaping @MainActor @Sendable (CGFloat, CGFloat, CGFloat) -> Void
 	) -> (coordinator: MarkdownTextView.Coordinator, scrollView: NSScrollView, textView: NSTextView) {
 		let parent = MarkdownTextView(text: text, theme: .default, fontSize: 16)
 			.onScrollFractionChanged(onReport)
@@ -49,7 +49,7 @@ import AppKit
 
 	@Test func reportScrollFractionConvertsClipBoundsToFractions() {
 		let probe = ScrollProbe()
-		let harness = makeScrollHarness { top, visible in probe.reports.append((top, visible)) }
+		let harness = makeScrollHarness { top, visible, _ in probe.reports.append((top, visible)) }
 
 		harness.scrollView.contentView.scroll(to: NSPoint(x: 0, y: 500))
 		harness.coordinator.reportScrollFraction(force: true)
@@ -61,7 +61,7 @@ import AppKit
 
 	@Test func duplicateScrollReportsAreSuppressedUntilPixelThresholdMoves() {
 		let probe = ScrollProbe()
-		let harness = makeScrollHarness { top, visible in probe.reports.append((top, visible)) }
+		let harness = makeScrollHarness { top, visible, _ in probe.reports.append((top, visible)) }
 
 		harness.scrollView.contentView.scroll(to: NSPoint(x: 0, y: 200))
 		harness.coordinator.reportScrollFraction(force: true)
@@ -79,7 +79,7 @@ import AppKit
 
 	@Test func forcedScrollReportsBypassDuplicateSuppression() {
 		let probe = ScrollProbe()
-		let harness = makeScrollHarness { top, visible in probe.reports.append((top, visible)) }
+		let harness = makeScrollHarness { top, visible, _ in probe.reports.append((top, visible)) }
 
 		harness.coordinator.reportScrollFraction(force: true)
 		harness.coordinator.reportScrollFraction(force: true)
@@ -89,7 +89,7 @@ import AppKit
 
 	@Test func scheduledScrollReportsCoalesceWithinRunLoopTurn() async throws {
 		let probe = ScrollProbe()
-		let harness = makeScrollHarness { top, visible in probe.reports.append((top, visible)) }
+		let harness = makeScrollHarness { top, visible, _ in probe.reports.append((top, visible)) }
 
 		harness.coordinator.scheduleScrollFractionReport(force: true)
 		harness.coordinator.scheduleScrollFractionReport(force: true)
@@ -101,7 +101,7 @@ import AppKit
 
 	@Test func scrollDeltaClampsToDocumentEndAndTokenGatesRepeats() {
 		let probe = ScrollProbe()
-		let harness = makeScrollHarness { top, visible in probe.reports.append((top, visible)) }
+		let harness = makeScrollHarness { top, visible, _ in probe.reports.append((top, visible)) }
 		harness.coordinator.parent = MarkdownTextView(text: "Scroll test", theme: .default, fontSize: 16)
 			.scrollDelta(MarkdownScrollDelta(deltaY: 5_000, token: 1))
 
@@ -115,7 +115,7 @@ import AppKit
 
 	@Test func scrollTargetCentersRequestedFractionAndTokenGatesRepeats() {
 		let probe = ScrollProbe()
-		let harness = makeScrollHarness { top, visible in probe.reports.append((top, visible)) }
+		let harness = makeScrollHarness { top, visible, _ in probe.reports.append((top, visible)) }
 		harness.coordinator.parent = MarkdownTextView(text: "Scroll test", theme: .default, fontSize: 16)
 			.scrollTarget(MarkdownScrollTarget(topFraction: 0.5, token: 1))
 
