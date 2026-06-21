@@ -188,7 +188,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 			}
 		}
 
-		private static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
+		private static let markdownExtensions: Set<String> = MarkdownLinkExtensions.all
 
 		// MARK: Edit bridge
 

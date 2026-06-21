@@ -1275,7 +1275,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 			openMarkdownDocument(at: parent.linkAccessScope == .folder ? url : granted)
 		}
 
-		private static let markdownLinkExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
+		private static let markdownLinkExtensions: Set<String> = MarkdownLinkExtensions.all
 
 		/// Footnotes link both directions: `footnote://id` (the reference)
 		/// jumps to `footnote-anchor://id` (the body opener), and
