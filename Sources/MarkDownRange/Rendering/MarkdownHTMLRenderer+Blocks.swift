@@ -18,11 +18,16 @@ extension MarkdownHTMLRenderer {
 			return "<p>\(renderInline(content))</p>"
 
 		case .codeBlock(let code, let language, _):
+			let isMermaid = language?.lowercased() == "mermaid"
+			// Export pre-renders mermaid to a self-contained inline SVG; emit that
+			// instead of the raw source so the diagram shows everywhere.
+			if isMermaid, let svg = prerenderedMermaidSVGs[code] {
+				return "<div class=\"mermaid-diagram\">\(svg)</div>"
+			}
 			let classAttr = language.map { " class=\"language-\(escape($0))\"" } ?? ""
 			// Syntax-highlight server-side so the webview / QuickLook / export
 			// paths get colored code without bundling a JS highlighter. Mermaid
 			// keeps its raw source untouched (a diagram engine consumes it).
-			let isMermaid = language?.lowercased() == "mermaid"
 			let body = isMermaid ? escape(code) : Tokenizer.highlightedHTML(code, escape: { escape($0) })
 			return "<pre><code\(classAttr)>\(body)</code></pre>"
 

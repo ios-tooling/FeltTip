@@ -27,6 +27,12 @@ public enum MarkdownHTMLRenderer {
 	/// `emitSourceOffsets`.
 	@TaskLocal static var emitInteractiveCheckboxes = false
 
+	/// Maps a mermaid block's source to a pre-rendered inline SVG. When a code
+	/// block's source has an entry, `renderBlock` emits the SVG instead of the
+	/// raw mermaid source — used by HTML/PDF export to embed self-contained
+	/// diagrams (see `MarkdownMermaidPrerender`). Scoped per-render.
+	@TaskLocal static var prerenderedMermaidSVGs: [String: String] = [:]
+
 	/// Renders the given parsed blocks to a body-only HTML fragment — no
 	/// `<html>`/`<head>`/`<body>` wrapper. Caller-supplied themes apply at
 	/// the document level (see `renderDocument`).
@@ -48,7 +54,8 @@ public enum MarkdownHTMLRenderer {
 		options: MarkdownOptions = .default,
 		includeSourceOffsets: Bool = false,
 		interactiveCheckboxes: Bool = false,
-		embedMermaidEngine: Bool = false
+		embedMermaidEngine: Bool = false,
+		mermaidSVGs: [String: String] = [:]
 	) -> String {
 		// Editable rendering tracks source offsets through preprocessing so the
 		// `data-s` offsets address the caller's text while highlight/smart
@@ -57,7 +64,9 @@ public enum MarkdownHTMLRenderer {
 			? MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true, options: options)
 			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
 		let body = $emitSourceOffsets.withValue(includeSourceOffsets) {
-			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) { renderBlocks(blocks) }
+			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) {
+				$prerenderedMermaidSVGs.withValue(mermaidSVGs) { renderBlocks(blocks) }
+			}
 		}
 		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme) : ""
 		return """
