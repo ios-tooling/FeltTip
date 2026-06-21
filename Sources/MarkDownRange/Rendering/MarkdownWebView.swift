@@ -26,6 +26,11 @@ public struct MarkdownWebView: NSViewRepresentable {
 	var isEditable = false
 	var onSourceEdit: ((String) -> Void)?
 	var onCheckboxToggle: ((Int, Bool) -> Void)?
+	/// When true (and not editing), the ~3 MB mermaid engine is embedded inline
+	/// so mermaid code blocks render as diagrams. Off by default — the QuickLook
+	/// extension's sandbox can't load a payload that large (it crashes the
+	/// preview), so only the in-app web renderer opts in.
+	var renderMermaid = false
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -55,6 +60,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func onCheckboxToggle(_ callback: @escaping (Int, Bool) -> Void) -> Self {
 		var copy = self
 		copy.onCheckboxToggle = callback
+		return copy
+	}
+
+	/// Opt in to rendering mermaid code blocks as diagrams (embeds the engine).
+	/// Not safe in the QuickLook extension — see `renderMermaid`.
+	public func renderMermaid(_ flag: Bool) -> Self {
+		var copy = self
+		copy.renderMermaid = flag
 		return copy
 	}
 
@@ -103,7 +116,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 		}
 
 		private func renderKey(text: String) -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(text.hashValue)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(text.hashValue)"
 		}
 
 		func load(into webView: WKWebView) {
@@ -120,7 +133,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 			let html = MarkdownHTMLRenderer.renderDocument(
 				markdown: parent.text, theme: parent.theme, fontSize: parent.fontSize,
 				includeSourceOffsets: parent.isEditable,
-				interactiveCheckboxes: parent.onCheckboxToggle != nil)
+				interactiveCheckboxes: parent.onCheckboxToggle != nil,
+				// Render mermaid as diagrams when the host opted in and we're not
+				// editing (editing keeps the raw, editable source).
+				embedMermaidEngine: parent.renderMermaid && !parent.isEditable)
 			webView.loadHTMLString(html, baseURL: parent.baseURL)
 		}
 

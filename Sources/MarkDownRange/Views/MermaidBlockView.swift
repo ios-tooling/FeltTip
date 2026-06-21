@@ -179,9 +179,21 @@ struct MermaidWebView: NSViewRepresentable {
 
 public enum MermaidResources: Sendable {
 	nonisolated(unsafe) private static var cachedTemplate: String?
+	nonisolated(unsafe) private static var cachedEngineJS: String?
 
 	public static func html(for code: String, theme: String) -> String? {
 		loadTemplate()
+	}
+
+	/// The raw bundled `mermaid.min.js`, cached. Used by the HTML viewer
+	/// (`MarkdownWebView`) to inject the engine into an already-rendered
+	/// document so its mermaid code blocks render as diagrams.
+	public static var engineJS: String? {
+		if let cachedEngineJS { return cachedEngineJS }
+		guard let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil) else { return nil }
+		guard let js = try? String(contentsOf: resourceURL.appendingPathComponent("mermaid.min.js")) else { return nil }
+		cachedEngineJS = js
+		return js
 	}
 
 	private static func loadTemplate() -> String? {

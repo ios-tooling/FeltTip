@@ -47,7 +47,8 @@ public enum MarkdownHTMLRenderer {
 		fontSize: CGFloat = 16,
 		options: MarkdownOptions = .default,
 		includeSourceOffsets: Bool = false,
-		interactiveCheckboxes: Bool = false
+		interactiveCheckboxes: Bool = false,
+		embedMermaidEngine: Bool = false
 	) -> String {
 		// Editable rendering tracks source offsets through preprocessing so the
 		// `data-s` offsets address the caller's text while highlight/smart
@@ -58,6 +59,7 @@ public enum MarkdownHTMLRenderer {
 		let body = $emitSourceOffsets.withValue(includeSourceOffsets) {
 			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) { renderBlocks(blocks) }
 		}
+		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme) : ""
 		return """
 		<!DOCTYPE html>
 		<html>
@@ -68,8 +70,40 @@ public enum MarkdownHTMLRenderer {
 		</head>
 		<body>
 		\(body)
+		\(mermaid)
 		</body>
 		</html>
 		"""
+	}
+
+	/// Inline `<script>` block that bundles the mermaid engine and renders the
+	/// document's mermaid code blocks as diagrams. Embedded directly in the HTML
+	/// (rather than injected post-load) so it runs everywhere the document is
+	/// shown — including the QuickLook extension, whose WKWebView doesn't run
+	/// `evaluateJavaScript`/`didFinish` injections reliably. Empty when there are
+	/// no mermaid blocks (keeps the ~3 MB engine off ordinary documents).
+	private static func mermaidEmbed(forBody body: String, theme: MarkdownTheme) -> String {
+		#if os(macOS)
+		guard body.contains("language-mermaid"), let engine = MermaidResources.engineJS else { return "" }
+		return """
+		<script>\(engine)</script>
+		<script>
+		(function () {
+		  document.querySelectorAll('pre > code.language-mermaid').forEach(function (code) {
+		    var div = document.createElement('div');
+		    div.className = 'mermaid';
+		    div.textContent = code.textContent;
+		    code.parentElement.replaceWith(div);
+		  });
+		  try {
+		    mermaid.initialize({ startOnLoad: false, theme: '\(theme.mermaidTheme)', securityLevel: 'strict', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif' });
+		    mermaid.run({ querySelector: '.mermaid' });
+		  } catch (e) {}
+		})();
+		</script>
+		"""
+		#else
+		return ""
+		#endif
 	}
 }
