@@ -2,6 +2,17 @@ import Testing
 @testable import MarkDownRange
 
 @Suite struct TaskListTests {
+	@Test func htmlCheckboxesAreDisabledUnlessInteractive() {
+		let md = "- [ ] task"
+		let staticHTML = MarkdownHTMLRenderer.renderDocument(markdown: md, interactiveCheckboxes: false)
+		#expect(staticHTML.contains("disabled"))
+		#expect(!staticHTML.contains("data-cb"))
+
+		let interactiveHTML = MarkdownHTMLRenderer.renderDocument(markdown: md, interactiveCheckboxes: true)
+		#expect(interactiveHTML.contains("data-cb"))
+		#expect(!interactiveHTML.contains("disabled"))
+	}
+
 	@Test func parsesCheckedItem() {
 		let blocks = MarkdownBlockParser.parse("- [x] Done task")
 		guard case .unorderedList(let items, _) = blocks.first else {
