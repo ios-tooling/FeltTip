@@ -49,9 +49,14 @@ public final class MarkdownAttachmentSizeCache {
 		switch block {
 		case .codeBlock(let code, let lang, _):
 			let lineCount = code.split(separator: "\n", omittingEmptySubsequences: false).count
-			return "code|\(lang ?? "")|\(lineCount)"
+			// Hash the content, not just the shape: two blocks with the same line
+			// count can still wrap to different heights, so keying on shape alone
+			// lets a taller block reuse a shorter one's cached height and clip.
+			return "code|\(lang ?? "")|\(lineCount)|\(code.hashValue)"
 		case .table(let header, let rows, _, _):
-			return "table|cols=\(header.count)|rows=\(rows.count)"
+			// Same reasoning as code blocks: tables with the same row/column count
+			// can wrap to different heights depending on their cell text.
+			return "table|cols=\(header.count)|rows=\(rows.count)|\(tableContentHash(header, rows))"
 		case .frontmatter(let pairs, _):
 			return "frontmatter|count=\(pairs.count)"
 		case .image, .imageRow, .figure, .htmlBlock, .details, .alert:
@@ -61,6 +66,21 @@ public final class MarkdownAttachmentSizeCache {
 		default:
 			return nil
 		}
+	}
+
+	/// Per-process content fingerprint of a table's cells, so two tables of the
+	/// same shape but different text don't share a cached height.
+	private static func tableContentHash(_ header: [TableCell], _ rows: [[TableCell]]) -> Int {
+		var hasher = Hasher()
+		func combine(_ cell: TableCell) {
+			switch cell {
+			case .text(let str): hasher.combine(String(str.characters))
+			case .image(let source, _, _, _, _): hasher.combine(source)
+			}
+		}
+		header.forEach(combine)
+		for row in rows { row.forEach(combine) }
+		return hasher.finalize()
 	}
 }
 #endif
