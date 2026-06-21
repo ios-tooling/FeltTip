@@ -19,10 +19,11 @@ extension MarkdownHTMLRenderer {
 
 		case .codeBlock(let code, let language, _):
 			let isMermaid = language?.lowercased() == "mermaid"
-			// Export pre-renders mermaid to a self-contained inline SVG; emit that
-			// instead of the raw source so the diagram shows everywhere.
-			if isMermaid, let svg = prerenderedMermaidSVGs[code] {
-				return "<div class=\"mermaid-diagram\">\(svg)</div>"
+			// Export pre-renders mermaid to self-contained diagram markup (inline
+			// SVG, or an <img> for DOCX/rich text); emit that instead of the raw
+			// source so the diagram shows everywhere.
+			if isMermaid, let diagram = prerenderedMermaidDiagrams[code] {
+				return "<div class=\"mermaid-diagram\">\(diagram)</div>"
 			}
 			let classAttr = language.map { " class=\"language-\(escape($0))\"" } ?? ""
 			// Syntax-highlight server-side so the webview / QuickLook / export

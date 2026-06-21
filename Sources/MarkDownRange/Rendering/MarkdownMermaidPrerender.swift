@@ -12,17 +12,33 @@ import Foundation
 public enum MarkdownMermaidPrerender {
 	/// Parses `markdown`, renders its mermaid blocks to inline SVG, and returns a
 	/// `source → svg` map suitable for `MarkdownHTMLRenderer.renderDocument(…,
-	/// mermaidSVGs:)`. Empty when there are no mermaid blocks (or off macOS).
+	/// mermaidDiagrams:)`. Use for HTML/PDF export. Empty when there are no
+	/// mermaid blocks (or off macOS).
 	@MainActor
 	public static func svgMap(markdown: String, theme: MarkdownTheme = .default, fontSize: CGFloat = 16) async -> [String: String] {
 		#if os(macOS)
-		let blocks = MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize)
-		let sources = mermaidSources(in: blocks)
+		let sources = sources(in: markdown, theme: theme, fontSize: fontSize)
 		guard !sources.isEmpty else { return [:] }
 		return await MermaidSVGRenderer().renderSVGs(for: sources, theme: theme.mermaidTheme)
 		#else
 		return [:]
 		#endif
+	}
+
+	#if os(macOS)
+	/// Maps each mermaid source to a rendered diagram (PNG + size). Use for the
+	/// DOCX / rich-text paths, which embed a native `NSTextAttachment` — their
+	/// `NSAttributedString` HTML import can't carry inline SVG or `data:` images.
+	@MainActor
+	public static func imageMap(markdown: String, theme: MarkdownTheme = .default, fontSize: CGFloat = 16) async -> [String: RenderedDiagram] {
+		let sources = sources(in: markdown, theme: theme, fontSize: fontSize)
+		guard !sources.isEmpty else { return [:] }
+		return await MermaidSVGRenderer().renderImages(for: sources, theme: theme.mermaidTheme)
+	}
+	#endif
+
+	private static func sources(in markdown: String, theme: MarkdownTheme, fontSize: CGFloat) -> [String] {
+		mermaidSources(in: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize))
 	}
 
 	/// Collects every mermaid code-block source in the tree, recursing into the

@@ -13,7 +13,7 @@ import Testing
 
 	@Test func substitutesPrerenderedSVGForMermaidBlock() {
 		let svg = "<svg id=\"diagram\"><g>fake</g></svg>"
-		let html = MarkdownHTMLRenderer.renderDocument(markdown: mermaidDoc, mermaidSVGs: svgMap(svg))
+		let html = MarkdownHTMLRenderer.renderDocument(markdown: mermaidDoc, mermaidDiagrams: svgMap(svg))
 		// The diagram is embedded inline...
 		#expect(html.contains(svg))
 		#expect(html.contains("class=\"mermaid-diagram\""))
