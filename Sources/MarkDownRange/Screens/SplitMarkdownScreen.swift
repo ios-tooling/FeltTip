@@ -24,7 +24,6 @@ public struct SplitMarkdownScreen: View {
 	@State private var scrollSource: ScrollSource = .none
 	@State private var lockoutTask: Task<Void, Never>?
 	@State private var didRestoreScroll = false
-	@State private var highlightedSectionID: String?
 	/// Bumped each time the raw pane drives the scroll, so the token-gated
 	/// `scrollTarget` on the native preview re-applies the latest fraction.
 	@State private var previewScrollToken = 0
@@ -76,8 +75,6 @@ public struct SplitMarkdownScreen: View {
 				theme: theme,
 				onCursorPositionChanged: { line, col, sel, charOffset in
 					onCursorPositionChanged?(line, col, sel, charOffset)
-					let heading = MarkdownHeading.heading(atCharacterOffset: charOffset, in: text)
-					highlightedSectionID = heading?.id ?? "preamble"
 				},
 				scrollToCharacterOffset: nil
 			)
