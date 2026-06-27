@@ -16,6 +16,7 @@
 
 #if os(macOS)
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 public struct MarkdownWebView: NSViewRepresentable {
@@ -71,9 +72,16 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Custom scheme the page loads under so relative local-image paths resolve
+	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
+	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
+	/// scheme handler is the supported way to show local images.
+	static let resourceScheme = "markerlocalres"
+
 	public func makeNSView(context: Context) -> WKWebView {
 		let config = WKWebViewConfiguration()
 		config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "mdedit")
+		config.setURLSchemeHandler(LocalResourceSchemeHandler(), forURLScheme: Self.resourceScheme)
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = context.coordinator
 		webView.setValue(false, forKey: "drawsBackground")
@@ -137,7 +145,22 @@ public struct MarkdownWebView: NSViewRepresentable {
 				// Render mermaid as diagrams when the host opted in and we're not
 				// editing (editing keeps the raw, editable source).
 				embedMermaidEngine: parent.renderMermaid && !parent.isEditable)
-			webView.loadHTMLString(html, baseURL: parent.baseURL)
+			// Load under the custom resource scheme (when we have a document
+			// folder) so relative <img> paths resolve to the scheme handler,
+			// which can actually read local files — WKWebView won't load
+			// file:// subresources of an loadHTMLString page.
+			webView.loadHTMLString(html, baseURL: resourceBaseURL(for: parent.baseURL) ?? parent.baseURL)
+		}
+
+		/// A `markerlocalres://res/<folder-path>/` base URL so relative image
+		/// paths resolve to the scheme handler. Nil when there's no file folder.
+		private func resourceBaseURL(for fileURL: URL?) -> URL? {
+			guard let folder = fileURL, folder.isFileURL else { return nil }
+			var components = URLComponents()
+			components.scheme = MarkdownWebView.resourceScheme
+			components.host = "res"
+			components.path = folder.path.hasSuffix("/") ? folder.path : folder.path + "/"
+			return components.url
 		}
 
 		// MARK: Navigation
@@ -179,12 +202,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 		}
 
 		private func open(_ url: URL) {
-			if url.isFileURL, Self.markdownExtensions.contains(url.pathExtension.lowercased()) {
-				NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { document, _, _ in
-					if document == nil { NSWorkspace.shared.open(url) }
+			// Links resolve against the custom resource-scheme base; map them back
+			// to real file URLs before opening.
+			let resolved = url.scheme == MarkdownWebView.resourceScheme ? URL(fileURLWithPath: url.path) : url
+			if resolved.isFileURL, Self.markdownExtensions.contains(resolved.pathExtension.lowercased()) {
+				NSDocumentController.shared.openDocument(withContentsOf: resolved, display: true) { document, _, _ in
+					if document == nil { NSWorkspace.shared.open(resolved) }
 				}
 			} else {
-				NSWorkspace.shared.open(url)
+				NSWorkspace.shared.open(resolved)
 			}
 		}
 
@@ -264,6 +290,29 @@ public struct MarkdownWebView: NSViewRepresentable {
 			"\"\(s.replacingOccurrences(of: "\n", with: "\\n"))\""
 		}
 	}
+}
+
+/// Serves local files referenced by the rendered page (images, etc.) under the
+/// custom resource scheme. The request URL's path is the real filesystem path,
+/// so we read the bytes directly — the way to show local images in a
+/// `loadHTMLString` page, which WKWebView won't let load `file://` subresources.
+private final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+	func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+		guard let url = task.request.url else {
+			task.didFailWithError(URLError(.badURL)); return
+		}
+		let fileURL = URL(fileURLWithPath: url.path)
+		guard let data = try? Data(contentsOf: fileURL) else {
+			task.didFailWithError(URLError(.fileDoesNotExist)); return
+		}
+		let mimeType = UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+		let response = URLResponse(url: url, mimeType: mimeType, expectedContentLength: data.count, textEncodingName: nil)
+		task.didReceive(response)
+		task.didReceive(data)
+		task.didFinish()
+	}
+
+	func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
 /// Breaks the WKUserContentController → handler retain cycle (the controller
