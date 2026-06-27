@@ -32,6 +32,13 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// extension's sandbox can't load a payload that large (it crashes the
 	/// preview), so only the in-app web renderer opts in.
 	var renderMermaid = false
+	/// Called when a local resource (e.g. an image) couldn't be read because the
+	/// sandbox hasn't granted access to its folder. The host uses this to offer
+	/// the user a folder-access grant.
+	var onResourceAccessDenied: (() -> Void)?
+	/// Bumping this forces a reload even when nothing else changed — used after
+	/// the host grants folder access so blocked images re-fetch.
+	var contentReloadToken = 0
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -72,6 +79,20 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Called when a local resource couldn't be read for lack of sandbox access.
+	public func onResourceAccessDenied(_ callback: @escaping () -> Void) -> Self {
+		var copy = self
+		copy.onResourceAccessDenied = callback
+		return copy
+	}
+
+	/// Force a reload (e.g. after the host grants folder access) by bumping this.
+	public func contentReloadToken(_ token: Int) -> Self {
+		var copy = self
+		copy.contentReloadToken = token
+		return copy
+	}
+
 	/// Custom scheme the page loads under so relative local-image paths resolve
 	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
 	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
@@ -81,7 +102,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func makeNSView(context: Context) -> WKWebView {
 		let config = WKWebViewConfiguration()
 		config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "mdedit")
-		config.setURLSchemeHandler(LocalResourceSchemeHandler(), forURLScheme: Self.resourceScheme)
+		config.setURLSchemeHandler(LocalResourceSchemeHandler(coordinator: context.coordinator), forURLScheme: Self.resourceScheme)
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = context.coordinator
 		webView.setValue(false, forKey: "drawsBackground")
@@ -124,7 +145,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 		}
 
 		private func renderKey(text: String) -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(text.hashValue)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)|\(text.hashValue)"
 		}
 
 		func load(into webView: WKWebView) {
@@ -216,6 +237,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 
 		private static let markdownExtensions: Set<String> = MarkdownLinkExtensions.all
 
+		/// The scheme handler couldn't read a local file (sandbox). Surface it so
+		/// the host can offer a folder-access grant.
+		func reportResourceAccessDenied() {
+			parent.onResourceAccessDenied?()
+		}
+
 		// MARK: Edit bridge
 
 		public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -297,13 +324,23 @@ public struct MarkdownWebView: NSViewRepresentable {
 /// so we read the bytes directly — the way to show local images in a
 /// `loadHTMLString` page, which WKWebView won't let load `file://` subresources.
 private final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+	weak var coordinator: MarkdownWebView.Coordinator?
+
+	init(coordinator: MarkdownWebView.Coordinator?) {
+		self.coordinator = coordinator
+		super.init()
+	}
+
 	func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
 		guard let url = task.request.url else {
 			task.didFailWithError(URLError(.badURL)); return
 		}
 		let fileURL = URL(fileURLWithPath: url.path)
 		guard let data = try? Data(contentsOf: fileURL) else {
-			task.didFailWithError(URLError(.fileDoesNotExist)); return
+			task.didFailWithError(URLError(.noPermissionsToReadFile))
+			let coordinator = coordinator
+			Task { @MainActor in coordinator?.reportResourceAccessDenied() }
+			return
 		}
 		let mimeType = UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
 		let response = URLResponse(url: url, mimeType: mimeType, expectedContentLength: data.count, textEncodingName: nil)
