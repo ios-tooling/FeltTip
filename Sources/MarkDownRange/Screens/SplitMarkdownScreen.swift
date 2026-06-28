@@ -87,6 +87,8 @@ public struct SplitMarkdownScreen: View {
 			// the split-mode crash. Scroll sync is driven via scrollTarget
 			// (incoming) and onScrollFractionChanged (outgoing).
 			MarkdownTextView(text: text, theme: theme, fontSize: fontSize)
+				.editable(true)
+				.onSourceEdit { text = $0 }
 				.selectedHeading($selectedHeadingID)
 				.initialScrollFraction(initialScrollFraction)
 				.scrollTarget(scrollSource == .raw

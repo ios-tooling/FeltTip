@@ -231,6 +231,50 @@ import AppKit
 		#expect(textView.string == "The alpha insertion target SMOKE-A sits here.")
 	}
 
+	@Test func editableTextViewKeepsFollowingSourceOffsetsAfterLengthChangingReplacement() {
+		var editedSource = """
+		# Split Default Editing
+
+		This paragraph contains raw target for the source pane.
+
+		## Styled Section
+
+		This part contains styled target for the rendered pane.
+		"""
+		let parent = MarkdownTextView(text: editedSource, theme: .default, fontSize: 16)
+			.editable(true)
+			.onSourceEdit { editedSource = $0 }
+		let coordinator = MarkdownTextView.Coordinator(parent: parent)
+		let paragraph = "This part contains styled target for the rendered pane."
+		let paragraphSourceOffset = (editedSource as NSString).range(of: paragraph).location
+		let textView = NSTextView()
+		textView.textStorage?.setAttributedString(NSAttributedString(
+			string: paragraph,
+			attributes: [.markdownSourceOffset: paragraphSourceOffset]
+		))
+
+		let partRange = (paragraph as NSString).range(of: "part")
+		let replacementAllowed = coordinator.textView(
+			textView,
+			shouldChangeTextInRanges: [NSValue(range: partRange)],
+			replacementStrings: ["section"]
+		)
+
+		#expect(!replacementAllowed)
+		#expect(editedSource.contains("This section contains styled target for the rendered pane."))
+
+		let insertionPoint = (textView.string as NSString).range(of: ".").location
+		let insertionAllowed = coordinator.textView(
+			textView,
+			shouldChangeTextInRanges: [NSValue(range: NSRange(location: insertionPoint, length: 0))],
+			replacementStrings: [" with extra detail"]
+		)
+
+		#expect(!insertionAllowed)
+		#expect(editedSource.contains("This section contains styled target for the rendered pane with extra detail."))
+		#expect(textView.string == "This section contains styled target for the rendered pane with extra detail.")
+	}
+
 	@Test func editableTextViewMapsReplacementEndingAtInlineStyleBoundary() {
 		var editedSource: String?
 		let parent = MarkdownTextView(text: "a **bold** b", theme: .default, fontSize: 16)

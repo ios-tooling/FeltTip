@@ -1123,6 +1123,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 				NSSound.beep()
 				return false
 			}
+			let affected = affectedRanges[0].rangeValue
 			let sourceText = editableSourceText ?? parent.text
 			let newSource = (sourceText as NSString).replacingCharacters(in: sourceRange, with: replacement)
 			editableSourceText = newSource
@@ -1131,7 +1132,20 @@ public struct MarkdownTextView: NSViewRepresentable {
 			// source leaves newly typed text with stale source-offset attributes,
 			// so subsequent keystrokes in the same typing run can map to the
 			// wrong source location.
-			applyVisibleEdit(affectedRanges[0].rangeValue, replacement: replacement, sourceStart: sourceRange.location, in: textView)
+			let replacementLength = (replacement as NSString).length
+			let offsetUpdates = sourceOffsetUpdatesAfterEdit(
+				affected,
+				replacementLength: replacementLength,
+				sourceDelta: replacementLength - sourceRange.length,
+				in: storage
+			)
+			applyVisibleEdit(
+				affected,
+				replacement: replacement,
+				sourceStart: sourceRange.location,
+				offsetUpdates: offsetUpdates,
+				in: textView
+			)
 			// Pin the render key to the new source — otherwise the session.text
 			// update would trigger a full rebuild that tears down attachments and
 			// jumps the caret even though the visible storage is already current.
@@ -1196,7 +1210,24 @@ public struct MarkdownTextView: NSViewRepresentable {
 			return sourceLocation(forRenderedIndex: index, in: storage)
 		}
 
-		private func applyVisibleEdit(_ affected: NSRange, replacement: String, sourceStart: Int, in textView: NSTextView) {
+		private func sourceOffsetUpdatesAfterEdit(_ affected: NSRange, replacementLength: Int, sourceDelta: Int, in storage: NSTextStorage) -> [(NSRange, Int)] {
+			let suffixStart = NSMaxRange(affected)
+			guard suffixStart < storage.length else { return [] }
+			let visibleDelta = replacementLength - affected.length
+			let range = NSRange(location: suffixStart, length: storage.length - suffixStart)
+			var updates: [(NSRange, Int)] = []
+			storage.enumerateAttribute(.markdownSourceOffset, in: range) { value, attributeRange, _ in
+				guard let offset = value as? Int else { return }
+				var effective = NSRange()
+				_ = storage.attribute(.markdownSourceOffset, at: attributeRange.location, effectiveRange: &effective)
+				let sourceAtRangeStart = offset + (attributeRange.location - effective.location) + sourceDelta
+				let newRange = NSRange(location: attributeRange.location + visibleDelta, length: attributeRange.length)
+				updates.append((newRange, sourceAtRangeStart))
+			}
+			return updates
+		}
+
+		private func applyVisibleEdit(_ affected: NSRange, replacement: String, sourceStart: Int, offsetUpdates: [(NSRange, Int)], in textView: NSTextView) {
 			guard let storage = textView.textStorage,
 				  affected.location <= storage.length,
 				  NSMaxRange(affected) <= storage.length else { return }
@@ -1207,6 +1238,9 @@ public struct MarkdownTextView: NSViewRepresentable {
 			}
 			let visibleReplacement = NSAttributedString(string: replacement, attributes: attributes)
 			storage.replaceCharacters(in: affected, with: visibleReplacement)
+			for (range, offset) in offsetUpdates where NSMaxRange(range) <= storage.length {
+				storage.addAttribute(.markdownSourceOffset, value: offset, range: range)
+			}
 			textView.setSelectedRange(NSRange(location: affected.location + replacementLength, length: 0))
 			textView.didChangeText()
 		}
