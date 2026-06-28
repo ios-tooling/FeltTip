@@ -197,8 +197,87 @@ import AppKit
 			replacementStrings: ["there"]
 		)
 
-		#expect(allowed)
+		#expect(!allowed)
 		#expect(editedSource == "hello there")
+		#expect(textView.string == "hello there")
+	}
+
+	@Test func editableTextViewMapsSequentialTypedReplacementBackToSource() {
+		var editedSource = "The alpha insertion target sits here."
+		let replacement = "alpha insertion target SMOKE-A"
+		let parent = MarkdownTextView(text: editedSource, theme: .default, fontSize: 16)
+			.editable(true)
+			.onSourceEdit { editedSource = $0 }
+		let coordinator = MarkdownTextView.Coordinator(parent: parent)
+		let textView = NSTextView()
+		textView.textStorage?.setAttributedString(NSAttributedString(
+			string: "The alpha insertion target sits here.",
+			attributes: [.markdownSourceOffset: 0]
+		))
+		var affected = NSRange(location: "The ".utf16.count, length: "alpha insertion target".utf16.count)
+
+		for scalar in replacement.unicodeScalars {
+			let string = String(scalar)
+			let allowed = coordinator.textView(
+				textView,
+				shouldChangeTextInRanges: [NSValue(range: affected)],
+				replacementStrings: [string]
+			)
+			#expect(!allowed)
+			affected = NSRange(location: affected.location + string.utf16.count, length: 0)
+		}
+
+		#expect(editedSource == "The alpha insertion target SMOKE-A sits here.")
+		#expect(textView.string == "The alpha insertion target SMOKE-A sits here.")
+	}
+
+	@Test func editableTextViewMapsReplacementEndingAtInlineStyleBoundary() {
+		var editedSource: String?
+		let parent = MarkdownTextView(text: "a **bold** b", theme: .default, fontSize: 16)
+			.editable(true)
+			.onSourceEdit { editedSource = $0 }
+		let coordinator = MarkdownTextView.Coordinator(parent: parent)
+		let storage = NSMutableAttributedString(string: "a bold b")
+		storage.addAttribute(.markdownSourceOffset, value: 0, range: NSRange(location: 0, length: 2))
+		storage.addAttribute(.markdownSourceOffset, value: 4, range: NSRange(location: 2, length: 4))
+		storage.addAttribute(.markdownSourceOffset, value: 10, range: NSRange(location: 6, length: 2))
+		let textView = NSTextView()
+		textView.textStorage?.setAttributedString(storage)
+
+		let allowed = coordinator.textView(
+			textView,
+			shouldChangeTextInRanges: [NSValue(range: NSRange(location: 2, length: 4))],
+			replacementStrings: ["strong"]
+		)
+
+		#expect(!allowed)
+		#expect(editedSource == "a **strong** b")
+		#expect(textView.string == "a strong b")
+	}
+
+	@Test func editableTextViewMapsReplacementInsideLinkLabelOnly() {
+		var editedSource: String?
+		let source = "Visit [Marker documentation](https://example.com/marker-docs) today."
+		let parent = MarkdownTextView(text: source, theme: .default, fontSize: 16)
+			.editable(true)
+			.onSourceEdit { editedSource = $0 }
+		let coordinator = MarkdownTextView.Coordinator(parent: parent)
+		let storage = NSMutableAttributedString(string: "Visit Marker documentation today.")
+		storage.addAttribute(.markdownSourceOffset, value: 0, range: NSRange(location: 0, length: 6))
+		storage.addAttribute(.markdownSourceOffset, value: 7, range: NSRange(location: 6, length: 20))
+		storage.addAttribute(.markdownSourceOffset, value: 55, range: NSRange(location: 26, length: 7))
+		let textView = NSTextView()
+		textView.textStorage?.setAttributedString(storage)
+
+		let allowed = coordinator.textView(
+			textView,
+			shouldChangeTextInRanges: [NSValue(range: NSRange(location: 6, length: 20))],
+			replacementStrings: ["Marker documentation SMOKE-LINK"]
+		)
+
+		#expect(!allowed)
+		#expect(editedSource == "Visit [Marker documentation SMOKE-LINK](https://example.com/marker-docs) today.")
+		#expect(textView.string == "Visit Marker documentation SMOKE-LINK today.")
 	}
 
 	@Test func editableTextViewRejectsReplacementThatCrossesMarkdownSyntax() {

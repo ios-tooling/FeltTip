@@ -312,6 +312,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		private var pendingScrollReport = false
 		private var pendingScrollReportForce = false
 		private var lastScrollReportMetrics: ScrollReportMetrics?
+		private var editableSourceText: String?
 		private static let scrollReportPixelThreshold: CGFloat = 0.5
 		/// Whether `parent.initialScrollFraction` has been consumed — it's a
 		/// one-shot restore applied after the first render lays the doc out.
@@ -557,6 +558,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 			renderTask?.cancel()
 			let editable = parent.isEditable
 			let text = parent.text
+			editableSourceText = editable ? text : nil
 			let theme = parent.theme
 			let fontSize = parent.fontSize
 			let baseURL = parent.baseURL
@@ -1121,26 +1123,35 @@ public struct MarkdownTextView: NSViewRepresentable {
 				NSSound.beep()
 				return false
 			}
-			let newSource = (parent.text as NSString).replacingCharacters(in: sourceRange, with: replacement)
-			// We're about to let AppKit apply the identical change to the visible
-			// storage, so pin the render key to the new source — otherwise the
-			// session.text update would trigger a full rebuild that tears down
-			// attachments and jumps the caret.
+			let sourceText = editableSourceText ?? parent.text
+			let newSource = (sourceText as NSString).replacingCharacters(in: sourceRange, with: replacement)
+			editableSourceText = newSource
+			// Apply the visible edit ourselves and return false. Letting AppKit
+			// mutate the rich text while SwiftUI publishes the new Markdown
+			// source leaves newly typed text with stale source-offset attributes,
+			// so subsequent keystrokes in the same typing run can map to the
+			// wrong source location.
+			applyVisibleEdit(affectedRanges[0].rangeValue, replacement: replacement, sourceStart: sourceRange.location, in: textView)
+			// Pin the render key to the new source — otherwise the session.text
+			// update would trigger a full rebuild that tears down attachments and
+			// jumps the caret even though the visible storage is already current.
 			lastRenderKey = RenderKey(text: newSource, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken, editable: true)
 			onSourceEdit(newSource)
-			return true
+			return false
 		}
 
 		/// Map a rendered character range to the matching range in the Markdown
 		/// source, or nil when the mapping isn't safe to apply.
 		private func sourceRange(for affected: NSRange, in storage: NSTextStorage) -> NSRange? {
-			let nsSource = parent.text as NSString
+			let nsSource = (editableSourceText ?? parent.text) as NSString
+			if affected.length == 0 {
+				guard let start = insertionSourceLocation(forRenderedIndex: affected.location, in: storage),
+					  start <= nsSource.length else { return nil }
+				return NSRange(location: start, length: 0)
+			}
 			guard let start = sourceLocation(forRenderedIndex: affected.location, in: storage),
 				  start <= nsSource.length else { return nil }
-			// Pure insertion: a valid insertion point is enough; there's no
-			// existing source text to verify against.
-			guard affected.length > 0 else { return NSRange(location: start, length: 0) }
-			guard let end = sourceLocation(forRenderedIndex: NSMaxRange(affected), in: storage),
+			guard let end = insertionSourceLocation(forRenderedIndex: NSMaxRange(affected), in: storage),
 				  end >= start, end <= nsSource.length else { return nil }
 			let srcRange = NSRange(location: start, length: end - start)
 			// Only delete/replace where the source characters are exactly the
@@ -1161,7 +1172,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		/// (e.g. a leading attachment), which the caller rejects.
 		private func sourceLocation(forRenderedIndex index: Int, in storage: NSTextStorage) -> Int? {
 			guard storage.length > 0 else { return index == 0 ? 0 : nil }
-			let sourceLength = (parent.text as NSString).length
+			let sourceLength = ((editableSourceText ?? parent.text) as NSString).length
 			var probe = min(index, storage.length - 1)
 			while probe >= 0 {
 				var effective = NSRange()
@@ -1171,6 +1182,33 @@ public struct MarkdownTextView: NSViewRepresentable {
 				probe -= 1
 			}
 			return nil
+		}
+
+		private func insertionSourceLocation(forRenderedIndex index: Int, in storage: NSTextStorage) -> Int? {
+			guard storage.length > 0 else { return index == 0 ? 0 : nil }
+			let sourceLength = ((editableSourceText ?? parent.text) as NSString).length
+			if index > 0 {
+				var effective = NSRange()
+				if let offset = storage.attribute(.markdownSourceOffset, at: index - 1, effectiveRange: &effective) as? Int {
+					return min(max(offset + (index - effective.location), 0), sourceLength)
+				}
+			}
+			return sourceLocation(forRenderedIndex: index, in: storage)
+		}
+
+		private func applyVisibleEdit(_ affected: NSRange, replacement: String, sourceStart: Int, in textView: NSTextView) {
+			guard let storage = textView.textStorage,
+				  affected.location <= storage.length,
+				  NSMaxRange(affected) <= storage.length else { return }
+			var attributes = textView.typingAttributes
+			let replacementLength = (replacement as NSString).length
+			if replacementLength > 0 {
+				attributes[.markdownSourceOffset] = sourceStart
+			}
+			let visibleReplacement = NSAttributedString(string: replacement, attributes: attributes)
+			storage.replaceCharacters(in: affected, with: visibleReplacement)
+			textView.setSelectedRange(NSRange(location: affected.location + replacementLength, length: 0))
+			textView.didChangeText()
 		}
 
 		/// Resolve the link at `index`, count how many earlier links share its
