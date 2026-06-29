@@ -39,6 +39,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// Bumping this forces a reload even when nothing else changed — used after
 	/// the host grants folder access so blocked images re-fetch.
 	var contentReloadToken = 0
+	/// Reports the page's scroll position (top/visible/content fractions, matching
+	/// `MarkdownTextView`'s semantics) so a host can drive synced scrolling.
+	var onScrollFractionChanged: (@MainActor @Sendable (CGFloat, CGFloat, CGFloat) -> Void)?
+	/// Drive the page so `topFraction` sits at the viewport center; token-gated.
+	var scrollTarget: MarkdownScrollTarget?
+	/// Apply a relative pixel scroll from outside; token-gated.
+	var scrollDelta: MarkdownScrollDelta?
+	/// Apply this fraction (0…1 of scrollable height) once, after the first render.
+	var initialScrollFraction: Double?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -93,6 +102,37 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Subscribe to scroll-viewport changes (top/visible/content fractions),
+	/// matching `MarkdownTextView.onScrollFractionChanged` so the two can be
+	/// synced against each other in a split.
+	public func onScrollFractionChanged(_ callback: @escaping @MainActor @Sendable (CGFloat, CGFloat, CGFloat) -> Void) -> Self {
+		var copy = self
+		copy.onScrollFractionChanged = callback
+		return copy
+	}
+
+	/// Drive the page's scroll position from outside (e.g. a synced source pane).
+	/// Bumping the target's `token` triggers the scroll; same token is ignored.
+	public func scrollTarget(_ target: MarkdownScrollTarget?) -> Self {
+		var copy = self
+		copy.scrollTarget = target
+		return copy
+	}
+
+	/// Apply a relative pixel scroll delta from outside (token-gated).
+	public func scrollDelta(_ delta: MarkdownScrollDelta?) -> Self {
+		var copy = self
+		copy.scrollDelta = delta
+		return copy
+	}
+
+	/// Apply `fraction` (0…1 of scrollable height) once, after the first render.
+	public func initialScrollFraction(_ fraction: Double?) -> Self {
+		var copy = self
+		copy.initialScrollFraction = fraction
+		return copy
+	}
+
 	/// Custom scheme the page loads under so relative local-image paths resolve
 	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
 	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
@@ -113,6 +153,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func updateNSView(_ webView: WKWebView, context: Context) {
 		context.coordinator.parent = self
 		context.coordinator.load(into: webView)
+		context.coordinator.applyScrollControls(to: webView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -137,6 +178,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 		/// edit so rapid edits chain off the right base — `parent.text` lags
 		/// because the SwiftUI round-trip back into `updateNSView` is async.
 		private var currentSource: String?
+		/// Scroll-control tokens already applied, so a state-driven binding that
+		/// survives unrelated re-renders doesn't re-scroll.
+		private var lastScrollTargetToken: Int?
+		private var lastScrollDeltaToken: Int?
+		/// `initialScrollFraction` is applied only once, after the first render.
+		private var didApplyInitialScroll = false
 		/// Flip to true to log the edit bridge to the console.
 		static let debugEditing = false
 
@@ -190,15 +237,34 @@ public struct MarkdownWebView: NSViewRepresentable {
 			if parent.onCheckboxToggle != nil {
 				webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
 			}
-			guard parent.isEditable else { return }
-			webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
+			// Always install scroll reporting / control, even for a read-only
+			// preview, so a host can sync its scroll position to this view.
+			webView.evaluateJavaScript(Self.scrollSyncScript, completionHandler: nil)
+			if parent.isEditable {
+				webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
+			}
+			// Restore position after a (re)load: a pending caret from a structural
+			// edit wins; then a one-time initial fraction; then the last offset.
 			if let caret = pendingCaret {
 				pendingCaret = nil
-				// The caret placement scrolls it into view, so it supersedes
-				// scroll restoration after a structural edit.
 				webView.evaluateJavaScript("window.__mdPlaceCaret && window.__mdPlaceCaret(\(caret));", completionHandler: nil)
+			} else if !didApplyInitialScroll, let initial = parent.initialScrollFraction {
+				didApplyInitialScroll = true
+				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(initial));", completionHandler: nil)
 			} else if lastScrollY > 0 {
 				webView.evaluateJavaScript("window.scrollTo(0, \(lastScrollY));", completionHandler: nil)
+			}
+		}
+
+		/// Apply token-gated scroll controls (target/delta) from the host.
+		func applyScrollControls(to webView: WKWebView) {
+			if let target = parent.scrollTarget, target.token != lastScrollTargetToken {
+				lastScrollTargetToken = target.token
+				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(target.topFraction));", completionHandler: nil)
+			}
+			if let delta = parent.scrollDelta, delta.token != lastScrollDeltaToken {
+				lastScrollDeltaToken = delta.token
+				webView.evaluateJavaScript("window.__mdScrollByPixels && window.__mdScrollByPixels(\(delta.deltaY));", completionHandler: nil)
 			}
 		}
 
@@ -247,9 +313,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 
 		public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
 			guard message.name == "mdedit", let body = message.body as? [String: Any] else { return }
-			// Scroll position report — remembered so reloads don't jump to top.
+			// Scroll position report — remembered so reloads don't jump to top, and
+			// forwarded to the host (as top/visible/content fractions) for sync.
 			if body["type"] as? String == "scroll" {
 				if let y = body["y"] as? Double { lastScrollY = y }
+				if let top = body["top"] as? Double,
+				   let visible = body["visible"] as? Double,
+				   let content = body["content"] as? Double {
+					parent.onScrollFractionChanged?(CGFloat(top), CGFloat(visible), CGFloat(content))
+				}
 				return
 			}
 			if body["type"] as? String == "error" {
@@ -535,6 +607,47 @@ extension MarkdownWebView.Coordinator {
 	  window.addEventListener('scroll', function () {
 	    window.webkit.messageHandlers.mdedit.postMessage({ type: 'scroll', y: window.scrollY });
 	  }, { passive: true });
+	})();
+	"""
+
+	/// Installed after every load (editable or not). Reports scroll position as
+	/// top/visible/content fractions — matching MarkdownTextView's semantics so a
+	/// host can sync the two — and exposes scroll-control hooks the coordinator
+	/// calls. Idempotent so repeated injection is harmless.
+	static let scrollSyncScript = """
+	(function () {
+	  if (window.__mdScrollSyncInstalled) { return; }
+	  window.__mdScrollSyncInstalled = true;
+	  function docHeight() {
+	    return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 1);
+	  }
+	  function report() {
+	    var h = docHeight();
+	    var vis = window.innerHeight;
+	    var y = window.scrollY || window.pageYOffset || 0;
+	    var top = Math.max(0, Math.min(1, y / h));
+	    var visible = Math.max(0, Math.min(1, vis / h));
+	    var content = vis > 0 ? Math.min(1, h / vis) : 1;
+	    try {
+	      window.webkit.messageHandlers.mdedit.postMessage({ type: 'scroll', y: y, top: top, visible: visible, content: content });
+	    } catch (e) {}
+	  }
+	  var ticking = false;
+	  window.addEventListener('scroll', function () {
+	    if (ticking) { return; }
+	    ticking = true;
+	    window.requestAnimationFrame(function () { ticking = false; report(); });
+	  }, { passive: true });
+	  window.__mdScrollToFraction = function (f) {
+	    var h = docHeight();
+	    var vis = window.innerHeight;
+	    var maxY = Math.max(h - vis, 0);
+	    var centerY = Math.max(0, Math.min(1, f)) * h;
+	    var y = Math.max(0, Math.min(maxY, centerY - vis / 2));
+	    window.scrollTo(0, y);
+	  };
+	  window.__mdScrollByPixels = function (dy) { window.scrollBy(0, dy); };
+	  report();
 	})();
 	"""
 }
