@@ -1537,10 +1537,29 @@ final class MarkdownTextViewBacking: NSTextView {
 	private var pendingLinkEditIndex: Int?
 	private var hoverTrackingArea: NSTrackingArea?
 	private var lastReportedURL: String?
+	private var findHighlightTimer: Timer?
+	private var lastFindPasteboardChangeCount = -1
+	private var activeFindQuery = ""
+	private var activeFindOptions = StyledFindOptions()
+	private var findHighlightRestorations: [(NSRange, NSColor?)] = []
+
+	deinit {
+		MainActor.assumeIsolated {
+			findHighlightTimer?.invalidate()
+		}
+	}
 
 	override func layout() {
 		super.layout()
 		onDidLayout?()
+	}
+
+	override func performTextFinderAction(_ sender: Any?) {
+		super.performTextFinderAction(sender)
+		startFindHighlightSync()
+		DispatchQueue.main.async { [weak self] in
+			self?.syncFindHighlightsFromPasteboard()
+		}
 	}
 
 	/// Add "Edit Link URL" to the top of the context menu when the click lands
@@ -1568,6 +1587,99 @@ final class MarkdownTextViewBacking: NSTextView {
 	override func drawBackground(in rect: NSRect) {
 		super.drawBackground(in: rect)
 		drawBlockquoteBars(in: rect)
+	}
+
+	private func startFindHighlightSync() {
+		findHighlightTimer?.invalidate()
+		findHighlightTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+			Task { @MainActor in
+				self?.syncFindHighlightsFromPasteboard()
+			}
+		}
+	}
+
+	private func stopFindHighlightSyncIfNeeded() {
+		guard findHighlightTimer != nil,
+			  !isFindBarVisible else { return }
+		findHighlightTimer?.invalidate()
+		findHighlightTimer = nil
+		lastFindPasteboardChangeCount = -1
+		clearFindHighlights()
+	}
+
+	private func syncFindHighlightsFromPasteboard() {
+		defer { stopFindHighlightSyncIfNeeded() }
+		guard isFindBarVisible else { return }
+		let pasteboard = NSPasteboard(name: .find)
+		let changeCount = pasteboard.changeCount
+		let query = pasteboard.string(forType: .string) ?? ""
+		let options = StyledFindOptions(pasteboard: pasteboard)
+		guard changeCount != lastFindPasteboardChangeCount || query != activeFindQuery || options != activeFindOptions else { return }
+		lastFindPasteboardChangeCount = changeCount
+		activeFindQuery = query
+		activeFindOptions = options
+		applyFindHighlights(query: query, options: options)
+	}
+
+	private var isFindBarVisible: Bool {
+		guard let scrollView = enclosingScrollView else { return false }
+		return (scrollView as NSTextFinderBarContainer).isFindBarVisible
+	}
+
+	private func applyFindHighlights(query: String, options: StyledFindOptions) {
+		clearFindHighlights()
+		guard !query.isEmpty,
+			  let storage = textStorage,
+			  storage.length > 0 else { return }
+
+		let text = storage.string as NSString
+		let fullRange = NSRange(location: 0, length: text.length)
+		let ranges = Self.findRanges(of: query, in: text, options: options)
+		guard !ranges.isEmpty else { return }
+
+		var restorations: [(NSRange, NSColor?)] = []
+		for range in ranges {
+			storage.enumerateAttribute(.backgroundColor, in: range.intersection(fullRange) ?? range, options: []) { value, subRange, _ in
+				restorations.append((subRange, value as? NSColor))
+			}
+			storage.addAttribute(.backgroundColor, value: NSColor.findHighlight.withAlphaComponent(0.65), range: range)
+		}
+		findHighlightRestorations = restorations
+		needsDisplay = true
+	}
+
+	private func clearFindHighlights() {
+		guard let storage = textStorage, !findHighlightRestorations.isEmpty else { return }
+		let docRange = NSRange(location: 0, length: storage.length)
+		for (range, color) in findHighlightRestorations {
+			guard let clamped = range.intersection(docRange), clamped.length > 0 else { continue }
+			if let color {
+				storage.addAttribute(.backgroundColor, value: color, range: clamped)
+			} else {
+				storage.removeAttribute(.backgroundColor, range: clamped)
+			}
+		}
+		findHighlightRestorations.removeAll()
+		needsDisplay = true
+	}
+
+	private static func findRanges(of query: String, in text: NSString, options: StyledFindOptions) -> [NSRange] {
+		let fullRange = NSRange(location: 0, length: text.length)
+		var searchStart = 0
+		var ranges: [NSRange] = []
+		var searchOptions: NSString.CompareOptions = []
+		if options.caseInsensitive { searchOptions.insert(.caseInsensitive) }
+
+		while searchStart < text.length {
+			let remaining = NSRange(location: searchStart, length: text.length - searchStart)
+			let found = text.range(of: query, options: searchOptions, range: remaining)
+			guard found.location != NSNotFound, found.length > 0 else { break }
+			if options.matches(found, in: text, fullRange: fullRange) {
+				ranges.append(found)
+			}
+			searchStart = NSMaxRange(found)
+		}
+		return ranges
 	}
 
 	private func drawBlockquoteBars(in rect: NSRect) {
@@ -1657,6 +1769,59 @@ final class MarkdownTextViewBacking: NSTextView {
 		guard lastReportedURL != nil else { return }
 		lastReportedURL = nil
 		onLinkHover?(nil)
+	}
+
+	private struct StyledFindOptions: Equatable {
+		var caseInsensitive = true
+		var matchingType: NSTextFinder.MatchingType = .contains
+
+		init() {}
+
+		init(pasteboard: NSPasteboard) {
+			guard let data = pasteboard.data(forType: .textFinderOptions),
+				  let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+				  let dictionary = plist as? [String: Any] else { return }
+			let caseKey = NSPasteboard.PasteboardType.TextFinderOptionKey.textFinderCaseInsensitiveKey.rawValue
+			let matchingKey = NSPasteboard.PasteboardType.TextFinderOptionKey.textFinderMatchingTypeKey.rawValue
+			if let value = dictionary[caseKey] as? Bool {
+				caseInsensitive = value
+			}
+			if let value = dictionary[matchingKey] as? NSNumber,
+			   let type = NSTextFinder.MatchingType(rawValue: value.intValue) {
+				matchingType = type
+			}
+		}
+
+		func matches(_ range: NSRange, in text: NSString, fullRange: NSRange) -> Bool {
+			switch matchingType {
+			case .contains:
+				return true
+			case .startsWith:
+				return range.location == fullRange.location || isSearchBoundary(before: range.location, in: text)
+			case .endsWith:
+				return NSMaxRange(range) == NSMaxRange(fullRange) || isSearchBoundary(before: NSMaxRange(range), in: text)
+			case .fullWord:
+				let startsOnBoundary = range.location == fullRange.location || isSearchBoundary(before: range.location, in: text)
+				let endsOnBoundary = NSMaxRange(range) == NSMaxRange(fullRange) || isSearchBoundary(before: NSMaxRange(range), in: text)
+				return startsOnBoundary && endsOnBoundary
+			@unknown default:
+				return true
+			}
+		}
+
+		private func isSearchBoundary(before index: Int, in text: NSString) -> Bool {
+			guard index > 0, index < text.length else { return true }
+			let previous = UnicodeScalar(text.character(at: index - 1))
+			let next = UnicodeScalar(text.character(at: index))
+			let wordSet = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+			return !(previous.map(wordSet.contains) ?? false) || !(next.map(wordSet.contains) ?? false)
+		}
+	}
+}
+
+private extension NSColor {
+	static var findHighlight: NSColor {
+		NSColor.systemYellow
 	}
 }
 
