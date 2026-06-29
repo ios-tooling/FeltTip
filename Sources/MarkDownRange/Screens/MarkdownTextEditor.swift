@@ -21,6 +21,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	var scrollToCharacterOffset: Int?
+	var caretTarget: MarkdownCaretTarget?
 
 	public init(
 		text: Binding<String>,
@@ -32,7 +33,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
-		scrollToCharacterOffset: Int? = nil
+		scrollToCharacterOffset: Int? = nil,
+		caretTarget: MarkdownCaretTarget? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -44,10 +46,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.scrollToCharacterOffset = scrollToCharacterOffset
+		self.caretTarget = caretTarget
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
-		let scrollView = NSScrollView()
+		let scrollView = RulerInsetScrollView()
 		let textView = MarkdownFormattingTextView()
 		scrollView.setAccessibilityIdentifier("raw-markdown-scroll-view")
 		textView.setAccessibilityIdentifier("raw-markdown-editor")
@@ -151,6 +154,20 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// syntax highlighting and line numbers disabled.
 			if let lm = textView.layoutManager {
 				lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+			}
+		}
+
+		// Host-driven caret restore (undo/redo): once per token, place the
+		// insertion point at the requested offset. Runs after any string
+		// reassignment above so the offset lands in the restored text. Only the
+		// focused editor restores its caret — in a split, the unfocused pane
+		// setting a selection would show no caret and could fight the other pane.
+		if let caret = caretTarget, caret.token != context.coordinator.lastCaretToken {
+			context.coordinator.lastCaretToken = caret.token
+			if textView.window?.firstResponder === textView {
+				let clamped = min(max(0, caret.offset), (textView.string as NSString).length)
+				textView.setSelectedRange(NSRange(location: clamped, length: 0))
+				textView.scrollRangeToVisible(NSRange(location: clamped, length: 0))
 			}
 		}
 
@@ -277,6 +294,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastReportedHeading: String?
 		var lastAppliedFraction: Double = -1
 		var lastScrolledOffset: Int = -1
+		var lastCaretToken: Int?
 		var isSyncScroll = false
 		var isUpdatingFromSwiftUI = false
 		var lastAppliedFontSize: CGFloat = 0
@@ -408,6 +426,29 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard abs(targetTop - currentTop) > 0.5 else { return }
 			scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetTop))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
+		}
+	}
+}
+
+/// `NSScrollView` doesn't reserve horizontal space for our vertical line-number
+/// ruler — it leaves the content view full-width at x=0, so the ruler draws over
+/// the leading characters. This insets the content view by the ruler's thickness
+/// after the standard tiling so the text always starts to the right of the gutter.
+private final class RulerInsetScrollView: NSScrollView {
+	override func tile() {
+		super.tile()
+		guard rulersVisible, let ruler = verticalRulerView else { return }
+		let thickness = ruler.requiredThickness
+		var frame = contentView.frame
+		guard frame.origin.x < thickness else { return }
+		frame.origin.x = thickness
+		frame.size.width = max(0, frame.size.width - thickness)
+		contentView.frame = frame
+		// The document view's width was tracked against the pre-inset clip, so
+		// resize it to fill the inset content area — otherwise the text wraps
+		// short, leaving a gap on the right the width of the gutter.
+		if let doc = documentView {
+			doc.setFrameSize(NSSize(width: frame.size.width, height: doc.frame.height))
 		}
 	}
 }

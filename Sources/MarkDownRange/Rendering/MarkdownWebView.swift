@@ -48,6 +48,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 	var scrollDelta: MarkdownScrollDelta?
 	/// Apply this fraction (0…1 of scrollable height) once, after the first render.
 	var initialScrollFraction: Double?
+	/// Place the caret at a source offset (token-gated). Used by the host to
+	/// restore the insertion point after an undo/redo re-renders the page.
+	var caretTarget: MarkdownCaretTarget?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -133,6 +136,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Restore the caret to a source offset after a host-driven re-render
+	/// (undo/redo). Token-gated so the same offset re-applies on demand.
+	public func caretTarget(_ target: MarkdownCaretTarget?) -> Self {
+		var copy = self
+		copy.caretTarget = target
+		return copy
+	}
+
 	/// Custom scheme the page loads under so relative local-image paths resolve
 	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
 	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
@@ -152,6 +163,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 
 	public func updateNSView(_ webView: WKWebView, context: Context) {
 		context.coordinator.parent = self
+		// Pick up a pending caret restore (undo/redo) before the text-driven
+		// reload runs, so `didFinish` places the caret on the freshly stamped DOM.
+		context.coordinator.applyCaretTarget()
 		context.coordinator.load(into: webView)
 		context.coordinator.applyScrollControls(to: webView)
 	}
@@ -182,6 +196,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 		/// survives unrelated re-renders doesn't re-scroll.
 		private var lastScrollTargetToken: Int?
 		private var lastScrollDeltaToken: Int?
+		/// Caret-restore token already applied, so a binding that survives
+		/// unrelated re-renders doesn't re-place the caret.
+		private var lastCaretToken: Int?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
 		/// Flip to true to log the edit bridge to the console.
@@ -254,6 +271,30 @@ public struct MarkdownWebView: NSViewRepresentable {
 			} else if lastScrollY > 0 {
 				webView.evaluateJavaScript("window.scrollTo(0, \(lastScrollY));", completionHandler: nil)
 			}
+		}
+
+		/// Pick up a token-gated caret-restore request (undo/redo) and arm it as
+		/// the pending caret. The accompanying `parent.text` change forces a
+		/// reload, after which `webView(_:didFinish:)` re-stamps `data-s` and
+		/// places the caret via `__mdPlaceCaret`. Clear `selfEditedText` so the
+		/// reload is never skipped — even when the restored text happens to equal
+		/// our last in-place edit.
+		func applyCaretTarget() {
+			guard let target = parent.caretTarget, target.token != lastCaretToken else { return }
+			lastCaretToken = target.token
+			// Only the editor the user is actually in restores its caret. In a
+			// split, the other (preview) pane just re-renders — arming a caret here
+			// would steal first responder from the focused pane and end editing.
+			guard isFirstResponder else { return }
+			pendingCaret = target.offset
+			selfEditedText = nil
+		}
+
+		/// True when this web view (or a descendant, e.g. the WKContentView) holds
+		/// the window's first responder — i.e. it's the editor the user is in.
+		private var isFirstResponder: Bool {
+			guard let webView, let responder = webView.window?.firstResponder as? NSView else { return false }
+			return responder === webView || responder.isDescendant(of: webView)
 		}
 
 		/// Apply token-gated scroll controls (target/delta) from the host.
@@ -518,6 +559,11 @@ extension MarkdownWebView.Coordinator {
 	      if (offset >= base && offset <= base + len) {
 	        var spot = locate(spans[i], offset - base);
 	        if (spot) {
+	          // Re-focus the editable body: a reload (e.g. after undo) clears DOM
+	          // focus, so without this the caret wouldn't blink and typing wouldn't
+	          // resume. Only reached when the host armed a caret for the focused
+	          // web view, so this never steals focus from another split pane.
+	          document.body.focus();
 	          var sel = window.getSelection(), r = document.createRange();
 	          r.setStart(spot.node, spot.offset); r.collapse(true);
 	          sel.removeAllRanges(); sel.addRange(r);
@@ -561,6 +607,11 @@ extension MarkdownWebView.Coordinator {
 	  }
 
 	  document.body.addEventListener('beforeinput', function (e) {
+	    // Undo/redo are owned by the host (a unified, source-level stack reached
+	    // via the app's Undo menu command). Block WebKit's own DOM-level history
+	    // so it can't desync the source or move the caret. Checked first, before
+	    // the range lookup, because a history beforeinput may carry no range.
+	    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); return; }
 	    var ranges = e.getTargetRanges();
 	    var range = ranges && ranges.length ? ranges[0] : null;
 	    if (!range) { e.preventDefault(); return; }

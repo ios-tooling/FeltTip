@@ -23,6 +23,9 @@ public struct WebSplitMarkdownScreen: View {
 	var onVisibleSectionChanged: ((String) -> Void)?
 	var initialScrollFraction: Double?
 	var onScrollFractionChanged: ((Double) -> Void)?
+	/// Host-driven caret restore (undo/redo), applied to both panes so the
+	/// insertion point lands at the edit site regardless of which pane is focused.
+	var caretTarget: MarkdownCaretTarget?
 	/// Forwarded to the web preview so task-list checkboxes stay interactive,
 	/// matching SplitMarkdownScreen (which picks this up from the environment).
 	@Environment(\.onCheckboxToggle) private var onCheckboxToggle
@@ -39,7 +42,8 @@ public struct WebSplitMarkdownScreen: View {
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
 		onVisibleSectionChanged: ((String) -> Void)? = nil,
 		initialScrollFraction: Double? = nil,
-		onScrollFractionChanged: ((Double) -> Void)? = nil
+		onScrollFractionChanged: ((Double) -> Void)? = nil,
+		caretTarget: MarkdownCaretTarget? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -53,6 +57,7 @@ public struct WebSplitMarkdownScreen: View {
 		self.onVisibleSectionChanged = onVisibleSectionChanged
 		self.initialScrollFraction = initialScrollFraction
 		self.onScrollFractionChanged = onScrollFractionChanged
+		self.caretTarget = caretTarget
 	}
 
 	#if os(macOS)
@@ -76,7 +81,8 @@ public struct WebSplitMarkdownScreen: View {
 				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
 				typewriterMode: typewriterMode,
 				theme: theme,
-				onCursorPositionChanged: { line, col, sel, offset in onCursorPositionChanged?(line, col, sel, offset) }
+				onCursorPositionChanged: { line, col, sel, offset in onCursorPositionChanged?(line, col, sel, offset) },
+				caretTarget: caretTarget
 			)
 			.frame(minWidth: 150, maxWidth: .infinity)
 
@@ -94,6 +100,7 @@ public struct WebSplitMarkdownScreen: View {
 				? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)
 				: nil)
 			.onScrollFractionChanged { top, _, _ in didScroll(.formatted, fraction: Double(top)) }
+			.caretTarget(caretTarget)
 		if let onCheckboxToggle {
 			view = view.onCheckboxToggle(onCheckboxToggle)
 		}

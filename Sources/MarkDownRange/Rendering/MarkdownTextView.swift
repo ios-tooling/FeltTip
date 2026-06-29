@@ -1510,6 +1510,21 @@ public struct MarkdownScrollTarget: Equatable, Sendable {
 	}
 }
 
+/// A request to place the insertion point at a source (UTF-16) offset, paired
+/// with a token so repeated requests for the same offset (e.g. undo then redo
+/// back to the same place) all fire instead of being deduped by SwiftUI
+/// equality. Used to restore the caret after a host-driven text change such as
+/// an undo/redo.
+public struct MarkdownCaretTarget: Equatable, Sendable {
+	public let offset: Int
+	public let token: Int
+
+	public init(offset: Int, token: Int) {
+		self.offset = offset
+		self.token = token
+	}
+}
+
 /// NSTextView subclass that surfaces hovered link URLs through `onLinkHover`.
 /// macOS's built-in `.link` attribute already produces the hand cursor and a
 /// system tooltip; this adds a callback so we can also show the URL in our
