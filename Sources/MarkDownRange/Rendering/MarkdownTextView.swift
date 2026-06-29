@@ -13,6 +13,7 @@ import SwiftUI
 
 public struct MarkdownTextView: NSViewRepresentable {
 	let text: String
+	var sourceTextBinding: Binding<String>?
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
 	var baseURL: URL?
@@ -175,6 +176,16 @@ public struct MarkdownTextView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Supplies the latest host-owned Markdown source for editable rendered
+	/// write-back. This matters in split view, where the raw pane can update the
+	/// same document before SwiftUI has rebuilt this representable with the new
+	/// value. Rendering still uses `text`; edit merging reads this binding.
+	public func sourceText(_ binding: Binding<String>) -> Self {
+		var copy = self
+		copy.sourceTextBinding = binding
+		return copy
+	}
+
 	/// Apply `fraction` (0…1 of scrollable height) once, after the first render.
 	/// See `initialScrollFraction`.
 	public func initialScrollFraction(_ fraction: Double?) -> Self {
@@ -201,6 +212,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 
 	public func makeNSView(context: Context) -> NSScrollView {
 		let scrollView = NSScrollView()
+		scrollView.setAccessibilityIdentifier("styled-markdown-scroll-view")
 		scrollView.hasVerticalScroller = true
 		scrollView.hasHorizontalScroller = false
 		// Content wraps to the view width, so disable the elastic horizontal
@@ -211,6 +223,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 		scrollView.drawsBackground = true
 
 		let textView = MarkdownTextViewBacking(frame: .zero)
+		textView.setAccessibilityIdentifier("styled-markdown-editor")
 		textView.isEditable = isEditable
 		textView.isSelectable = true
 		textView.isRichText = isEditable
@@ -558,7 +571,6 @@ public struct MarkdownTextView: NSViewRepresentable {
 			renderTask?.cancel()
 			let editable = parent.isEditable
 			let text = parent.text
-			editableSourceText = editable ? text : nil
 			let theme = parent.theme
 			let fontSize = parent.fontSize
 			let baseURL = parent.baseURL
@@ -603,6 +615,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 				}
 				attributed.append(body)
 				let tAfterBuild = CFAbsoluteTimeGetCurrent()
+				guard self.lastRenderKey == key, self.parent.text == text else { return }
 
 				// Capture the current scroll fraction so a rebuild triggered by
 				// a window resize (or any other forced re-render) doesn't snap
@@ -660,6 +673,7 @@ public struct MarkdownTextView: NSViewRepresentable {
 				// setAttributedString call on a doc containing attachments.
 				Self.inheritAttachmentHosts(into: attributed, from: textView.textStorage)
 				textView.textStorage?.setAttributedString(attributed)
+				self.editableSourceText = editable ? text : nil
 				let tAfterCommit = CFAbsoluteTimeGetCurrent()
 				// Render committed — drop the loading overlay before the next
 				// runloop tick runs the post-set layout pass.
@@ -1125,7 +1139,12 @@ public struct MarkdownTextView: NSViewRepresentable {
 			}
 			let affected = affectedRanges[0].rangeValue
 			let sourceText = editableSourceText ?? parent.text
-			let newSource = (sourceText as NSString).replacingCharacters(in: sourceRange, with: replacement)
+			let currentSource = parent.sourceTextBinding?.wrappedValue ?? parent.text
+			guard let currentSourceRange = remapSourceRange(sourceRange, from: sourceText, to: currentSource) else {
+				NSSound.beep()
+				return false
+			}
+			let newSource = (currentSource as NSString).replacingCharacters(in: currentSourceRange, with: replacement)
 			editableSourceText = newSource
 			// Apply the visible edit ourselves and return false. Letting AppKit
 			// mutate the rich text while SwiftUI publishes the new Markdown
@@ -1136,13 +1155,13 @@ public struct MarkdownTextView: NSViewRepresentable {
 			let offsetUpdates = sourceOffsetUpdatesAfterEdit(
 				affected,
 				replacementLength: replacementLength,
-				sourceDelta: replacementLength - sourceRange.length,
+				sourceDelta: replacementLength - currentSourceRange.length,
 				in: storage
 			)
 			applyVisibleEdit(
 				affected,
 				replacement: replacement,
-				sourceStart: sourceRange.location,
+				sourceStart: currentSourceRange.location,
 				offsetUpdates: offsetUpdates,
 				in: textView
 			)
@@ -1152,6 +1171,54 @@ public struct MarkdownTextView: NSViewRepresentable {
 			lastRenderKey = RenderKey(text: newSource, themeID: parent.theme.signature, fontSize: parent.fontSize, headerToken: parent.headerToken, editable: true)
 			onSourceEdit(newSource)
 			return false
+		}
+
+		/// Translate a range from the source text that produced the committed
+		/// rendered storage into the host's latest source text. Split view can
+		/// edit the raw pane while the styled pane is still finishing its
+		/// refresh; this keeps a subsequent styled edit from applying stale
+		/// offsets to the newer Markdown buffer.
+		private func remapSourceRange(_ range: NSRange, from oldSource: String, to currentSource: String) -> NSRange? {
+			let old = oldSource as NSString
+			let current = currentSource as NSString
+			if oldSource == currentSource { return range }
+			guard range.location >= 0, range.location + range.length <= old.length else { return nil }
+
+			var prefix = 0
+			let sharedPrefixLimit = min(old.length, current.length)
+			while prefix < sharedPrefixLimit,
+				  old.character(at: prefix) == current.character(at: prefix) {
+				prefix += 1
+			}
+
+			var suffix = 0
+			while suffix < old.length - prefix,
+				  suffix < current.length - prefix,
+				  old.character(at: old.length - suffix - 1) == current.character(at: current.length - suffix - 1) {
+				suffix += 1
+			}
+
+			let oldChangedStart = prefix
+			let oldChangedEnd = old.length - suffix
+			let currentChangedEnd = current.length - suffix
+			let rangeEnd = range.location + range.length
+
+			if rangeEnd <= oldChangedStart {
+				return range
+			}
+			if range.location >= oldChangedEnd {
+				let delta = current.length - old.length
+				return NSRange(location: range.location + delta, length: range.length)
+			}
+			// The styled edit overlaps text that changed in the raw pane. There
+			// is no unambiguous merge target, so reject instead of corrupting.
+			if range.location >= oldChangedStart, rangeEnd <= oldChangedEnd {
+				let changedLength = currentChangedEnd - oldChangedStart
+				if changedLength == range.length {
+					return NSRange(location: oldChangedStart, length: changedLength)
+				}
+			}
+			return nil
 		}
 
 		/// Map a rendered character range to the matching range in the Markdown

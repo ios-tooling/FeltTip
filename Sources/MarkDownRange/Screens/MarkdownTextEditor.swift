@@ -49,6 +49,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	public func makeNSView(context: Context) -> NSScrollView {
 		let scrollView = NSScrollView()
 		let textView = MarkdownFormattingTextView()
+		scrollView.setAccessibilityIdentifier("raw-markdown-scroll-view")
+		textView.setAccessibilityIdentifier("raw-markdown-editor")
 
 		textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
 		context.coordinator.lastAppliedFontSize = fontSize
