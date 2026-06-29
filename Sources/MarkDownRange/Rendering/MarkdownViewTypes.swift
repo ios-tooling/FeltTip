@@ -1,0 +1,75 @@
+//
+//  MarkdownViewTypes.swift
+//  MarkDownRange
+//
+//  Small value types shared across the markdown renderers (scroll/caret control
+//  and render-timing metrics). Kept renderer-agnostic and cross-platform so any
+//  view backend — the WKWebView renderer today, a future iOS port — can use them.
+//
+
+import CoreGraphics
+
+/// A scroll request expressed as a fraction of the document's rendered height,
+/// paired with a token. The token is what makes the request distinct across
+/// state-driven callers — two updates with the same `topFraction` but different
+/// tokens both fire, while repeating an unchanged target is a no-op.
+public struct MarkdownScrollTarget: Equatable, Sendable {
+	public let topFraction: CGFloat
+	public let token: Int
+
+	public init(topFraction: CGFloat, token: Int) {
+		self.topFraction = topFraction
+		self.token = token
+	}
+}
+
+/// A relative scroll request expressed in pixels (positive `deltaY` scrolls
+/// content down), paired with a token so two updates with the same delta across
+/// separate gestures both fire.
+public struct MarkdownScrollDelta: Equatable, Sendable {
+	public let deltaY: CGFloat
+	public let token: Int
+
+	public init(deltaY: CGFloat, token: Int) {
+		self.deltaY = deltaY
+		self.token = token
+	}
+}
+
+/// A request to place the insertion point at a source (UTF-16) offset, paired
+/// with a token so repeated requests for the same offset (e.g. undo then redo
+/// back to the same place) all fire instead of being deduped by SwiftUI
+/// equality. Used to restore the caret after a host-driven text change such as
+/// an undo/redo.
+public struct MarkdownCaretTarget: Equatable, Sendable {
+	public let offset: Int
+	public let token: Int
+
+	public init(offset: Int, token: Int) {
+		self.offset = offset
+		self.token = token
+	}
+}
+
+/// Per-phase wall-clock timings for a render pass, in milliseconds. Emitted for
+/// benchmarking; not meant to drive product behavior.
+public struct MarkdownRenderPhases: Sendable {
+	public let parse: Double
+	public let prefetch: Double
+	public let build: Double
+	public let commit: Double
+	public let initialLayout: Double
+	public let total: Double
+	public let tookFastPath: Bool
+	/// Build-time breakdown by block category. Nil when no metrics were captured.
+	public let attachMs: Double?
+	public let attachCount: Int?
+	public let textMs: Double?
+	public let textCount: Int?
+	public let yieldMs: Double?
+	/// Parse sub-phases (preprocess / Document init / block build / post-process).
+	public let parsePreprocessMs: Double?
+	public let parseDocInitMs: Double?
+	public let parseBlockBuildMs: Double?
+	public let parsePostProcessMs: Double?
+}
