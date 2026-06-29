@@ -30,7 +30,7 @@ public enum MarkdownBlockParser {
 		options: MarkdownOptions = .default
 	) -> [MarkdownBlock] {
 		let markdown = content.resolveMarkdown()
-		let (frontmatter, body, bodyOffset, frontmatterRaw) = extractFrontmatter(markdown)
+		let (frontmatter, body, bodyOffset, _) = extractFrontmatter(markdown)
 		let tPre0 = CFAbsoluteTimeGetCurrent()
 		MarkdownPreprocessor.recordedTimings = [:]
 		let processed: String
@@ -59,12 +59,11 @@ public enum MarkdownBlockParser {
 		let converter = trackSourceOffsets ? SourceOffsetConverter(processed, baseOffset: bodyOffset, map: offsetMap) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
-		// Normally the frontmatter renders as a read-only card. With offset
-		// tracking on (styled-text editing) emit it as plain editable text at
-		// source offset 0 instead, so the user can edit the frontmatter too.
-		if trackSourceOffsets, let raw = frontmatterRaw {
-			blocks.insert(editableFrontmatterBlock(raw), at: 0)
-		} else if let fm = frontmatter {
+		// Frontmatter always renders as the parsed read-only card, including in
+		// the styled-text editor. Body blocks carry their own source offsets
+		// (shifted past the stripped frontmatter by `bodyOffset`), so keeping the
+		// card here doesn't disturb edit mapping for the body.
+		if let fm = frontmatter {
 			blocks.insert(fm, at: 0)
 		}
 		let tPost0 = CFAbsoluteTimeGetCurrent()
@@ -124,15 +123,6 @@ public enum MarkdownBlockParser {
 		let bodyOffset = (frontText as NSString).length + 1
 		let block = MarkdownBlock.frontmatter(pairs: pairs, id: "frontmatter")
 		return (block, body, bodyOffset, frontText)
-	}
-
-	/// The frontmatter as a plain editable paragraph stamped with source offset
-	/// 0 (it's verbatim at the start of the source), used in the styled-text
-	/// editing path in place of the read-only frontmatter card.
-	private static func editableFrontmatterBlock(_ raw: String) -> MarkdownBlock {
-		var attributed = AttributedString(raw)
-		attributed.markdownSourceOffset = 0
-		return .paragraph(content: attributed, links: [], id: "frontmatter")
 	}
 
 	private static func isValidFrontmatterKey(_ key: String) -> Bool {

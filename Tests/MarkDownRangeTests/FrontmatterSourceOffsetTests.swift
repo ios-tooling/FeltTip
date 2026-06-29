@@ -4,7 +4,7 @@
 //
 //  Editable styled text with frontmatter: body offsets must skip past the
 //  stripped frontmatter (so edits map onto the full source), and the
-//  frontmatter itself must become editable text rather than a read-only card.
+//  frontmatter itself must still render as the parsed read-only card.
 //
 
 import Testing
@@ -29,14 +29,17 @@ import Testing
 		#expect(try #require(heading).runs.first?.markdownSourceOffset == 20)
 	}
 
-	@Test func frontmatterIsEditableTextWhenTracking() throws {
+	// Regression: with offset tracking on (the styled-text editor), frontmatter
+	// must still render as the parsed card, not get dumped back into the body as
+	// raw `---…---` text.
+	@Test func frontmatterStaysCardWhenTracking() throws {
 		let first = try #require(blocks(track: true).first)
-		guard case .paragraph(let content, _, _) = first else {
-			Issue.record("expected editable frontmatter paragraph, got \(first)")
+		guard case .frontmatter(let pairs, _) = first else {
+			Issue.record("expected frontmatter card, got \(first)")
 			return
 		}
-		#expect(String(content.characters) == "---\ntitle: Hi\n---")
-		#expect(content.runs.first?.markdownSourceOffset == 0)
+		#expect(pairs.first?.key == "title")
+		#expect(pairs.first?.value == "Hi")
 	}
 
 	@Test func frontmatterStaysCardWhenNotTracking() throws {
