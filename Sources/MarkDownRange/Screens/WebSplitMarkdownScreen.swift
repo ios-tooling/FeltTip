@@ -142,18 +142,16 @@ public struct WebSplitMarkdownScreen: View {
 	}
 	#else
 	public var body: some View {
-		// MarkdownWebView is macOS-only; fall back to the NSTextView split.
-		SplitMarkdownScreen(
+		// MarkdownWebView is macOS-only; until the iOS port wires up a WebView
+		// renderer, the non-macOS split simply shows the raw source editor.
+		RawMarkdownScreen(
 			text: $text,
 			selectedHeadingID: $selectedHeadingID,
-			theme: theme,
 			fontSize: fontSize,
-			focusModeEnabled: focusModeEnabled,
+			syncScrollFraction: initialScrollFraction,
 			typewriterMode: typewriterMode,
-			onCursorPositionChanged: onCursorPositionChanged,
-			onVisibleSectionChanged: onVisibleSectionChanged,
-			initialScrollFraction: initialScrollFraction,
-			onScrollFractionChanged: onScrollFractionChanged
+			theme: theme,
+			onCursorPositionChanged: onCursorPositionChanged
 		)
 	}
 	#endif
