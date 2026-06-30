@@ -15,6 +15,7 @@
 //
 
 #if os(macOS)
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -373,6 +374,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 				log("editor ready (bridge=\(body["bridge"] as? Bool ?? false))")
 				return
 			}
+			if body["type"] as? String == "openLink" {
+				if let href = body["href"] as? String, let url = URL(string: href) {
+					open(url)
+				}
+				return
+			}
 			// Task-list checkbox click (QuickLook): map index → source and write.
 			if body["type"] as? String == "checkbox" {
 				if let index = body["index"] as? Int, let checked = body["checked"] as? Bool {
@@ -495,7 +502,8 @@ extension MarkdownWebView.Coordinator {
 
 	/// Injected after each editable load. Maps contentEditable edits to source
 	/// splices via `data-s` offsets, vetoing anything it can't map.
-	static let editorScript = """
+	static var editorScript: String {
+		"""
 	(function () {
 	  // Surface any uncaught JS error (incl. in event listeners) to Swift so a
 	  // silent failure in the bridge is diagnosable.
@@ -514,6 +522,7 @@ extension MarkdownWebView.Coordinator {
 	    el.contentEditable = 'false';
 	  });
 	  var pending = null;
+	  installLinkOpenButtons();
 
 	  function textLength(n) {
 	    if (n.nodeType === 3) return n.nodeValue.length;
@@ -594,6 +603,84 @@ extension MarkdownWebView.Coordinator {
 	    return li.parentElement && li.parentElement.tagName === 'OL' ? '\\n1. ' : '\\n- ';
 	  }
 	  function post(msg) { window.webkit.messageHandlers.mdedit.postMessage(msg); }
+	  function installLinkOpenButtons() {
+	    if (!document.getElementById('md-link-open-button-style')) {
+	      var style = document.createElement('style');
+	      style.id = 'md-link-open-button-style';
+	      style.textContent = `
+	        .md-link-open-button {
+	          display: inline-flex;
+	          width: 16px;
+	          height: 16px;
+	          margin: 0 0 0 3px;
+	          padding: 0;
+	          border: 0;
+	          border-radius: 50%;
+	          vertical-align: -2px;
+	          align-items: center;
+	          justify-content: center;
+	          background-color: transparent;
+	          background-position: center;
+	          background-repeat: no-repeat;
+	          background-size: 14px 14px;
+	          color: currentColor;
+	          cursor: pointer;
+	          -webkit-user-select: none;
+	          user-select: none;
+	          opacity: 0.82;
+	          \(Self.linkOpenButtonIconCSS)
+	        }
+	        .md-link-open-button:hover {
+	          opacity: 1;
+	          background-color: rgba(127, 127, 127, 0.12);
+	        }
+	        .md-link-open-button:focus-visible {
+	          outline: 2px solid currentColor;
+	          outline-offset: 1px;
+	        }
+	        .md-link-open-button:not(.has-symbol-icon)::before {
+	          content: "→";
+	          font-size: 13px;
+	          line-height: 1;
+	        }
+	      `;
+	      document.head.appendChild(style);
+	    }
+
+	    document.querySelectorAll('a[href]').forEach(function (link) {
+	      if (link.dataset.mdOpenDecorated === '1') { return; }
+	      if (link.closest('.md-link-open-button')) { return; }
+	      link.dataset.mdOpenDecorated = '1';
+	      var displayHref = link.href;
+	      if (link.href.indexOf('markerlocalres://') === 0) {
+	        displayHref = link.getAttribute('href') || link.href;
+	      }
+	      link.title = displayHref;
+
+	      var button = document.createElement('button');
+	      button.type = 'button';
+	      button.className = 'md-link-open-button\(Self.linkOpenButtonHasIcon ? " has-symbol-icon" : "")';
+	      button.contentEditable = 'false';
+	      button.tabIndex = -1;
+	      button.title = displayHref;
+	      button.setAttribute('aria-label', 'Open link');
+	      button.setAttribute('data-href', link.href);
+	      button.addEventListener('mousedown', function (e) {
+	        e.preventDefault();
+	        e.stopPropagation();
+	      });
+	      button.addEventListener('click', function (e) {
+	        e.preventDefault();
+	        e.stopPropagation();
+	        post({ type: 'openLink', href: button.getAttribute('data-href') });
+	      });
+
+	      var target = link;
+	      var sourceRun = link.closest('[data-s]');
+	      if (sourceRun && sourceRun.parentNode) { target = sourceRun; }
+	      target.insertAdjacentElement('afterend', button);
+	    });
+	  }
 	  // getTargetRanges() yields StaticRanges, whose toString() is useless
 	  // ("[object StaticRange]"). Build a live Range to read the replaced text.
 	  function rangeText(r) {
@@ -660,6 +747,30 @@ extension MarkdownWebView.Coordinator {
 	  }, { passive: true });
 	})();
 	"""
+	}
+
+	private static var linkOpenButtonHasIcon: Bool {
+		linkOpenButtonIconDataURI != nil
+	}
+
+	private static var linkOpenButtonIconCSS: String {
+		guard let uri = linkOpenButtonIconDataURI else { return "" }
+		return "background-image: url('\(uri)');"
+	}
+
+	private static let linkOpenButtonIconDataURI: String? = {
+		guard let symbol = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: nil) else { return nil }
+		let size = NSSize(width: 14, height: 14)
+		let image = NSImage(size: size)
+		image.lockFocus()
+		NSColor.labelColor.set()
+		symbol.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1)
+		image.unlockFocus()
+		guard let tiff = image.tiffRepresentation,
+		      let rep = NSBitmapImageRep(data: tiff),
+		      let png = rep.representation(using: .png, properties: [:]) else { return nil }
+		return "data:image/png;base64,\(png.base64EncodedString())"
+	}()
 
 	/// Installed after every load (editable or not). Reports scroll position as
 	/// top/visible/content fractions — matching MarkdownTextView's semantics so a
