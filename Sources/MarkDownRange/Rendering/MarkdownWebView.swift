@@ -215,12 +215,11 @@ public struct MarkdownWebView: NSViewRepresentable {
 
 		func load(into webView: WKWebView) {
 			// Our own edit coming back round-trip — the DOM already shows it.
+			let key = renderKey(text: parent.text)
 			if let edited = selfEditedText, parent.text == edited {
 				selfEditedText = nil
-				lastKey = renderKey(text: parent.text)
-				return
+				if key == lastKey { return }
 			}
-			let key = renderKey(text: parent.text)
 			guard key != lastKey else { return }
 			lastKey = key
 			currentSource = parent.text
@@ -620,9 +619,6 @@ extension MarkdownWebView.Coordinator {
 	          align-items: center;
 	          justify-content: center;
 	          background-color: transparent;
-	          background-position: center;
-	          background-repeat: no-repeat;
-	          background-size: 14px 14px;
 	          color: currentColor;
 	          cursor: pointer;
 	          -webkit-user-select: none;
@@ -642,6 +638,20 @@ extension MarkdownWebView.Coordinator {
 	          content: "→";
 	          font-size: 13px;
 	          line-height: 1;
+	        }
+	        .md-link-open-button.has-symbol-icon::before {
+	          content: "";
+	          width: 14px;
+	          height: 14px;
+	          background-color: currentColor;
+	          -webkit-mask-image: url('\(Self.linkOpenButtonIconDataURI ?? "")');
+	          -webkit-mask-position: center;
+	          -webkit-mask-repeat: no-repeat;
+	          -webkit-mask-size: 14px 14px;
+	          mask-image: url('\(Self.linkOpenButtonIconDataURI ?? "")');
+	          mask-position: center;
+	          mask-repeat: no-repeat;
+	          mask-size: 14px 14px;
 	        }
 	      `;
 	      document.head.appendChild(style);
@@ -663,6 +673,7 @@ extension MarkdownWebView.Coordinator {
 	      button.contentEditable = 'false';
 	      button.tabIndex = -1;
 	      button.title = displayHref;
+	      button.style.color = window.getComputedStyle(link).color;
 	      button.setAttribute('aria-label', 'Open link');
 	      button.setAttribute('data-href', link.href);
 	      button.addEventListener('mousedown', function (e) {
@@ -754,8 +765,7 @@ extension MarkdownWebView.Coordinator {
 	}
 
 	private static var linkOpenButtonIconCSS: String {
-		guard let uri = linkOpenButtonIconDataURI else { return "" }
-		return "background-image: url('\(uri)');"
+		""
 	}
 
 	private static let linkOpenButtonIconDataURI: String? = {
