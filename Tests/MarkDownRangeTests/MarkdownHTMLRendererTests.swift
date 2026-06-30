@@ -68,4 +68,19 @@ import Testing
 		#expect(html.contains("<strong>"))
 		#expect(html.contains("href=\"https://example.com\""))
 	}
+
+	@Test func imageRowsDoNotStretchBadgeImages() {
+		let markdown = """
+		[![GitHub release](https://img.shields.io/github/v/release/agalwood/Motrix.svg)](https://github.com/agalwood/Motrix/releases) ![Build/release](https://github.com/agalwood/Motrix/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/agalwood/Motrix/total.svg)
+		"""
+		let html = MarkdownHTMLRenderer.renderDocument(markdown: markdown, theme: .default)
+		#expect(html.contains("<div class=\"image-row\">"))
+		#expect(html.contains("<a href=\"https://github.com/agalwood/Motrix/releases\"><img src=\"https://img.shields.io/github/v/release/agalwood/Motrix.svg\" alt=\"GitHub release\"></a>"))
+		#expect(html.contains("<img src=\"https://github.com/agalwood/Motrix/workflows/Build/release/badge.svg\" alt=\"Build/release\">"))
+		#expect(html.contains("<img src=\"https://img.shields.io/github/downloads/agalwood/Motrix/total.svg\" alt=\"Total Downloads\">"))
+		#expect(html.contains("align-items: flex-start;"))
+		#expect(html.contains(".image-row img,"))
+		#expect(html.contains(".image-row a"))
+		#expect(html.contains("flex: 0 0 auto;"))
+	}
 }

@@ -82,9 +82,18 @@ extension MarkdownHTMLRenderer {
 		.mermaid-diagram svg { max-width: 100%; height: auto; }
 		.image-row {
 			display: flex;
+			align-items: flex-start;
 			gap: 8px;
 			flex-wrap: wrap;
 			margin: 1em 0;
+		}
+		.image-row img,
+		.image-row a {
+			flex: 0 0 auto;
+		}
+		.image-row a {
+			display: inline-flex;
+			align-items: flex-start;
 		}
 		table {
 			border-collapse: collapse;
