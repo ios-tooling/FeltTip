@@ -115,7 +115,18 @@ public struct WebSplitMarkdownScreen: View {
 	/// Lockout mirrors SplitMarkdownScreen: while one pane is the active source,
 	/// drop the other pane's echoed scroll callbacks so the two don't ping-pong.
 	private func didScroll(_ source: ScrollSource, fraction: Double) {
-		if scrollSource != .none && scrollSource != source { return }
+		if scrollSource != .none && scrollSource != source {
+			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] drop %@ %.4f (source %@)", "\(source)", fraction, "\(scrollSource)") }
+			return
+		}
+		// Claiming sourcehood requires genuine movement: a report at (or next
+		// to) the already-synced position is an echo of our own sync or layout
+		// noise, and driving the other pane from it causes visible snap-backs.
+		if scrollSource != source, abs(fraction - scrollFraction) < 0.01 {
+			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] echo %@ %.4f", "\(source)", fraction) }
+			return
+		}
+		if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] claim %@ %.4f", "\(source)", fraction) }
 		scrollSource = source
 		scrollFraction = fraction
 		onScrollFractionChanged?(fraction)

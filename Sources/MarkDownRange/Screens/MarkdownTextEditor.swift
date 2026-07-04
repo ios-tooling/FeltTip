@@ -95,25 +95,49 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		) { [weak scrollView, weak textView, weak coordinator = context.coordinator] _ in
 			guard let scrollView, let coordinator, !coordinator.isSyncScroll else { return }
 
-			let docHeight = scrollView.documentView?.frame.height ?? 0
-			let visibleHeight = scrollView.contentView.bounds.height
-			let offset = scrollView.contentView.bounds.origin.y
-			let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
-			coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
-			(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+			// Coalesce ALL reactions — including the ruler invalidation — to
+			// the end of the runloop turn, and read the SETTLED offset.
+			// Reacting synchronously to every bounds notification fed a
+			// self-sustaining retile loop (invalidate → tile → bounds change →
+			// invalidate …) that stormed at millisecond cadence and eroded the
+			// user's scroll position; transient origins (e.g. 9 → 0 → 7.5 in
+			// one turn) also masqueraded as user scrolls to the split sync.
+			guard !coordinator.scrollReportScheduled else { return }
+			coordinator.scrollReportScheduled = true
+			// RunLoop.perform rather than DispatchQueue.async: the observer
+			// already runs on main, and the plain closure sidesteps Sendable
+			// checking on the AppKit captures.
+			RunLoop.main.perform { [weak scrollView, weak textView, weak coordinator] in
+				guard let scrollView, let coordinator else { return }
+				coordinator.scrollReportScheduled = false
+				(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+				guard !coordinator.isSyncScroll else { return }
+				let docHeight = scrollView.documentView?.frame.height ?? 0
+				let visibleHeight = scrollView.contentView.bounds.height
+				let offset = scrollView.contentView.bounds.origin.y
+				// Only an actual origin change is a scroll — size/layout churn
+				// at a stable position is not the user scrolling this pane.
+				guard abs(offset - coordinator.lastReportedScrollOffset) > 0.5 else { return }
+				coordinator.lastReportedScrollOffset = offset
+				let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
+				if MarkdownSplitSyncLog.enabled {
+					NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, docHeight, fraction)
+				}
+				coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
 
-			guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
+				guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
 
-			// Debounce the heading lookup + callback: any new scroll event
-			// cancels the pending timer and re-arms it. The heading therefore
-			// only updates once the user has stopped scrolling for a beat,
-			// keeping the SwiftUI invalidation chain
-			// (session.setCurrentSection → OutlineSidebar.body) entirely off
-			// the active-scroll hot path.
-			coordinator.headingDebounceTimer?.invalidate()
-			coordinator.headingDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak coordinator, weak textView] _ in
-				guard let coordinator, let textView else { return }
-				coordinator.computeAndReportHeading(textView: textView)
+				// Debounce the heading lookup + callback: any new scroll event
+				// cancels the pending timer and re-arms it. The heading therefore
+				// only updates once the user has stopped scrolling for a beat,
+				// keeping the SwiftUI invalidation chain
+				// (session.setCurrentSection → OutlineSidebar.body) entirely off
+				// the active-scroll hot path.
+				coordinator.headingDebounceTimer?.invalidate()
+				coordinator.headingDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak coordinator, weak textView] _ in
+					guard let coordinator, let textView else { return }
+					coordinator.computeAndReportHeading(textView: textView)
+				}
 			}
 		}
 
@@ -143,6 +167,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
 		if textView.string != text {
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw string reassigned (viewLen=%d textLen=%d)", (textView.string as NSString).length, (text as NSString).length)
+			}
 			let sel = textView.selectedRange()
 			textView.string = text
 			let clampedLoc = min(sel.location, (text as NSString).length)
@@ -165,6 +192,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if let caret = caretTarget, caret.token != context.coordinator.lastCaretToken {
 			context.coordinator.lastCaretToken = caret.token
 			if textView.window?.firstResponder === textView {
+				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw caret scroll to %d", caret.offset) }
 				let clamped = min(max(0, caret.offset), (textView.string as NSString).length)
 				textView.setSelectedRange(NSRange(location: clamped, length: 0))
 				textView.scrollRangeToVisible(NSRange(location: clamped, length: 0))
@@ -174,6 +202,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if let raw = selectedHeadingID, raw != context.coordinator.lastScrolledID {
 			context.coordinator.lastScrolledID = raw
 			let headingID = raw.components(separatedBy: "\t").first ?? raw
+			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw heading scroll %@", headingID) }
 			if let range = MarkdownHeading.characterRange(for: headingID, in: text) {
 				textView.scrollRangeToVisible(range)
 				textView.showFindIndicator(for: range)
@@ -187,8 +216,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let docHeight = scrollView.documentView?.frame.height ?? 0
 			let visibleHeight = scrollView.contentView.bounds.height
 			let target = fraction * max(0, docHeight - visibleHeight)
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, target, docHeight)
+			}
 			scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
+			// The driven offset counts as already reported, so notification
+			// stragglers arriving after `isSyncScroll` clears (they can trail
+			// by several runloop ticks) don't echo back as user scrolls.
+			context.coordinator.lastReportedScrollOffset = target
 			// Bounds-change observers queued on .main fire after this method
 			// returns. Hold the flag until the next main-queue tick so the
 			// echoed scroll is dropped instead of bouncing back as a fresh
@@ -230,8 +266,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				// session.currentSectionID flip from the scroll observer
 				// fires this code path mid-scroll).
 			}
-			scrollView.hasVerticalRuler = true
-			scrollView.rulersVisible = true
+			// Guard the setters: NSScrollView retiles on assignment even when
+			// the value is unchanged, and this runs on every updateNSView.
+			// The redundant tiles flapped the clip origin through its inset
+			// states (0 / 7.5 / 8), spawned tracking-area churn (a storm of
+			// synthetic mouseEntered/Exited events), and eroded the user's
+			// scroll position toward the top while they were scrolling.
+			if !scrollView.hasVerticalRuler { scrollView.hasVerticalRuler = true }
+			if !scrollView.rulersVisible { scrollView.rulersVisible = true }
 		} else if scrollView.verticalRulerView != nil {
 			scrollView.hasVerticalRuler = false
 			scrollView.rulersVisible = false
@@ -263,14 +305,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if textView.string == coordinator.lastHighlightedText,
 		   fontSize == coordinator.lastHighlightedFontSize,
 		   syntaxHighlightingEnabled == coordinator.lastHighlightedSyntaxEnabled,
-		   theme == coordinator.lastHighlightedTheme,
+		   theme?.signature == coordinator.lastHighlightedThemeSignature,
 		   markdownOptions == coordinator.lastHighlightedOptions {
 			return
+		}
+		if MarkdownSplitSyncLog.enabled {
+			NSLog("[SplitSync] raw re-highlight (textChanged=%d themeChanged=%d)",
+				  textView.string != coordinator.lastHighlightedText ? 1 : 0,
+				  theme?.signature != coordinator.lastHighlightedThemeSignature ? 1 : 0)
 		}
 		coordinator.lastHighlightedText = textView.string
 		coordinator.lastHighlightedFontSize = fontSize
 		coordinator.lastHighlightedSyntaxEnabled = syntaxHighlightingEnabled
-		coordinator.lastHighlightedTheme = theme
+		coordinator.lastHighlightedThemeSignature = theme?.signature
 		coordinator.lastHighlightedOptions = markdownOptions
 		updateHighlighting(textView: textView)
 	}
@@ -296,12 +343,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrolledOffset: Int = -1
 		var lastCaretToken: Int?
 		var isSyncScroll = false
+		/// Last bounds origin reported as a scroll. `boundsDidChange` also
+		/// fires when TextKit's document-height estimate flaps during layout
+		/// (constant offset, different fraction); reporting those as scrolls
+		/// fed noise into the split-view sync and yanked the other pane around.
+		var lastReportedScrollOffset: CGFloat = -1
+		/// An end-of-turn scroll report is queued (see the bounds observer).
+		var scrollReportScheduled = false
 		var isUpdatingFromSwiftUI = false
 		var lastAppliedFontSize: CGFloat = 0
 		var lastHighlightedText: String?
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
-		var lastHighlightedTheme: MarkdownTheme?
+		var lastHighlightedThemeSignature: String?
 		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
 		var highlightDebounceTimer: Timer?
@@ -365,7 +419,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			lastHighlightedText = tv.string
 			lastHighlightedFontSize = parent.fontSize
 			lastHighlightedSyntaxEnabled = parent.syntaxHighlightingEnabled
-			lastHighlightedTheme = parent.theme
+			lastHighlightedThemeSignature = parent.theme?.signature
 			lastHighlightedOptions = parent.markdownOptions
 			scheduleDebouncedHighlight(in: tv)
 		}
@@ -436,19 +490,26 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 /// after the standard tiling so the text always starts to the right of the gutter.
 private final class RulerInsetScrollView: NSScrollView {
 	override func tile() {
+		// Make gutter room through `contentInsets` — part of AppKit's own
+		// tiling model — instead of moving the clip frame after the fact.
+		// The frame surgery this used to do was undone by every `super.tile()`
+		// and re-applied here, an endless tile loop whose inset dance reset
+		// the scroll origin each cycle: the raw pane visibly fought the user
+		// and drifted to the top whenever line numbers were showing.
+		let saved = contentView.bounds.origin.y
+		let thickness = rulersVisible ? (verticalRulerView?.requiredThickness ?? 0) : 0
+		if automaticallyAdjustsContentInsets || abs(contentInsets.left - thickness) > 0.5 {
+			automaticallyAdjustsContentInsets = false
+			contentInsets = NSEdgeInsets(top: 0, left: thickness, bottom: 0, right: 0)
+		}
 		super.tile()
-		guard rulersVisible, let ruler = verticalRulerView else { return }
-		let thickness = ruler.requiredThickness
-		var frame = contentView.frame
-		guard frame.origin.x < thickness else { return }
-		frame.origin.x = thickness
-		frame.size.width = max(0, frame.size.width - thickness)
-		contentView.frame = frame
-		// The document view's width was tracked against the pre-inset clip, so
-		// resize it to fill the inset content area — otherwise the text wraps
-		// short, leaving a gap on the right the width of the gutter.
-		if let doc = documentView {
-			doc.setFrameSize(NSSize(width: frame.size.width, height: doc.frame.height))
+		// Belt and braces: if a tile pass still moved the reader, put them back.
+		let clipHeight = contentView.bounds.height
+		let docHeight = documentView?.frame.height ?? 0
+		let y = min(max(0, saved), max(0, docHeight - clipHeight))
+		if abs(contentView.bounds.origin.y - y) > 0.5 {
+			contentView.scroll(to: NSPoint(x: contentView.bounds.origin.x, y: y))
+			reflectScrolledClipView(contentView)
 		}
 	}
 }
