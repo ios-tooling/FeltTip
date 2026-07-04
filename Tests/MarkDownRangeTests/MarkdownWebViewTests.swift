@@ -46,6 +46,18 @@ import Testing
 		#expect(script.contains("crossRun: true"))
 	}
 
+	@Test @MainActor func contentSwapsInPlaceWithEditorStateReset() {
+		// External text changes update the loaded page via a body swap (no
+		// navigation flash); the editor re-arms its per-content state.
+		let scrollScript = MarkdownWebView.Coordinator.scrollSyncScript
+		#expect(scrollScript.contains("window.__mdSwapContent = function (html)"))
+		#expect(scrollScript.contains("if (window.__mdAfterSwap) { window.__mdAfterSwap(); }"))
+		let editorScript = MarkdownWebView.Coordinator.editorScript
+		#expect(editorScript.contains("window.__mdAfterSwap = function ()"))
+		#expect(editorScript.contains("frozen = false;"))
+		#expect(editorScript.contains("installLinkOpenButtons();"))
+	}
+
 	@Test @MainActor func editorScriptReconcilesCompositionInput() {
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("addEventListener('compositionstart'"))

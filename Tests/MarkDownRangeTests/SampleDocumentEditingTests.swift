@@ -34,6 +34,14 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		coordinator.load(into: webView)
 	}
 
+	/// An external text change (e.g. the raw pane of a split editing the same
+	/// document): new text arrives from outside the web view's own bridge.
+	func replaceTextExternally(_ new: String) {
+		text = new
+		updateParent()
+		coordinator.load(into: webView)
+	}
+
 	/// Mirrors `updateNSView`: a source edit updates the host's text, which
 	/// hands the coordinator a fresh parent value and re-runs `load`.
 	private func updateParent() {
@@ -247,6 +255,21 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		try await host.waitForFreshPage()
 		try await host.waitUntilReady()
 		try await type("B1", after: "Still Top Secret", in: host)
+	}
+
+	@Test func externalTextChangeSwapsContentWithoutNavigating() async throws {
+		// Typing in the raw pane re-renders the preview; that must be an
+		// in-place body swap (no navigation, no flash, scroll kept). A page
+		// nonce survives a swap but not a reload.
+		let host = try await makeHost()
+		try await host.run("window.__testNonce = 1")
+		host.replaceTextExternally(host.text.replacingOccurrences(of: "polish, resilience", with: "polish, MAGIC, resilience"))
+		try await host.waitUntilReady(domContains: "MAGIC")
+		let nonce = try await host.evaluate("typeof window.__testNonce === 'number' ? 'alive' : 'gone'")
+		#expect(nonce == "alive", "external text update navigated instead of swapping in place")
+		// The swapped DOM carries fresh stamps and live listeners: editing
+		// must keep working, splicing at the right spot in the new text.
+		try await type("SW", after: "MAGIC", in: host)
 	}
 
 	@Test func backspaceIntoABoldParagraphEndIsSafelyBlocked() async throws {

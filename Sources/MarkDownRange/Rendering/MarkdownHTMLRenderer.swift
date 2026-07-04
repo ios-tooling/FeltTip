@@ -48,6 +48,32 @@ public enum MarkdownHTMLRenderer {
 	/// embedded CSS reflects `theme`. Use this for HTML exports, PDF
 	/// rendering via WKWebView, and any other consumer that wants a
 	/// self-contained document.
+	/// Renders just the body-content fragment (no document wrapper or CSS),
+	/// with the same per-render flags `renderDocument` uses. The editable web
+	/// view swaps this into an already-loaded page so text updates don't
+	/// navigate (and flash).
+	public static func renderBodyFragment(
+		markdown: String,
+		theme: MarkdownTheme = .default,
+		fontSize: CGFloat = 16,
+		options: MarkdownOptions = .default,
+		includeSourceOffsets: Bool = false,
+		interactiveCheckboxes: Bool = false,
+		mermaidDiagrams: [String: String] = [:]
+	) -> String {
+		// Editable rendering tracks source offsets through preprocessing so the
+		// `data-s` offsets address the caller's text while highlight/smart
+		// quotes/emoji still render.
+		let blocks = includeSourceOffsets
+			? MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true, options: options)
+			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
+		return $emitSourceOffsets.withValue(includeSourceOffsets) {
+			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) {
+				$prerenderedMermaidDiagrams.withValue(mermaidDiagrams) { renderBlocks(blocks) }
+			}
+		}
+	}
+
 	public static func renderDocument(
 		markdown: String,
 		theme: MarkdownTheme = .default,
@@ -58,17 +84,11 @@ public enum MarkdownHTMLRenderer {
 		embedMermaidEngine: Bool = false,
 		mermaidDiagrams: [String: String] = [:]
 	) -> String {
-		// Editable rendering tracks source offsets through preprocessing so the
-		// `data-s` offsets address the caller's text while highlight/smart
-		// quotes/emoji still render.
-		let blocks = includeSourceOffsets
-			? MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true, options: options)
-			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
-		let body = $emitSourceOffsets.withValue(includeSourceOffsets) {
-			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) {
-				$prerenderedMermaidDiagrams.withValue(mermaidDiagrams) { renderBlocks(blocks) }
-			}
-		}
+		let body = renderBodyFragment(
+			markdown: markdown, theme: theme, fontSize: fontSize, options: options,
+			includeSourceOffsets: includeSourceOffsets,
+			interactiveCheckboxes: interactiveCheckboxes,
+			mermaidDiagrams: mermaidDiagrams)
 		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme) : ""
 		return """
 		<!DOCTYPE html>

@@ -182,6 +182,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 		var parent: MarkdownWebView
 		weak var webView: WKWebView?
 		private var lastKey: String?
+		/// The non-text part of `lastKey`; a mismatch means CSS/config changed
+		/// and the page needs a real reload rather than a body swap.
+		private var lastConfigSignature: String?
+		/// Debounced in-place body update for external text changes (typing in
+		/// the raw pane of a split re-renders the preview through here).
+		private var pendingSwap: Task<Void, Never>?
 		/// The source produced by our own last edit. When the resulting
 		/// `session.text` update comes back through `load`, we skip the reload so
 		/// the live contentEditable DOM (which already shows the edit) isn't torn
@@ -215,8 +221,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 			self.parent = parent
 		}
 
+		private func configSignature() -> String {
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
+		}
+
 		private func renderKey(text: String) -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)|\(text.hashValue)"
+			"\(configSignature())|\(text.hashValue)"
 		}
 
 		func load(into webView: WKWebView) {
@@ -227,10 +237,59 @@ public struct MarkdownWebView: NSViewRepresentable {
 				if key == lastKey { return }
 			}
 			guard key != lastKey else { return }
+			// A full (navigating) load is needed for the first render, for
+			// config changes (theme/font mean new CSS), for mermaid pages (the
+			// embedded engine script doesn't survive a body swap), and for our
+			// own structural edits, whose pending caret is placed in
+			// `didFinish`. Everything else — the text changing under us, i.e.
+			// typing in the raw pane of a split — updates the page in place
+			// after a debounce, so the preview neither flashes through a blank
+			// navigation nor re-renders on every keystroke.
+			let config = configSignature()
+			if lastKey == nil || pendingCaret != nil || config != lastConfigSignature
+				|| (parent.renderMermaid && !parent.isEditable) {
+				pendingSwap?.cancel()
+				pendingSwap = nil
+				lastKey = key
+				lastConfigSignature = config
+				log("reload: textLen=\((parent.text as NSString).length)")
+				currentSource = parent.text
+				loadHTML(for: parent.text, into: webView)
+				return
+			}
+			pendingSwap?.cancel()
+			pendingSwap = Task { @MainActor [weak self, weak webView] in
+				try? await Task.sleep(for: .milliseconds(250))
+				guard !Task.isCancelled, let self, let webView else { return }
+				self.pendingSwap = nil
+				self.applyBodySwap(into: webView)
+			}
+		}
+
+		/// Re-render the body and swap it into the loaded page in place.
+		/// Reads the freshest `parent` state at fire time — later updates may
+		/// have arrived during the debounce.
+		private func applyBodySwap(into webView: WKWebView) {
+			let text = parent.text
+			let key = renderKey(text: text)
+			guard key != lastKey else { return }
+			guard configSignature() == lastConfigSignature, pendingCaret == nil else {
+				load(into: webView)   // needs a full load after all
+				return
+			}
 			lastKey = key
-			log("reload: textLen=\((parent.text as NSString).length) currentLen=\(((currentSource ?? "") as NSString).length) sameAsCurrent=\(parent.text == currentSource)")
-			currentSource = parent.text
-			loadHTML(for: parent.text, into: webView)
+			currentSource = text
+			let fragment = MarkdownHTMLRenderer.renderBodyFragment(
+				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
+				includeSourceOffsets: parent.isEditable,
+				interactiveCheckboxes: parent.onCheckboxToggle != nil)
+			guard let encoded = try? JSONEncoder().encode(fragment),
+				  let json = String(data: encoded, encoding: .utf8) else {
+				loadHTML(for: text, into: webView)
+				return
+			}
+			log("body swap: textLen=\((text as NSString).length)")
+			webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json));", completionHandler: nil)
 		}
 
 		private func loadHTML(for text: String, into webView: WKWebView) {
@@ -444,9 +503,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 		private func resync(caretAt caret: Int?) {
 			guard let webView else { return }
 			let source = currentSource ?? parent.text
+			pendingSwap?.cancel()
+			pendingSwap = nil
 			selfEditedText = nil
 			pendingCaret = caret
 			lastKey = renderKey(text: source)
+			lastConfigSignature = configSignature()
 			loadHTML(for: source, into: webView)
 		}
 
@@ -652,6 +714,19 @@ extension MarkdownWebView.Coordinator {
 	      if (follows) el.setAttribute('data-s', String(base + delta));
 	    });
 	  }
+	  // The host swapped in freshly rendered content (see __mdSwapContent):
+	  // drop any in-flight edit state — its offsets described the old DOM —
+	  // and re-run the per-content setup. The body's own listeners survive.
+	  window.__mdAfterSwap = function () {
+	    pending = null;
+	    pendingShift = null;
+	    frozen = false;
+	    composing = null;
+	    document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+	      el.contentEditable = 'false';
+	    });
+	    installLinkOpenButtons();
+	  };
 	  // Place the caret at a source offset after a structural re-render.
 	  window.__mdPlaceCaret = function (offset) {
 	    var spans = document.querySelectorAll('[data-s]');
@@ -1027,6 +1102,14 @@ extension MarkdownWebView.Coordinator {
 	    var target = Math.max(0, (window.scrollY || 0) + dy);
 	    driven = { y: target, until: Date.now() + 500 };
 	    window.scrollBy(0, dy);
+	  };
+	  // In-place content update from the host (debounced re-render while the
+	  // user types in the other pane of a split). Swapping the body avoids a
+	  // navigation — no blank flash, scroll position preserved. The editor
+	  // page re-arms its per-content state via __mdAfterSwap.
+	  window.__mdSwapContent = function (html) {
+	    document.body.innerHTML = html;
+	    if (window.__mdAfterSwap) { window.__mdAfterSwap(); }
 	  };
 	  report();
 	})();
