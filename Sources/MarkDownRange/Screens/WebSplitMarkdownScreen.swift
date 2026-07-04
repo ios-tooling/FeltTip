@@ -68,7 +68,10 @@ public struct WebSplitMarkdownScreen: View {
 	/// Bumped each time the raw pane drives the scroll, so the token-gated
 	/// `scrollTarget` on the web preview re-applies the latest fraction.
 	@State private var previewScrollToken = 0
+	@State private var isEditing = false
+	@State private var editLockoutTask: Task<Void, Never>?
 	private static let scrollLockoutMs: Int = 200
+	private static let editLockoutMs: Int = 700
 
 	public var body: some View {
 		HSplitView {
@@ -90,6 +93,23 @@ public struct WebSplitMarkdownScreen: View {
 				.frame(minWidth: 150, maxWidth: .infinity)
 		}
 		.onAppear { restoreInitialScroll() }
+		.onChange(of: text) { _, _ in suspendSyncWhileEditing() }
+	}
+
+	/// Typing reflows both panes — the raw editor re-lays-out and structural
+	/// styled edits re-render the preview — and that churn reaches the scroll
+	/// callbacks looking like scrolling. If it claims sync sourcehood the
+	/// panes yank each other around under the caret, so the sync sits out
+	/// active editing entirely and resumes after a pause.
+	private func suspendSyncWhileEditing() {
+		isEditing = true
+		scrollSource = .none
+		editLockoutTask?.cancel()
+		editLockoutTask = Task { @MainActor in
+			try? await Task.sleep(for: .milliseconds(Self.editLockoutMs))
+			guard !Task.isCancelled else { return }
+			isEditing = false
+		}
 	}
 
 	private var preview: MarkdownWebView {
@@ -115,6 +135,10 @@ public struct WebSplitMarkdownScreen: View {
 	/// Lockout mirrors SplitMarkdownScreen: while one pane is the active source,
 	/// drop the other pane's echoed scroll callbacks so the two don't ping-pong.
 	private func didScroll(_ source: ScrollSource, fraction: Double) {
+		if isEditing {
+			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] editing, drop %@ %.4f", "\(source)", fraction) }
+			return
+		}
 		if scrollSource != .none && scrollSource != source {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] drop %@ %.4f (source %@)", "\(source)", fraction, "\(scrollSource)") }
 			return
