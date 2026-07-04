@@ -8,10 +8,14 @@
 //  Markdown source via per-run `data-s` offsets (the DOM twin of the
 //  NSTextView path's `.markdownSourceOffset`).
 //
-//  Stage 1 scope: plain-text insert/delete and top-level paragraph splits map
-//  to the source; edits the bridge can't map unambiguously (inside code/tables,
-//  style commands, structural list edits) are vetoed in `beforeinput` so the
-//  source is never corrupted. Verification failures fall back to a re-render.
+//  Edit bridge invariants: every splice is verified against the source (the
+//  replaced text for real ranges, and the surrounding run text for all edits —
+//  insertions have nothing else to check); the page shifts its own `data-s`
+//  stamps after each in-place edit so later edits map from fresh offsets; and
+//  any rejected or unmappable edit triggers a resync re-render, because the
+//  browser may already have mutated the DOM. Edits the bridge can't map
+//  (inside code/tables, style commands, structural list edits) are vetoed in
+//  `beforeinput` so the source is never corrupted.
 //
 
 #if os(macOS)
@@ -202,8 +206,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 		private var lastCaretToken: Int?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
-		/// Flip to true to log the edit bridge to the console.
-		static let debugEditing = false
+		/// Logs the edit bridge to the console (every message, splice, and
+		/// rejection). Toggle without rebuilding:
+		/// `defaults write <bundle-id> MDRDebugEditing -bool true`.
+		static let debugEditing = UserDefaults.standard.bool(forKey: "MDRDebugEditing")
 
 		init(parent: MarkdownWebView) {
 			self.parent = parent
@@ -222,9 +228,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 			}
 			guard key != lastKey else { return }
 			lastKey = key
+			log("reload: textLen=\((parent.text as NSString).length) currentLen=\(((currentSource ?? "") as NSString).length) sameAsCurrent=\(parent.text == currentSource)")
 			currentSource = parent.text
+			loadHTML(for: parent.text, into: webView)
+		}
+
+		private func loadHTML(for text: String, into webView: WKWebView) {
 			let html = MarkdownHTMLRenderer.renderDocument(
-				markdown: parent.text, theme: parent.theme, fontSize: parent.fontSize,
+				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
 				includeSourceOffsets: parent.isEditable,
 				interactiveCheckboxes: parent.onCheckboxToggle != nil,
 				// Render mermaid as diagrams when the host opted in and we're not
@@ -264,11 +275,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 			// edit wins; then a one-time initial fraction; then the last offset.
 			if let caret = pendingCaret {
 				pendingCaret = nil
+				log("didFinish: placing caret at \(caret)")
 				webView.evaluateJavaScript("window.__mdPlaceCaret && window.__mdPlaceCaret(\(caret));", completionHandler: nil)
 			} else if !didApplyInitialScroll, let initial = parent.initialScrollFraction {
 				didApplyInitialScroll = true
+				log("didFinish: initial scroll fraction \(initial)")
 				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(initial));", completionHandler: nil)
 			} else if lastScrollY > 0 {
+				log("didFinish: restoring scrollY \(lastScrollY)")
 				webView.evaluateJavaScript("window.scrollTo(0, \(lastScrollY));", completionHandler: nil)
 			}
 		}
@@ -301,10 +315,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 		func applyScrollControls(to webView: WKWebView) {
 			if let target = parent.scrollTarget, target.token != lastScrollTargetToken {
 				lastScrollTargetToken = target.token
+				log("scroll control: toFraction \(target.topFraction) token \(target.token)")
 				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(target.topFraction));", completionHandler: nil)
 			}
 			if let delta = parent.scrollDelta, delta.token != lastScrollDeltaToken {
 				lastScrollDeltaToken = delta.token
+				log("scroll control: byPixels \(delta.deltaY) token \(delta.token)")
 				webView.evaluateJavaScript("window.__mdScrollByPixels && window.__mdScrollByPixels(\(delta.deltaY));", completionHandler: nil)
 			}
 		}
@@ -386,54 +402,58 @@ public struct MarkdownWebView: NSViewRepresentable {
 				}
 				return
 			}
+			// The DOM took an edit the script couldn't map (e.g. an IME
+			// composition outside a stamped run); re-render so it can't drift.
+			if body["type"] as? String == "desync" {
+				log("desync reported by page")
+				resync(caretAt: nil)
+				return
+			}
 			log("message \(body)")
-			guard let start = body["start"] as? Int, let end = body["end"] as? Int else { return }
-			let source = (currentSource ?? parent.text) as NSString
-			let expected = body["expected"] as? String ?? ""
-			// If we can't map the edit safely, leave the source untouched and the
-			// DOM as-is (non-destructive) rather than reverting the user's edit.
-			// A mismatch means the offsets are off — log it so we can fix mapping.
-			guard start >= 0, end >= start, end <= source.length else {
-				log("out-of-bounds start=\(start) end=\(end) len=\(source.length)")
-				return
+			guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
+			let source = currentSource ?? parent.text
+			switch MarkdownEditSplicer.apply(edit, to: source) {
+			case .applied(let newSource):
+				currentSource = newSource
+				log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count)")
+				if let caret = edit.caret {
+					// Structural edit: re-render (re-stamps data-s) and restore the
+					// caret. Don't suppress the reload.
+					pendingCaret = caret
+					parent.onSourceEdit?(newSource)
+				} else {
+					// In-place edit: the DOM already shows it (and the page shifted
+					// its own data-s stamps), so skip the reload.
+					selfEditedText = newSource
+					lastKey = renderKey(text: newSource)
+					parent.onSourceEdit?(newSource)
+				}
+			case .rejected(let reason):
+				// The offsets and the source disagree — and for the fast-path
+				// edits the browser has already mutated the DOM, so leaving the
+				// page alone would let the view drift away from the source.
+				// Re-render from the source we hold and put the caret back near
+				// the edit; the user loses one keystroke, never file content.
+				log("rejected: \(reason)")
+				resync(caretAt: min(max(0, edit.start), (source as NSString).length))
 			}
-			let range = NSRange(location: start, length: end - start)
-			let actual = source.substring(with: range)
-			guard actual == expected else {
-				log("verify mismatch range=\(range) expected=\(quoted(expected)) actual=\(quoted(actual))")
-				return
-			}
-			let newSource: String
-			if body["op"] as? String == "wrap", let marker = body["marker"] as? String {
-				newSource = source.substring(to: start) + marker + actual + marker + source.substring(from: end)
-			} else if let replacement = body["text"] as? String {
-				newSource = source.replacingCharacters(in: range, with: replacement)
-			} else {
-				return
-			}
-			currentSource = newSource
-			log("applied range=\(range) newLen=\(newSource.count)")
-			if let caret = body["caret"] as? Int {
-				// Structural edit: re-render (re-stamps data-s) and restore the
-				// caret. Don't suppress the reload.
-				pendingCaret = caret
-				parent.onSourceEdit?(newSource)
-			} else {
-				// In-place edit: the DOM already shows it, so skip the reload.
-				selfEditedText = newSource
-				lastKey = renderKey(text: newSource)
-				parent.onSourceEdit?(newSource)
-			}
+		}
+
+		/// Reload the page from `currentSource` — not `parent.text`, which lags
+		/// an in-flight SwiftUI round-trip — re-stamping every run.
+		private func resync(caretAt caret: Int?) {
+			guard let webView else { return }
+			let source = currentSource ?? parent.text
+			selfEditedText = nil
+			pendingCaret = caret
+			lastKey = renderKey(text: source)
+			loadHTML(for: source, into: webView)
 		}
 
 		private func log(_ message: String) {
 			guard Self.debugEditing else { return }
 			print("[MarkdownWebView] \(message)")
 			NSLog("[MarkdownWebView] %@", message)
-		}
-
-		private func quoted(_ s: String) -> String {
-			"\"\(s.replacingOccurrences(of: "\n", with: "\\n"))\""
 		}
 	}
 }
@@ -521,6 +541,14 @@ extension MarkdownWebView.Coordinator {
 	    el.contentEditable = 'false';
 	  });
 	  var pending = null;
+	  // Stamp shift to apply once the browser lands the pending edit in the DOM.
+	  var pendingShift = null;
+	  // A structural edit or desync was posted; swallow input until the host's
+	  // re-render (which reinjects this script) so nothing maps from a source
+	  // that's about to change shape.
+	  var frozen = false;
+	  // State captured at compositionstart, reconciled at compositionend.
+	  var composing = null;
 	  installLinkOpenButtons();
 
 	  function textLength(n) {
@@ -544,19 +572,85 @@ extension MarkdownWebView.Coordinator {
 	    walk(root);
 	    return found ? count : null;
 	  }
-	  // Source offset for a DOM position, or null if it isn't inside a run.
-	  function sourceOffsetOf(node, offset) {
+	  // The [data-s] run element owning a DOM position, or null.
+	  function spanOf(node, offset) {
 	    var el = node.nodeType === 3 ? node.parentNode : node;
 	    if (node.nodeType !== 3 && node.childNodes.length) {
-	      var child = node.childNodes[Math.min(offset, node.childNodes.length - 1)];
+	      var child = node.childNodes[Math.min(offset || 0, node.childNodes.length - 1)];
 	      if (child) el = child.nodeType === 3 ? child.parentNode : child;
 	    }
-	    var span = el && el.closest ? el.closest('[data-s]') : null;
+	    return el && el.closest ? el.closest('[data-s]') : null;
+	  }
+	  function firstTextIn(n) {
+	    if (n.nodeType === 3) return n;
+	    for (var i = 0; i < n.childNodes.length; i++) { var t = firstTextIn(n.childNodes[i]); if (t) return t; }
+	    return null;
+	  }
+	  function lastTextIn(n) {
+	    if (n.nodeType === 3) return n;
+	    for (var i = n.childNodes.length - 1; i >= 0; i--) { var t = lastTextIn(n.childNodes[i]); if (t) return t; }
+	    return null;
+	  }
+	  // Element-level positions (block-boundary target ranges: paragraph
+	  // merges, whole-block selections) resolve to the nearest text-node
+	  // position so they map to the source like any other.
+	  function normalizePosition(node, offset) {
+	    if (node.nodeType === 3 || !node.childNodes.length) return { node: node, offset: offset };
+	    var t;
+	    if (offset > 0) {
+	      t = lastTextIn(node.childNodes[Math.min(offset, node.childNodes.length) - 1]);
+	      if (t) return { node: t, offset: t.nodeValue.length };
+	    }
+	    t = firstTextIn(node.childNodes[Math.min(offset, node.childNodes.length - 1)]);
+	    if (t) return { node: t, offset: 0 };
+	    return { node: node, offset: offset };
+	  }
+	  // Source offset for a DOM position, or null if it isn't inside a run.
+	  function sourceOffsetOf(node, offset) {
+	    var span = spanOf(node, offset);
 	    if (!span) return null;
 	    var base = parseInt(span.getAttribute('data-s'), 10);
 	    var chars = textOffsetWithin(span, node, offset);
 	    if (chars == null) return null;
 	    return base + chars;
+	  }
+	  // DOM text just before/after a position within its run. Swift verifies it
+	  // against the source before splicing, so a stale or drifted offset gets
+	  // rejected (and resynced) instead of splicing into the wrong place.
+	  // Trimmed so a split surrogate pair can't garble the message bridge.
+	  function contextBefore(node, offset) {
+	    var span = spanOf(node, offset);
+	    if (!span) return '';
+	    var o = textOffsetWithin(span, node, offset);
+	    if (o == null) return '';
+	    var t = span.textContent;
+	    var s = t.substring(Math.max(0, o - 12), o);
+	    if (s.length && s.charCodeAt(0) >= 0xDC00 && s.charCodeAt(0) <= 0xDFFF) s = s.substring(1);
+	    return plain(s);
+	  }
+	  function contextAfter(node, offset) {
+	    var span = spanOf(node, offset);
+	    if (!span) return '';
+	    var o = textOffsetWithin(span, node, offset);
+	    if (o == null) return '';
+	    var t = span.textContent;
+	    var s = t.substring(o, Math.min(t.length, o + 12));
+	    var last = s.length ? s.charCodeAt(s.length - 1) : 0;
+	    if (last >= 0xD800 && last <= 0xDBFF) s = s.substring(0, s.length - 1);
+	    return plain(s);
+	  }
+	  // After an in-place edit, every run at or past the edit moved by the
+	  // edit's length delta; keep the data-s stamps in step so the next edit
+	  // maps from fresh offsets instead of pre-edit geometry.
+	  function shiftStamps(start, delta, editedSpan) {
+	    if (!delta) return;
+	    document.querySelectorAll('[data-s]').forEach(function (el) {
+	      if (el === editedSpan) return;
+	      var base = parseInt(el.getAttribute('data-s'), 10);
+	      var follows = base > start || (base === start && editedSpan &&
+	        (editedSpan.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+	      if (follows) el.setAttribute('data-s', String(base + delta));
+	    });
 	  }
 	  // Place the caret at a source offset after a structural re-render.
 	  window.__mdPlaceCaret = function (offset) {
@@ -692,6 +786,12 @@ extension MarkdownWebView.Coordinator {
 	      target.insertAdjacentElement('afterend', button);
 	    });
 	  }
+	  // WebKit freely swaps spaces and non-breaking spaces inside
+	  // contentEditable text to keep visual runs from collapsing — the DOM
+	  // drifts from the source by U+00A0s on almost every insertion. The
+	  // swap is 1:1 in UTF-16 so offsets are unaffected; normalize every
+	  // string that crosses the bridge so it can't fail verification.
+	  function plain(s) { return s ? s.replace(/\\u00A0/g, ' ') : s; }
 	  // getTargetRanges() yields StaticRanges, whose toString() is useless
 	  // ("[object StaticRange]"). Build a live Range to read the replaced text.
 	  function rangeText(r) {
@@ -710,24 +810,63 @@ extension MarkdownWebView.Coordinator {
 	    // so it can't desync the source or move the caret. Checked first, before
 	    // the range lookup, because a history beforeinput may carry no range.
 	    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); return; }
+	    // While a composition is live (IME, dead keys, inline predictive
+	    // text), marked text sits in the DOM that the source doesn't have, so
+	    // no event can be mapped through offsets — not even plain insertText,
+	    // whose target range would be tainted by the grey prediction text.
+	    // Everything composition-adjacent is reconciled at compositionend by
+	    // diffing the whole run instead.
+	    if (composing || e.isComposing || e.inputType === 'insertCompositionText' || e.inputType === 'deleteCompositionText') return;
+	    if (frozen) { e.preventDefault(); return; }
 	    var ranges = e.getTargetRanges();
 	    var range = ranges && ranges.length ? ranges[0] : null;
 	    if (!range) { e.preventDefault(); return; }
-	    var start = sourceOffsetOf(range.startContainer, range.startOffset);
-	    var end = sourceOffsetOf(range.endContainer, range.endOffset);
+	    var startPos = normalizePosition(range.startContainer, range.startOffset);
+	    var endPos = normalizePosition(range.endContainer, range.endOffset);
+	    var start = sourceOffsetOf(startPos.node, startPos.offset);
+	    var end = sourceOffsetOf(endPos.node, endPos.offset);
 	    if (start == null || end == null || end < start) { e.preventDefault(); return; }
-	    var type = e.inputType, expected = rangeText(range);
+	    var type = e.inputType, expected = plain(rangeText(range));
+	    var startSpan = spanOf(startPos.node, startPos.offset);
+	    var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);
+	    // A real selection means the user chose the range — hidden syntax
+	    // inside it may go. A collapsed caret (block merge) may only remove
+	    // whitespace; the Swift side enforces the distinction.
+	    var selected = !window.getSelection().isCollapsed;
+	    var before = contextBefore(startPos.node, startPos.offset);
+	    var after = contextAfter(endPos.node, endPos.offset);
 
-	    // Fast path: in-place text edits. Let the browser mutate the DOM and
-	    // mirror the change to the source (no reload).
+	    // Fast path: in-place text edits within a single run. Let the browser
+	    // mutate the DOM and mirror the change to the source (no reload). Edits
+	    // that span runs touch markdown syntax the DOM doesn't show, so they
+	    // take the structural route instead: splice the source (context-
+	    // verified) and re-render.
 	    if (type === 'insertText' || type === 'insertReplacementText') {
-	      if (e.data == null) { e.preventDefault(); return; }
-	      pending = { start: start, end: end, text: e.data, expected: expected };
+	      var data = e.data;
+	      // Autocorrect/spelling replacements deliver their text via dataTransfer.
+	      if (data == null && e.dataTransfer) data = e.dataTransfer.getData('text/plain');
+	      if (data == null) { e.preventDefault(); return; }
+	      data = plain(data);
+	      if (crossRun) {
+	        e.preventDefault();
+	        frozen = true;
+	        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start + data.length });
+	        return;
+	      }
+	      pending = { start: start, end: end, text: data, expected: expected, before: before, after: after };
+	      pendingShift = { start: start, delta: data.length - (end - start), span: startSpan };
 	      return;
 	    }
 	    if (type === 'deleteContentBackward' || type === 'deleteContentForward' ||
 	        type === 'deleteWordBackward' || type === 'deleteWordForward' || type === 'deleteByCut') {
-	      pending = { start: start, end: end, text: '', expected: expected };
+	      if (crossRun) {
+	        e.preventDefault();
+	        frozen = true;
+	        post({ start: start, end: end, text: '', expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start });
+	        return;
+	      }
+	      pending = { start: start, end: end, text: '', expected: expected, before: before, after: after };
+	      pendingShift = { start: start, delta: -(end - start), span: startSpan };
 	      return;
 	    }
 
@@ -736,21 +875,62 @@ extension MarkdownWebView.Coordinator {
 	    if (type === 'insertParagraph') {
 	      e.preventDefault();
 	      var marker = listItemMarker(range.startContainer) || '\\n\\n';
-	      post({ start: start, end: end, text: marker, expected: expected, caret: start + marker.length });
+	      frozen = true;
+	      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length });
 	      return;
 	    }
 	    if (type === 'formatBold' || type === 'formatItalic') {
 	      e.preventDefault();
 	      if (start === end) return;  // need a selection to wrap
 	      var m = type === 'formatBold' ? '**' : '*';
-	      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, caret: end + 2 * m.length });
+	      frozen = true;
+	      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, crossRun: crossRun, before: before, after: after, caret: end + 2 * m.length });
 	      return;
 	    }
 
 	    e.preventDefault();  // line breaks, paste, etc. — not yet mapped
 	  });
 	  document.body.addEventListener('input', function () {
-	    if (pending) { window.webkit.messageHandlers.mdedit.postMessage(pending); pending = null; }
+	    if (pending) { post(pending); pending = null; }
+	    if (pendingShift) { shiftStamps(pendingShift.start, pendingShift.delta, pendingShift.span); pendingShift = null; }
+	  });
+	  // Composition (IME, dead keys, macOS inline predictive text) can't be
+	  // vetoed or mapped per keystroke: marked text lives in the DOM without
+	  // existing in the source, and plain inserts interleave with it. Instead,
+	  // snapshot the run when composition starts and reconcile the whole run —
+	  // one verified replacement — when it ends. That covers whatever the
+	  // composition did: committed predictions, dead-key accents, CJK input,
+	  // and ordinary characters typed while a prediction was showing.
+	  document.body.addEventListener('compositionstart', function () {
+	    var sel = window.getSelection();
+	    var r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+	    var startPos = r ? normalizePosition(r.startContainer, r.startOffset) : null;
+	    var endPos = r ? normalizePosition(r.endContainer, r.endOffset) : null;
+	    var span = startPos ? spanOf(startPos.node, startPos.offset) : null;
+	    var endSpan = endPos ? spanOf(endPos.node, endPos.offset) : null;
+	    if (!r || frozen || !span || span !== endSpan) {
+	      composing = { desync: true };
+	      return;
+	    }
+	    composing = {
+	      span: span,
+	      base: parseInt(span.getAttribute('data-s'), 10),
+	      beforeText: plain(span.textContent)
+	    };
+	  });
+	  document.body.addEventListener('compositionend', function () {
+	    var c = composing; composing = null;
+	    if (!c) return;
+	    if (c.desync || !c.span.isConnected) {
+	      // The DOM may hold composed text we couldn't map; re-render.
+	      frozen = true;
+	      post({ type: 'desync' });
+	      return;
+	    }
+	    var after = plain(c.span.textContent);
+	    if (after === c.beforeText) return;  // canceled, nothing changed
+	    post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '' });
+	    shiftStamps(c.base, after.length - c.beforeText.length, c.span);
 	  });
 	  // Report scroll so a reload can restore the reader's place.
 	  window.addEventListener('scroll', function () {
@@ -793,11 +973,33 @@ extension MarkdownWebView.Coordinator {
 	  function docHeight() {
 	    return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 1);
 	  }
+	  // While a host-driven scroll is in flight, its echo must not report as
+	  // a user scroll — in a split view that echo claims scroll-sourcehood
+	  // and yanks the pane the user is actually scrolling. The echo is
+	  // consumed when the position settles at the target (or after a grace
+	  // period, if the user interrupted the drive).
+	  var driven = null;
 	  function report() {
 	    var h = docHeight();
 	    var vis = window.innerHeight;
 	    var y = window.scrollY || window.pageYOffset || 0;
-	    var top = Math.max(0, Math.min(1, y / h));
+	    if (driven) {
+	      if (Math.abs(y - driven.y) < 3) {
+	        // At the driven position: this and any repeat events are echoes.
+	        // Stay armed — WebKit re-fires at a pinned position (e.g. clamped
+	        // at the bottom), and one leaked echo re-claims scroll-sourcehood.
+	        driven.settled = true;
+	        return;
+	      }
+	      if (driven.settled || Date.now() > driven.until) { driven = null; }
+	      else { return; }   // still converging on the target
+	    }
+	    // `top` is the fraction of the SCROLLABLE range (offset / (content −
+	    // viewport)), matching MarkdownTextEditor's convention on both its
+	    // report and apply sides — full-height fractions max out below 1.0
+	    // and leave the synced pane short of the bottom.
+	    var maxY = Math.max(h - vis, 0);
+	    var top = maxY > 0 ? Math.max(0, Math.min(1, y / maxY)) : 0;
 	    var visible = Math.max(0, Math.min(1, vis / h));
 	    var content = vis > 0 ? Math.min(1, h / vis) : 1;
 	    try {
@@ -814,11 +1016,18 @@ extension MarkdownWebView.Coordinator {
 	    var h = docHeight();
 	    var vis = window.innerHeight;
 	    var maxY = Math.max(h - vis, 0);
-	    var centerY = Math.max(0, Math.min(1, f)) * h;
-	    var y = Math.max(0, Math.min(maxY, centerY - vis / 2));
+	    // Top-anchored fraction of the scrollable range — the same units
+	    // report() emits, so a drive→echo round trip is the identity and the
+	    // panes agree at both ends of the document.
+	    var y = Math.max(0, Math.min(1, f)) * maxY;
+	    driven = { y: y, until: Date.now() + 500 };
 	    window.scrollTo(0, y);
 	  };
-	  window.__mdScrollByPixels = function (dy) { window.scrollBy(0, dy); };
+	  window.__mdScrollByPixels = function (dy) {
+	    var target = Math.max(0, (window.scrollY || 0) + dy);
+	    driven = { y: target, until: Date.now() + 500 };
+	    window.scrollBy(0, dy);
+	  };
 	  report();
 	})();
 	"""

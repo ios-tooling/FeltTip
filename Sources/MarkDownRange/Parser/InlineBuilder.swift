@@ -56,14 +56,51 @@ struct InlineBuilder: MarkupWalker {
 			linkifyBareURLs()
 			linkifyWWWPrefix()
 		}
+		repairSplitSourceOffsets()
 		return InlineResult(attributed: result, links: links)
+	}
+
+	/// Post-hoc passes (bare-URL linkify) apply attributes over sub-ranges of
+	/// already-stamped runs, splitting them — and every fragment inherits the
+	/// original run's source offset, leaving all but the first stamped too low.
+	/// Advance each later fragment's stamp past the text its predecessors
+	/// consumed, so every stamp addresses the fragment's own first character.
+	private mutating func repairSplitSourceOffsets() {
+		guard sourceConverter != nil else { return }
+		var base: Int?
+		var consumedUTF16 = 0
+		var position = 0
+		var fixes: [(start: Int, length: Int, stamp: Int)] = []
+		for run in result.runs {
+			let text = String(result[run.range].characters)
+			defer { position += text.count }
+			guard let stamp = run.markdownSourceOffset else {
+				base = nil
+				continue
+			}
+			if stamp == base {
+				fixes.append((position, text.count, stamp + consumedUTF16))
+			} else {
+				base = stamp
+				consumedUTF16 = 0
+			}
+			consumedUTF16 += text.utf16.count
+		}
+		for fix in fixes {
+			let lower = result.characters.index(result.startIndex, offsetBy: fix.start)
+			let upper = result.characters.index(lower, offsetBy: fix.length)
+			result[lower..<upper].markdownSourceOffset = fix.stamp
+		}
 	}
 
 	mutating func visitText(_ text: Markdown.Text) {
 		var str = AttributedString(text.string)
 		applyCurrentStyle(&str)
-		if let converter = sourceConverter, let loc = text.range?.lowerBound,
-		   let offset = converter.utf16Offset(line: loc.line, column: loc.column) {
+		if let converter = sourceConverter, let range = text.range,
+		   let offset = converter.verbatimUTF16Offset(
+			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
+			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
+			renderedLength: text.string.utf16.count) {
 			str.markdownSourceOffset = offset
 		}
 		result += str

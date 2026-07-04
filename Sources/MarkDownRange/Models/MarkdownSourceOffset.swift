@@ -51,16 +51,37 @@ struct SourceOffsetConverter {
 	}
 
 	func utf16Offset(line: Int, column: Int) -> Int? {
+		guard let processedOffset = processedUTF16(line: line, column: column) else { return nil }
+		return mapToSource(processedOffset) + baseOffset
+	}
+
+	/// Source offset for a rendered run spanning `lower..<upper` whose rendered
+	/// text is `renderedLength` UTF-16 units — but only when that text maps 1:1
+	/// onto the source: same length in the processed text, and a contiguous
+	/// stretch of surviving source characters. Runs that fail (entity
+	/// references, preprocessor rewrites) return nil and go unstamped, so the
+	/// editors treat them as unmappable instead of splicing at drifted offsets.
+	func verbatimUTF16Offset(lowerLine: Int, lowerColumn: Int, upperLine: Int, upperColumn: Int, renderedLength: Int) -> Int? {
+		guard let pLow = processedUTF16(line: lowerLine, column: lowerColumn),
+			  let pUp = processedUTF16(line: upperLine, column: upperColumn),
+			  pUp - pLow == renderedLength else { return nil }
+		if let map {
+			guard pLow + renderedLength <= map.count else { return nil }
+			let base = map[pLow]
+			for k in 0..<renderedLength where map[pLow + k] != base + k { return nil }
+		}
+		return mapToSource(pLow) + baseOffset
+	}
+
+	private func processedUTF16(line: Int, column: Int) -> Int? {
 		guard line >= 1, line <= lineStartBytes.count else { return nil }
 		let byte = lineStartBytes[line - 1] + (column - 1)
 		guard byte >= 0, byte < byteToUTF16.count else { return nil }
-		let processedOffset = byteToUTF16[byte]
-		let sourceOffset: Int
-		if let map {
-			sourceOffset = processedOffset < map.count ? map[processedOffset] : (map.last ?? processedOffset)
-		} else {
-			sourceOffset = processedOffset
-		}
-		return sourceOffset + baseOffset
+		return byteToUTF16[byte]
+	}
+
+	private func mapToSource(_ processedOffset: Int) -> Int {
+		guard let map else { return processedOffset }
+		return processedOffset < map.count ? map[processedOffset] : (map.last ?? processedOffset)
 	}
 }

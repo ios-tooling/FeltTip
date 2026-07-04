@@ -11,27 +11,33 @@ import Foundation
 /// which has to invoke the processors directly so it can keep references to
 /// the parsed citations and footnotes for side panels.
 public enum MarkdownPreprocessor {
-	public static func process(_ body: String, options: MarkdownOptions = .default) -> String {
+	public static func process(_ body: String, options: MarkdownOptions = .default, preservingSourceText: Bool = false) -> String {
 		let citations = Citation.parse(from: body)
 		let withCitations = Citation.renderableContent(from: body, citations: citations)
 		let footnotes = MarkdownFootnote.parse(from: withCitations)
 		let withFootnotes = MarkdownFootnote.renderableContent(from: withCitations, footnotes: footnotes)
 		let withAppendedNotes = appendFootnoteSection(to: withFootnotes, footnotes: footnotes)
-		return common(after: withAppendedNotes, options: options)
+		return common(after: withAppendedNotes, options: options, preservingSourceText: preservingSourceText)
 	}
 
 	/// Preprocesses `body` and also returns a map from each UTF-16 offset in the
 	/// processed output back to its UTF-16 offset in `body`. The editable
 	/// renderers use this so styled-text edits map to the original source even
-	/// though the rendered text reflects preprocessing (highlight, smart quotes,
-	/// emoji shortcodes, …).
+	/// though the rendered text reflects preprocessing.
+	///
+	/// Editable rendering preserves the source's own characters: the cosmetic
+	/// substitutions (smart quotes, typography, emoji/emoticon shortcodes) are
+	/// skipped so the text a run shows is the text the file contains — the
+	/// editors rely on rendered run text mapping 1:1 onto the source when
+	/// translating caret positions into source offsets.
 	///
 	/// The map is derived by diffing input against output rather than
-	/// instrumenting each pass: it covers every pass for free, and it's safe
-	/// because the editor verifies the source slice before splicing — an
-	/// imperfect mapping resyncs the view instead of corrupting the file.
+	/// instrumenting each pass: it covers every remaining pass for free, and
+	/// runs whose mapping isn't 1:1 go unstamped (see
+	/// `SourceOffsetConverter.verbatimUTF16Offset`), so the editors veto edits
+	/// there instead of corrupting the file.
 	public static func processTrackingOffsets(_ body: String, options: MarkdownOptions = .default) -> (processed: String, map: [Int]) {
-		let processed = process(body, options: options)
+		let processed = process(body, options: options, preservingSourceText: true)
 		return (processed, offsetMap(from: body, to: processed))
 	}
 
@@ -85,8 +91,10 @@ public enum MarkdownPreprocessor {
 	}
 
 	/// Step shared with `FormattedMarkdownScreen`, which parses citations and
-	/// footnotes itself so it can keep handles on them.
-	public static func common(after withFootnotes: String, options: MarkdownOptions = .default) -> String {
+	/// footnotes itself so it can keep handles on them. `preservingSourceText`
+	/// (editable rendering) skips the cosmetic character substitutions so
+	/// rendered run text stays byte-for-byte the source's.
+	public static func common(after withFootnotes: String, options: MarkdownOptions = .default, preservingSourceText: Bool = false) -> String {
 		func timed<T>(_ label: String, _ work: () -> T) -> T {
 			let t = CFAbsoluteTimeGetCurrent()
 			let result = work()
@@ -102,8 +110,8 @@ public enum MarkdownPreprocessor {
 		// → Emoticon → SmartQuotes → SmartTypography → Highlight). HeadingSpace
 		// used to run before Abbreviation/CustomContainer; neither of those
 		// inspects heading syntax so the move is behaviour-preserving.
-		let withLinePass = timed("LinePass") { mergedLinePass(withContainers, options: options) }
-		let withEmoji = timed("Emoji") { EmojiShortcodes.process(withLinePass) }
+		let withLinePass = timed("LinePass") { mergedLinePass(withContainers, options: options, preservingSourceText: preservingSourceText) }
+		let withEmoji = preservingSourceText ? withLinePass : timed("Emoji") { EmojiShortcodes.process(withLinePass) }
 		let withDefList = timed("DefinitionList") { DefinitionListProcessor.process(withEmoji) }
 		let withWikilinks = timed("Wikilink") { WikilinkProcessor.process(withDefList) }
 		return withWikilinks
@@ -113,7 +121,7 @@ public enum MarkdownPreprocessor {
 	/// processor's `applyLine` bakes in its own per-line fast-fail and any
 	/// special skip conditions (e.g. SmartQuotes skipping link reference
 	/// definitions), so we don't need to know per-processor specifics here.
-	private static func mergedLinePass(_ text: String, options: MarkdownOptions) -> String {
+	private static func mergedLinePass(_ text: String, options: MarkdownOptions, preservingSourceText: Bool) -> String {
 		var output: [String] = []
 		var inFence = false
 		let lines = text.components(separatedBy: "\n")
@@ -130,9 +138,11 @@ public enum MarkdownPreprocessor {
 			if injectHeadingSpace { processed = HeadingSpaceInjector.applyLine(processed) }
 			processed = SuperSubProcessor.applyLine(processed)
 			processed = InsertedTextProcessor.applyLine(processed)
-			processed = EmoticonShortcodes.applyLine(processed)
-			processed = SmartQuotes.applyLine(processed)
-			processed = SmartTypography.applyLine(processed)
+			if !preservingSourceText {
+				processed = EmoticonShortcodes.applyLine(processed)
+				processed = SmartQuotes.applyLine(processed)
+				processed = SmartTypography.applyLine(processed)
+			}
 			processed = HighlightSyntax.applyLine(processed)
 			output.append(processed)
 		}

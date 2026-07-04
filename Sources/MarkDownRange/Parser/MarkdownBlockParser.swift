@@ -39,9 +39,10 @@ public enum MarkdownBlockParser {
 			processed = body
 			offsetMap = nil
 		} else if trackSourceOffsets {
-			// Editable rendering preprocesses too (so highlight, smart quotes,
-			// emoji, etc. render), but tracks a processed→source map so edits
-			// still resolve to the original source.
+			// Editable rendering preprocesses too (highlight, containers,
+			// wikilinks — but not the cosmetic character substitutions, which
+			// would desync run text from the source) and tracks a
+			// processed→source map so edits still resolve to the original source.
 			let tracked = MarkdownPreprocessor.processTrackingOffsets(body, options: options)
 			processed = tracked.processed
 			offsetMap = tracked.map
@@ -50,7 +51,12 @@ public enum MarkdownBlockParser {
 			offsetMap = nil
 		}
 		let tDoc0 = CFAbsoluteTimeGetCurrent()
-		let document = Document(parsing: processed)
+		// Editable rendering must keep run text byte-identical to the source,
+		// so cmark's own smart punctuation (quotes/dashes/ellipsis) is disabled
+		// there — otherwise every run containing those characters would render
+		// differently than the source reads and go unstamped. Display-only
+		// parses keep the typography.
+		let document = Document(parsing: processed, options: trackSourceOffsets ? .disableSmartOpts : [])
 		let tBuild0 = CFAbsoluteTimeGetCurrent()
 		let counter = CheckboxCounter(checkboxOffset)
 		// Offsets come back through the preprocessing map (when present) and then
