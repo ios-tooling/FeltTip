@@ -219,7 +219,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if MarkdownSplitSyncLog.enabled {
 				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, target, docHeight)
 			}
-			scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
+			// Preserve x: with a line-number gutter the resting origin is
+			// -contentInsets.left, and scrolling to x: 0 slid the text
+			// horizontally underneath the ruler.
+			scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: target))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
 			// The driven offset counts as already reported, so notification
 			// stragglers arriving after `isSyncScroll` clears (they can trail
@@ -490,20 +493,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 /// after the standard tiling so the text always starts to the right of the gutter.
 private final class RulerInsetScrollView: NSScrollView {
 	override func tile() {
-		// Make gutter room through `contentInsets` — part of AppKit's own
-		// tiling model — instead of moving the clip frame after the fact.
-		// The frame surgery this used to do was undone by every `super.tile()`
-		// and re-applied here, an endless tile loop whose inset dance reset
-		// the scroll origin each cycle: the raw pane visibly fought the user
-		// and drifted to the top whenever line numbers were showing.
+		// Standard NSScrollView tiling already places a vertical ruler beside
+		// the content view — the frame surgery this subclass used to do (and
+		// the contentInsets replacement tried next) both fought tile(),
+		// producing either an endless retile loop that dragged the scroll
+		// position, text sliding under the gutter, or wrap widths one gutter
+		// too wide. Stock tiling handles the gutter; the only fix kept here
+		// is restoring the reader's vertical position, which retiling is not
+		// neutral about (its content-inset dance can reset the origin).
 		let saved = contentView.bounds.origin.y
-		let thickness = rulersVisible ? (verticalRulerView?.requiredThickness ?? 0) : 0
-		if automaticallyAdjustsContentInsets || abs(contentInsets.left - thickness) > 0.5 {
-			automaticallyAdjustsContentInsets = false
-			contentInsets = NSEdgeInsets(top: 0, left: thickness, bottom: 0, right: 0)
-		}
 		super.tile()
-		// Belt and braces: if a tile pass still moved the reader, put them back.
 		let clipHeight = contentView.bounds.height
 		let docHeight = documentView?.frame.height ?? 0
 		let y = min(max(0, saved), max(0, docHeight - clipHeight))
