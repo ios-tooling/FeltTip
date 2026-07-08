@@ -4,14 +4,19 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
 
 final class LineNumberRulerView: NSRulerView {
 	override var isFlipped: Bool { true }
 	var textColor: NSColor = .secondaryLabelColor
 	private weak var textView: NSTextView?
 	private let gutterPadding: CGFloat = 8
-	private var lastLineCount = 0
+	/// UTF-16 offsets of each hard line's first character, rebuilt lazily
+	/// after `noteTextChanged()`. Drawing binary-searches this instead of
+	/// walking layout from the top of the document — the walk made scrolling
+	/// O(scroll position) per frame, visibly slow near the bottom of large
+	/// documents.
+	private var lineStarts: [Int] = []
 
 	init(textView: NSTextView) {
 		self.textView = textView
@@ -23,67 +28,74 @@ final class LineNumberRulerView: NSRulerView {
 	@available(*, unavailable)
 	required init(coder: NSCoder) { fatalError() }
 
+	/// The text changed: line starts are stale. Cheap to call repeatedly —
+	/// the rebuild happens lazily on the next draw.
+	func noteTextChanged() {
+		lineStarts = []
+		needsDisplay = true
+	}
+
+	/// The view scrolled or layout shifted; just redraw. (Kept separate from
+	/// `noteTextChanged` so the per-scroll path does no text scanning.)
 	func invalidateLineNumbers() {
-		let count = lineCount()
-		if count != lastLineCount {
-			lastLineCount = count
-			ruleThickness = thickness(for: count)
-		}
 		needsDisplay = true
 	}
 
 	override func drawHashMarksAndLabels(in rect: NSRect) {
 		guard let textView, let layoutManager = textView.layoutManager,
+			  let container = textView.textContainer,
 			  let clipView = scrollView?.contentView else { return }
+		rebuildLineStartsIfNeeded()
+		guard !lineStarts.isEmpty else { return }
 
-		let string = textView.string as NSString
 		let origin = textView.textContainerOrigin
 		let scrollOffset = clipView.bounds.origin.y
 		let visibleHeight = clipView.bounds.height
-		let allGlyphs = NSRange(location: 0, length: layoutManager.numberOfGlyphs)
-		guard allGlyphs.length > 0 else { return }
+		// Only the fragments actually on screen — never walk from the top.
+		let visibleRect = NSRect(x: 0, y: scrollOffset - origin.y, width: container.size.width, height: visibleHeight)
+		let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: container)
+		guard glyphRange.length > 0 else { return }
 
 		let attrs: [NSAttributedString.Key: Any] = [
 			.font: numberFont(),
 			.foregroundColor: textColor
 		]
 
-		var lineNumber = 1
-		var lastParaStart: Int = -1
-		layoutManager.enumerateLineFragments(forGlyphRange: allGlyphs) { fragmentRect, _, _, glyphRange, stop in
-			let charIndex = layoutManager.characterIndexForGlyph(at: glyphRange.location)
-			let paraRange = string.paragraphRange(for: NSRange(location: charIndex, length: 0))
-			guard paraRange.location != lastParaStart else { return }
-			lastParaStart = paraRange.location
+		layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, fragmentGlyphs, _ in
+			let charIndex = layoutManager.characterIndexForGlyph(at: fragmentGlyphs.location)
+			let line = self.lineIndex(for: charIndex)
+			// Wrapped continuations of a hard line carry no number.
+			guard charIndex == self.lineStarts[line] else { return }
+			let rulerY = fragmentRect.origin.y + origin.y - scrollOffset
+			guard rulerY + fragmentRect.height >= 0, rulerY < visibleHeight else { return }
 
-			let docY = fragmentRect.origin.y + origin.y
-			let rulerY = docY - scrollOffset
-
-			if rulerY >= visibleHeight {
-				// Everything past here is below the visible window, so don't
-				// keep walking the rest of the document on every scroll tick.
-				stop.pointee = true
-				return
-			}
-
-			guard rulerY + fragmentRect.height >= 0 else {
-				lineNumber += 1
-				return
-			}
-
-			let numStr = "\(lineNumber)" as NSString
+			let numStr = "\(line + 1)" as NSString
 			let size = numStr.size(withAttributes: attrs)
 			let x = self.ruleThickness - size.width - self.gutterPadding
 			numStr.draw(at: NSPoint(x: x, y: rulerY + (fragmentRect.height - size.height) / 2), withAttributes: attrs)
-			lineNumber += 1
 		}
 	}
 
-	private func lineCount() -> Int {
-		guard let string = textView?.string else { return 0 }
-		var count = 1
-		for unit in string.utf8 where unit == 0x0A { count += 1 }
-		return count
+	/// Index of the hard line containing the UTF-16 offset (binary search).
+	private func lineIndex(for charIndex: Int) -> Int {
+		var low = 0, high = lineStarts.count - 1
+		while low < high {
+			let mid = (low + high + 1) / 2
+			if lineStarts[mid] <= charIndex { low = mid } else { high = mid - 1 }
+		}
+		return low
+	}
+
+	private func rebuildLineStartsIfNeeded() {
+		guard lineStarts.isEmpty, let string = textView?.string else { return }
+		var starts = [0]
+		var offset = 0
+		for unit in string.utf16 {
+			offset += 1
+			if unit == 0x0A { starts.append(offset) }
+		}
+		lineStarts = starts
+		ruleThickness = thickness(for: starts.count)
 	}
 
 	private func numberFont() -> NSFont {

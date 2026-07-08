@@ -84,7 +84,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.horizontalScrollElasticity = .none
 		scrollView.autohidesScrollers = true
 		scrollView.contentView.postsBoundsChangedNotifications = true
-		applyTheme(to: textView, scrollView: scrollView)
+		applyTheme(to: textView, scrollView: scrollView, coordinator: context.coordinator)
 		updateRuler(scrollView: scrollView, textView: textView)
 		updateHighlighting(textView: textView)
 
@@ -162,7 +162,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			textView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 			context.coordinator.lastAppliedFontSize = fontSize
 		}
-		applyTheme(to: textView, scrollView: scrollView)
+		applyTheme(to: textView, scrollView: scrollView, coordinator: context.coordinator)
 		updateRuler(scrollView: scrollView, textView: textView)
 		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
@@ -170,6 +170,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if MarkdownSplitSyncLog.enabled {
 				NSLog("[SplitSync] raw string reassigned (viewLen=%d textLen=%d)", (textView.string as NSString).length, (text as NSString).length)
 			}
+			(scrollView.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			let sel = textView.selectedRange()
 			textView.string = text
 			let clampedLoc = min(sel.location, (text as NSString).length)
@@ -325,8 +326,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		updateHighlighting(textView: textView)
 	}
 
-	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView) {
+	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView, coordinator: Coordinator) {
 		guard let theme else { return }
+		// Only on actual theme changes: `NSTextView.textColor`'s setter
+		// rewrites the attribute across the entire text storage even when the
+		// color is unchanged, invalidating layout for the whole document.
+		// Running that on every updateNSView (scroll state churn re-enters it
+		// per scroll turn) forced TextKit to re-lay-out from the top to the
+		// viewport each frame — large files crawled when scrolled deep.
+		let signature = theme.signature
+		guard signature != coordinator.lastAppliedThemeSignature else { return }
+		coordinator.lastAppliedThemeSignature = signature
 		let bg = NSColor(theme.backgroundColor)
 		let fg = NSColor(theme.textColor)
 		textView.backgroundColor = bg
@@ -359,6 +369,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
 		var lastHighlightedThemeSignature: String?
+		var lastAppliedThemeSignature: String?
 		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
 		var highlightDebounceTimer: Timer?
@@ -412,7 +423,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard let tv = notification.object as? NSTextView else { return }
 			parent.text = tv.string
 			if parent.typewriterMode { centerCursor(in: tv) }
-			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			// Defer the re-highlight off the keystroke hot path: running 9
 			// regexes + a font rewrite on every character was the dominant
 			// source of typing lag. The cache is synced up front so that the
