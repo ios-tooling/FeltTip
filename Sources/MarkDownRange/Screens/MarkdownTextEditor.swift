@@ -70,6 +70,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
 		textView.string = text
+		context.coordinator.scheduleIncrementalLayout(for: textView)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
 		// re-styling to the paragraph that actually changed.
@@ -175,14 +176,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			textView.string = text
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
-			// Force a full-document layout pass after loading new text so
-			// TextKit doesn't dribble out per-chunk relayouts as the user
-			// scrolls into previously unseen regions — the visible symptom
-			// was a fraction-of-second pause every screenful, even with
-			// syntax highlighting and line numbers disabled.
-			if let lm = textView.layoutManager {
-				lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
-			}
+			context.coordinator.scheduleIncrementalLayout(for: textView)
 		}
 
 		// Host-driven caret restore (undo/redo): once per token, place the
@@ -363,6 +357,34 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastReportedScrollOffset: CGFloat = -1
 		/// An end-of-turn scroll report is queued (see the bounds observer).
 		var scrollReportScheduled = false
+		/// In-flight incremental pre-layout of freshly set text.
+		var prelayoutTask: Task<Void, Never>?
+
+		/// Lay the document out ahead of scrolling. TextKit lays out lazily,
+		/// so unvisited regions stall the scroll as they're reached — a
+		/// fraction-of-second pause every screenful, worst deep in large
+		/// files. A synchronous full pass fixes that but beachballs multi-
+		/// hundred-KB documents at open, so big documents are laid out in
+		/// chunks spread across runloop turns instead.
+		func scheduleIncrementalLayout(for textView: NSTextView) {
+			prelayoutTask?.cancel()
+			guard let layoutManager = textView.layoutManager else { return }
+			let length = (textView.string as NSString).length
+			guard length > 100_000 else {
+				layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: length))
+				return
+			}
+			prelayoutTask = Task { @MainActor [weak textView] in
+				var location = 0
+				while location < length, !Task.isCancelled {
+					guard let textView, let layoutManager = textView.layoutManager else { return }
+					let end = min(location + 30_000, length)
+					layoutManager.ensureLayout(forCharacterRange: NSRange(location: location, length: end - location))
+					location = end
+					try? await Task.sleep(for: .milliseconds(10))
+				}
+			}
+		}
 		var isUpdatingFromSwiftUI = false
 		var lastAppliedFontSize: CGFloat = 0
 		var lastHighlightedText: String?
