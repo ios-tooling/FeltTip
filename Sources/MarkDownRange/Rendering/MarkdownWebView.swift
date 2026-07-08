@@ -602,9 +602,12 @@ extension MarkdownWebView.Coordinator {
 	  document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
 	    el.contentEditable = 'false';
 	  });
-	  var pending = null;
-	  // Stamp shift to apply once the browser lands the pending edit in the DOM.
-	  var pendingShift = null;
+	  // Edits awaiting their `input` event, oldest first. A QUEUE, not a slot:
+	  // WebKit batches multiple editing commands into one turn — typing a
+	  // quote both inserts it AND retroactively curls the previous quote via
+	  // insertReplacementText — and a single slot dropped all but the last
+	  // edit, desyncing the source and getting the batch rejected.
+	  var pendingEdits = [];
 	  // A structural edit or desync was posted; swallow input until the host's
 	  // re-render (which reinjects this script) so nothing maps from a source
 	  // that's about to change shape.
@@ -718,8 +721,7 @@ extension MarkdownWebView.Coordinator {
 	  // drop any in-flight edit state — its offsets described the old DOM —
 	  // and re-run the per-content setup. The body's own listeners survive.
 	  window.__mdAfterSwap = function () {
-	    pending = null;
-	    pendingShift = null;
+	    pendingEdits = [];
 	    frozen = false;
 	    composing = null;
 	    document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
@@ -928,8 +930,8 @@ extension MarkdownWebView.Coordinator {
 	        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start + data.length });
 	        return;
 	      }
-	      pending = { start: start, end: end, text: data, expected: expected, before: before, after: after };
-	      pendingShift = { start: start, delta: data.length - (end - start), span: startSpan };
+	      pendingEdits.push({ msg: { start: start, end: end, text: data, expected: expected, before: before, after: after },
+	                          shift: { start: start, delta: data.length - (end - start), span: startSpan } });
 	      return;
 	    }
 	    if (type === 'deleteContentBackward' || type === 'deleteContentForward' ||
@@ -940,8 +942,8 @@ extension MarkdownWebView.Coordinator {
 	        post({ start: start, end: end, text: '', expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start });
 	        return;
 	      }
-	      pending = { start: start, end: end, text: '', expected: expected, before: before, after: after };
-	      pendingShift = { start: start, delta: -(end - start), span: startSpan };
+	      pendingEdits.push({ msg: { start: start, end: end, text: '', expected: expected, before: before, after: after },
+	                          shift: { start: start, delta: -(end - start), span: startSpan } });
 	      return;
 	    }
 
@@ -966,8 +968,11 @@ extension MarkdownWebView.Coordinator {
 	    e.preventDefault();  // line breaks, paste, etc. — not yet mapped
 	  });
 	  document.body.addEventListener('input', function () {
-	    if (pending) { post(pending); pending = null; }
-	    if (pendingShift) { shiftStamps(pendingShift.start, pendingShift.delta, pendingShift.span); pendingShift = null; }
+	    while (pendingEdits.length) {
+	      var queued = pendingEdits.shift();
+	      post(queued.msg);
+	      if (queued.shift) { shiftStamps(queued.shift.start, queued.shift.delta, queued.shift.span); }
+	    }
 	  });
 	  // Composition (IME, dead keys, macOS inline predictive text) can't be
 	  // vetoed or mapped per keystroke: marked text lives in the DOM without

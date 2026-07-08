@@ -33,8 +33,19 @@ import Testing
 	@Test @MainActor func editorScriptShiftsStampsAfterInPlaceEdits() {
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("function shiftStamps(start, delta, editedSpan)"))
-		#expect(script.contains("pendingShift = { start: start, delta: data.length - (end - start), span: startSpan };"))
-		#expect(script.contains("if (pendingShift) { shiftStamps(pendingShift.start, pendingShift.delta, pendingShift.span); pendingShift = null; }"))
+		#expect(script.contains("shift: { start: start, delta: data.length - (end - start), span: startSpan }"))
+		#expect(script.contains("if (queued.shift) { shiftStamps(queued.shift.start, queued.shift.delta, queued.shift.span); }"))
+	}
+
+	@Test @MainActor func editorScriptQueuesBatchedEdits() {
+		// WebKit batches editing commands (typing a quote inserts it AND
+		// retroactively curls the previous quote); a single pending slot
+		// dropped all but the last edit in the batch.
+		let script = MarkdownWebView.Coordinator.editorScript
+		#expect(script.contains("var pendingEdits = [];"))
+		#expect(script.contains("pendingEdits.push({ msg: { start: start, end: end, text: data"))
+		#expect(script.contains("pendingEdits.push({ msg: { start: start, end: end, text: ''"))
+		#expect(script.contains("while (pendingEdits.length) {"))
 	}
 
 	@Test @MainActor func editorScriptSendsContextAndEscalatesCrossRunEdits() {
