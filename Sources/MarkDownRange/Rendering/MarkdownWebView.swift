@@ -166,7 +166,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// scheme handler is the supported way to show local images.
 	static let resourceScheme = "markerlocalres"
 
-	public func makeNSView(context: Context) -> WKWebView {
+	public func makeNSView(context: Context) -> MarkdownWebViewFindHost {
 		let config = WKWebViewConfiguration()
 		config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "mdedit")
 		config.setURLSchemeHandler(LocalResourceSchemeHandler(coordinator: context.coordinator), forURLScheme: Self.resourceScheme)
@@ -174,10 +174,13 @@ public struct MarkdownWebView: NSViewRepresentable {
 		webView.navigationDelegate = context.coordinator
 		webView.setValue(false, forKey: "drawsBackground")
 		context.coordinator.webView = webView
-		return webView
+		// The host stacks the standard find bar above the web view — hosts
+		// route ⌘F to it the same way they would to an NSTextView.
+		return MarkdownWebViewFindHost(webView: webView)
 	}
 
-	public func updateNSView(_ webView: WKWebView, context: Context) {
+	public func updateNSView(_ host: MarkdownWebViewFindHost, context: Context) {
+		let webView = host.webView
 		context.coordinator.parent = self
 		// Pick up a pending caret restore (undo/redo) before the text-driven
 		// reload runs, so `didFinish` places the caret on the freshly stamped DOM.
