@@ -51,6 +51,20 @@ public struct MarkdownCaretTarget: Equatable, Sendable {
 	}
 }
 
+/// Token-gated request to scroll a rendered source position into view —
+/// outline/table-of-contents navigation for the web renderer, which maps the
+/// offset to the nearest stamped run. Token semantics match
+/// `MarkdownCaretTarget`.
+public struct MarkdownSourceScrollTarget: Equatable, Sendable {
+	public let offset: Int
+	public let token: Int
+
+	public init(offset: Int, token: Int) {
+		self.offset = offset
+		self.token = token
+	}
+}
+
 /// Per-phase wall-clock timings for a render pass, in milliseconds. Emitted for
 /// benchmarking; not meant to drive product behavior.
 public struct MarkdownRenderPhases: Sendable {

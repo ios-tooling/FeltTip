@@ -51,6 +51,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 	var scrollTarget: MarkdownScrollTarget?
 	/// Apply a relative pixel scroll from outside; token-gated.
 	var scrollDelta: MarkdownScrollDelta?
+	/// Scroll a source offset's rendered run into view (token-gated). Drives
+	/// outline/table-of-contents navigation.
+	var sourceScrollTarget: MarkdownSourceScrollTarget?
 	/// Apply this fraction (0…1 of scrollable height) once, after the first render.
 	var initialScrollFraction: Double?
 	/// Place the caret at a source offset (token-gated). Used by the host to
@@ -134,6 +137,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Scroll the run rendering `target.offset` into view (token-gated).
+	/// Used for outline/table-of-contents navigation.
+	public func scrollToSourceOffset(_ target: MarkdownSourceScrollTarget?) -> Self {
+		var copy = self
+		copy.sourceScrollTarget = target
+		return copy
+	}
+
 	/// Apply `fraction` (0…1 of scrollable height) once, after the first render.
 	public func initialScrollFraction(_ fraction: Double?) -> Self {
 		var copy = self
@@ -210,6 +221,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 		/// survives unrelated re-renders doesn't re-scroll.
 		private var lastScrollTargetToken: Int?
 		private var lastScrollDeltaToken: Int?
+		private var lastSourceScrollToken: Int?
 		/// Caret-restore token already applied, so a binding that survives
 		/// unrelated re-renders doesn't re-place the caret.
 		private var lastCaretToken: Int?
@@ -390,6 +402,11 @@ public struct MarkdownWebView: NSViewRepresentable {
 				lastScrollDeltaToken = delta.token
 				log("scroll control: byPixels \(delta.deltaY) token \(delta.token)")
 				webView.evaluateJavaScript("window.__mdScrollByPixels && window.__mdScrollByPixels(\(delta.deltaY));", completionHandler: nil)
+			}
+			if let target = parent.sourceScrollTarget, target.token != lastSourceScrollToken {
+				lastSourceScrollToken = target.token
+				log("scroll control: toSourceOffset \(target.offset) token \(target.token)")
+				webView.evaluateJavaScript("window.__mdScrollToSourceOffset && window.__mdScrollToSourceOffset(\(target.offset));", completionHandler: nil)
 			}
 		}
 
@@ -1156,6 +1173,23 @@ extension MarkdownWebView.Coordinator {
 	    var target = Math.max(0, (window.scrollY || 0) + dy);
 	    driven = { y: target, until: Date.now() + 500 };
 	    window.scrollBy(0, dy);
+	  };
+	  // Scroll the run rendering a source offset into view (outline
+	  // navigation). Heading offsets point at their `#` markers, which no run
+	  // covers, so target the first run ending at or after the offset.
+	  window.__mdScrollToSourceOffset = function (offset) {
+	    var spans = document.querySelectorAll('[data-s]');
+	    var best = null;
+	    for (var i = 0; i < spans.length; i++) {
+	      var base = parseInt(spans[i].getAttribute('data-s'), 10);
+	      if (base + spans[i].textContent.length >= offset) { best = spans[i]; break; }
+	    }
+	    if (!best && spans.length) { best = spans[spans.length - 1]; }
+	    if (!best) { return; }
+	    var maxY = Math.max(docHeight() - window.innerHeight, 0);
+	    var y = Math.max(0, Math.min(maxY, best.getBoundingClientRect().top + window.scrollY - 12));
+	    driven = { y: y, until: Date.now() + 500 };
+	    window.scrollTo(0, y);
 	  };
 	  // Restore a scroll position on a freshly loaded page, then optionally
 	  // place the caret. Straight scrollTo at didFinish clamps to zero — the

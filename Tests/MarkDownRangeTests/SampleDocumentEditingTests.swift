@@ -330,6 +330,17 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		#expect(abs(scrollY - target) < 60, "scroll moved from \(target) to \(scrollY) after Return")
 	}
 
+	@Test func sourceOffsetScrollTargetsTheHeading() async throws {
+		// Outline navigation: a heading's source offset scrolls its run into
+		// view, even though the offset points at the "#" markers themselves.
+		let host = try await makeHost()
+		let offset = (host.text as NSString).range(of: "### Loose lips").location
+		try await host.run("window.__mdScrollToSourceOffset(\(offset))")
+		try await Task.sleep(for: .milliseconds(200))
+		let scrollY = try await host.evaluate("String(Math.round(window.scrollY))").flatMap { Double($0) } ?? -1
+		#expect(scrollY > 200, "outline scroll did not move the view (scrollY \(scrollY))")
+	}
+
 	@Test func externalTextChangeSwapsContentWithoutNavigating() async throws {
 		// Typing in the raw pane re-renders the preview; that must be an
 		// in-place body swap (no navigation, no flash, scroll kept). A page
