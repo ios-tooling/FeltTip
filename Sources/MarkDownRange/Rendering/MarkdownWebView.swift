@@ -196,7 +196,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 		private var selfEditedText: String?
 		/// Last scroll position reported by the page, restored after any reload
 		/// so re-renders don't jump to the top.
-		private var lastScrollY: Double = 0
+		/// Internal (not private) so tests can seed it — the page reports it
+		/// through a requestAnimationFrame throttle that headless test windows
+		/// don't reliably run.
+		var lastScrollY: Double = 0
 		/// Source offset to place the caret at after a structural re-render.
 		private var pendingCaret: Int?
 		/// The source the DOM currently reflects. Advanced synchronously on every
@@ -334,15 +337,21 @@ public struct MarkdownWebView: NSViewRepresentable {
 			// edit wins; then a one-time initial fraction; then the last offset.
 			if let caret = pendingCaret {
 				pendingCaret = nil
-				log("didFinish: placing caret at \(caret)")
-				webView.evaluateJavaScript("window.__mdPlaceCaret && window.__mdPlaceCaret(\(caret));", completionHandler: nil)
+				log("didFinish: placing caret at \(caret) (scrollY \(lastScrollY))")
+				// Put the view back where the user was FIRST — the reload
+				// starts at the top, and placing the caret from there parked
+				// it at the bottom edge of the viewport. With the position
+				// restored, the caret's own scrollIntoView(nearest) is a
+				// no-op unless the caret would be off-screen (e.g. Return on
+				// the last visible line), which nudges minimally.
+				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), \(caret));", completionHandler: nil)
 			} else if !didApplyInitialScroll, let initial = parent.initialScrollFraction {
 				didApplyInitialScroll = true
 				log("didFinish: initial scroll fraction \(initial)")
 				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(initial));", completionHandler: nil)
 			} else if lastScrollY > 0 {
 				log("didFinish: restoring scrollY \(lastScrollY)")
-				webView.evaluateJavaScript("window.scrollTo(0, \(lastScrollY));", completionHandler: nil)
+				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null);", completionHandler: nil)
 			}
 		}
 
@@ -658,17 +667,23 @@ extension MarkdownWebView.Coordinator {
 	  }
 	  // Element-level positions (block-boundary target ranges: paragraph
 	  // merges, whole-block selections) resolve to the nearest text-node
-	  // position so they map to the source like any other.
+	  // position so they map to the source like any other. A child with no
+	  // text inside (the <br>-only caret placeholder Enter creates) anchors
+	  // on the child element itself — the offset arithmetic handles element
+	  // positions inside a stamped run.
 	  function normalizePosition(node, offset) {
 	    if (node.nodeType === 3 || !node.childNodes.length) return { node: node, offset: offset };
 	    var t;
 	    if (offset > 0) {
-	      t = lastTextIn(node.childNodes[Math.min(offset, node.childNodes.length) - 1]);
+	      var last = node.childNodes[Math.min(offset, node.childNodes.length) - 1];
+	      t = lastTextIn(last);
 	      if (t) return { node: t, offset: t.nodeValue.length };
+	      return { node: last, offset: last.childNodes ? last.childNodes.length : 0 };
 	    }
-	    t = firstTextIn(node.childNodes[Math.min(offset, node.childNodes.length - 1)]);
+	    var first = node.childNodes[Math.min(offset, node.childNodes.length - 1)];
+	    t = firstTextIn(first);
 	    if (t) return { node: t, offset: 0 };
-	    return { node: node, offset: offset };
+	    return { node: first, offset: 0 };
 	  }
 	  // Source offset for a DOM position, or null if it isn't inside a run.
 	  function sourceOffsetOf(node, offset) {
@@ -729,28 +744,62 @@ extension MarkdownWebView.Coordinator {
 	    });
 	    installLinkOpenButtons();
 	  };
+	  function placeCaretIn(node, offset, anchor) {
+	    // Re-focus the editable body: a reload (e.g. after undo) clears DOM
+	    // focus, so without this the caret wouldn't blink and typing wouldn't
+	    // resume. Only reached when the host armed a caret for the focused
+	    // web view, so this never steals focus from another split pane.
+	    // preventScroll: focusing the body otherwise scrolls to the top,
+	    // wiping the scroll position that was just restored.
+	    document.body.focus({ preventScroll: true });
+	    var sel = window.getSelection(), r = document.createRange();
+	    r.setStart(node, offset); r.collapse(true);
+	    sel.removeAllRanges(); sel.addRange(r);
+	    anchor.scrollIntoView({ block: 'nearest' });
+	  }
+	  function blockOf(el) {
+	    return el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th') || el;
+	  }
 	  // Place the caret at a source offset after a structural re-render.
 	  window.__mdPlaceCaret = function (offset) {
 	    var spans = document.querySelectorAll('[data-s]');
+	    var prev = null, next = null;
 	    for (var i = 0; i < spans.length; i++) {
 	      var base = parseInt(spans[i].getAttribute('data-s'), 10);
 	      var len = textLength(spans[i]);
 	      if (offset >= base && offset <= base + len) {
 	        var spot = locate(spans[i], offset - base);
-	        if (spot) {
-	          // Re-focus the editable body: a reload (e.g. after undo) clears DOM
-	          // focus, so without this the caret wouldn't blink and typing wouldn't
-	          // resume. Only reached when the host armed a caret for the focused
-	          // web view, so this never steals focus from another split pane.
-	          document.body.focus();
-	          var sel = window.getSelection(), r = document.createRange();
-	          r.setStart(spot.node, spot.offset); r.collapse(true);
-	          sel.removeAllRanges(); sel.addRange(r);
-	          spans[i].scrollIntoView({ block: 'nearest' });
-	        }
+	        if (spot) { placeCaretIn(spot.node, spot.offset, spans[i]); }
 	        return;
 	      }
+	      if (base + len < offset) { prev = spans[i]; }
+	      if (base > offset && !next) { next = spans[i]; }
 	    }
+	    // No run covers the offset: the caret sits in markdown the renderer
+	    // has no text for — the empty paragraph Enter just created. Without a
+	    // home the caret was silently dropped and the fresh page sat at the
+	    // top of the document. Give the offset a stamped, empty run so the
+	    // caret lands there and the next keystroke maps to the right spot.
+	    var holder = document.createElement('span');
+	    holder.setAttribute('data-s', String(offset));
+	    holder.appendChild(document.createElement('br'));
+	    var prevBlock = prev ? blockOf(prev) : null;
+	    var nextBlock = next ? blockOf(next) : null;
+	    var target = null;
+	    // Prefer an empty block the renderer DID emit between the neighbours
+	    // (an empty list item renders as a bare <li>).
+	    if (prevBlock && prevBlock.nextElementSibling && prevBlock.nextElementSibling !== nextBlock
+	        && textLength(prevBlock.nextElementSibling) === 0
+	        && !prevBlock.nextElementSibling.hasAttribute('data-s')) {
+	      target = prevBlock.nextElementSibling;
+	    } else {
+	      target = document.createElement('p');
+	      if (prevBlock && prevBlock.parentNode) { prevBlock.insertAdjacentElement('afterend', target); }
+	      else if (nextBlock && nextBlock.parentNode) { nextBlock.insertAdjacentElement('beforebegin', target); }
+	      else { document.body.appendChild(target); }
+	    }
+	    target.insertBefore(holder, target.firstChild);
+	    placeCaretIn(holder, 0, holder);
 	  };
 	  // DOM position for the `target`-th character inside `root`.
 	  function locate(root, target) {
@@ -1107,6 +1156,27 @@ extension MarkdownWebView.Coordinator {
 	    var target = Math.max(0, (window.scrollY || 0) + dy);
 	    driven = { y: target, until: Date.now() + 500 };
 	    window.scrollBy(0, dy);
+	  };
+	  // Restore a scroll position on a freshly loaded page, then optionally
+	  // place the caret. Straight scrollTo at didFinish clamps to zero — the
+	  // content hasn't laid out yet — so retry until the page is tall enough
+	  // (or a deadline passes), and only then let the caret nudge the view.
+	  window.__mdRestoreScrollThenCaret = function (y, caret) {
+	    var deadline = Date.now() + 1000;
+	    function attempt() {
+	      var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
+	      if (maxY >= y || Date.now() > deadline) {
+	        var target = Math.min(y, Math.max(maxY, 0));
+	        driven = { y: target, until: Date.now() + 500 };
+	        window.scrollTo(0, target);
+	        if (caret != null && window.__mdPlaceCaret) { window.__mdPlaceCaret(caret); }
+	      } else {
+	        // setTimeout, not requestAnimationFrame: rAF doesn't run in
+	        // occluded windows, and the restore must not depend on visibility.
+	        window.setTimeout(attempt, 16);
+	      }
+	    }
+	    attempt();
 	  };
 	  // In-place content update from the host (debounced re-render while the
 	  // user types in the other pane of a split). Swapping the body avoids a

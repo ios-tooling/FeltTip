@@ -257,6 +257,79 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		try await type("B1", after: "Still Top Secret", in: host)
 	}
 
+	@Test func enterAtParagraphEndKeepsTheCaretUsable() async throws {
+		// Return splices "\n\n" and re-renders; the caret offset lands in an
+		// empty paragraph markdown renders NO text for. Without a synthesized
+		// placeholder run the caret was dropped and the page sat at the top —
+		// and the next keystroke had nowhere to map.
+		let host = EditorHost(text: "Alpha\n\nBeta")
+		try await host.waitUntilReady()
+		try await host.run("window.__testNonce = 1; window.__mdPlaceCaret(5); document.execCommand('insertParagraph');")
+		try await waitForText("Alpha\n\n\n\nBeta", in: host, context: "enter at paragraph end")
+		try await host.waitForFreshPage()
+		try await host.waitUntilReady()
+		// The placeholder run must exist at the caret offset, and typing into
+		// it must splice into the new empty paragraph.
+		let holder = try await host.evaluate("document.querySelector('[data-s=\"7\"]') ? 'yes' : 'no'")
+		#expect(holder == "yes", "no caret placeholder for the empty paragraph")
+		try await host.run("document.execCommand('insertText', false, 'X')")
+		try await waitForText("Alpha\n\nX\n\nBeta", in: host, context: "typing into the new paragraph")
+	}
+
+	@Test func backspaceAfterEnterRemovesTheNewLine() async throws {
+		// Return creates an empty paragraph (with a synthesized caret
+		// placeholder); Backspace right after must undo it, merging back to
+		// the original source.
+		let host = EditorHost(text: "Alpha\n\nBeta")
+		try await host.waitUntilReady()
+		try await host.run("window.__testNonce = 1; window.__mdPlaceCaret(5); document.execCommand('insertParagraph');")
+		try await waitForText("Alpha\n\n\n\nBeta", in: host, context: "enter at paragraph end")
+		try await host.waitForFreshPage()
+		try await host.waitUntilReady()
+		try await host.run("document.execCommand('delete');")
+		try await waitForText("Alpha\n\nBeta", in: host, context: "backspace undoing the enter")
+	}
+
+
+	@Test func enterKeepsTheScrollPosition() async throws {
+		// Return re-renders the page; the view must come back to where the
+		// user was, not to the top and not with the caret parked at the
+		// bottom edge of the viewport.
+		let host = try await makeHost()
+		let ns = host.text as NSString
+		let caret = ns.range(of: "stay a surprise").location
+		// Scroll so the caret sits comfortably mid-viewport. Layout metrics
+		// vary run to run, so derive the position from the caret's own run —
+		// a fixed offset sometimes left the caret off-screen, where a
+		// (correct) minimal nudge would fail the equality check.
+		let target = try await host.evaluate("""
+			(function () {
+			  var spans = document.querySelectorAll('[data-s]');
+			  for (var i = 0; i < spans.length; i++) {
+			    var base = parseInt(spans[i].getAttribute('data-s'), 10);
+			    if (base <= \(caret) && \(caret) <= base + spans[i].textContent.length) {
+			      var y = Math.max(0, Math.round(spans[i].getBoundingClientRect().top + window.scrollY - 300));
+			      window.scrollTo(0, y);
+			      return String(Math.round(window.scrollY));   // the ACHIEVED position (clamped to maxY)
+			    }
+			  }
+			  return "-1";
+			})()
+			""").flatMap { Double($0) } ?? -1
+		#expect(target > 0, "couldn't derive a scroll target")
+		// The page reports scroll positions through a rAF throttle that
+		// doesn't reliably run headless; seed the tracked position directly.
+		host.coordinator.lastScrollY = target
+		let expected = ns.replacingCharacters(in: NSRange(location: caret, length: 0), with: "\n\n")
+		try await host.run("window.__testNonce = 1; window.__mdPlaceCaret(\(caret)); document.execCommand('insertParagraph');")
+		try await waitForText(expected, in: host, context: "enter mid-document")
+		try await host.waitForFreshPage()
+		try await host.waitUntilReady()
+		try await Task.sleep(for: .milliseconds(400))   // let the restore land
+		let scrollY = try await host.evaluate("String(Math.round(window.scrollY))").flatMap { Double($0) } ?? -1
+		#expect(abs(scrollY - target) < 60, "scroll moved from \(target) to \(scrollY) after Return")
+	}
+
 	@Test func externalTextChangeSwapsContentWithoutNavigating() async throws {
 		// Typing in the raw pane re-renders the preview; that must be an
 		// in-place body swap (no navigation, no flash, scroll kept). A page
