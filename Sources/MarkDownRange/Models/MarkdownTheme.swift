@@ -46,6 +46,9 @@ public struct MarkdownTheme: Equatable, Sendable {
 	/// Background tint applied to every other body row in tables.
 	/// `nil` disables the stripe effect entirely.
 	public var alternateRowBackground: Color?
+	/// Wash used to mirror the other pane's selection in a split view.
+	/// Carries its own opacity — it draws over regular text.
+	public var mirrorHighlightColor: Color
 	/// Font family used for body and heading text in the rendered output.
 	/// Inline code and code blocks always use monospaced regardless of this.
 	public var fontFamily: MarkdownFontFamily
@@ -62,6 +65,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		backgroundColor: Color = Color(.textBackgroundColor),
 		headingColor: Color? = nil,
 		alternateRowBackground: Color? = nil,
+		mirrorHighlightColor: Color? = nil,
 		underlineLinks: Bool = false,
 		fontFamily: MarkdownFontFamily = .system
 	) {
@@ -73,6 +77,7 @@ public struct MarkdownTheme: Equatable, Sendable {
 		self.backgroundColor = backgroundColor
 		self.headingColor = headingColor ?? linkColor
 		self.alternateRowBackground = alternateRowBackground
+		self.mirrorHighlightColor = mirrorHighlightColor ?? Color(.sRGB, red: 0.49, green: 0.61, blue: 1.0, opacity: 0.2)
 		self.underlineLinks = underlineLinks
 		self.fontFamily = fontFamily
 	}

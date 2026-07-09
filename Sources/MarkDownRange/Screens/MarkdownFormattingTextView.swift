@@ -8,6 +8,16 @@ import AppKit
 
 public class MarkdownFormattingTextView: NSTextView {
 
+	override public func becomeFirstResponder() -> Bool {
+		let accepted = super.becomeFirstResponder()
+		if accepted, let coordinator = delegate as? MarkdownTextEditor.Coordinator {
+			// Becoming the active pane: report the current selection right
+			// away so the host clears this pane's now-stale mirror.
+			coordinator.reportSelectionOnFocus(self)
+		}
+		return accepted
+	}
+
 	override public func performKeyEquivalent(with event: NSEvent) -> Bool {
 		// Only when this editor is focused: performKeyEquivalent visits every
 		// view in the window, and in a split the raw pane was consuming the

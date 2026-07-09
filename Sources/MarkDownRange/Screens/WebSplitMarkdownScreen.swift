@@ -70,6 +70,10 @@ public struct WebSplitMarkdownScreen: View {
 	@State private var previewScrollToken = 0
 	@State private var isEditing = false
 	@State private var editLockoutTask: Task<Void, Never>?
+	/// Cross-pane selection mirroring: the focused pane's selection shows as
+	/// an inactive highlight in the other.
+	@State private var previewMirror: NSRange?
+	@State private var rawMirror: NSRange?
 	private static let scrollLockoutMs: Int = 200
 	private static let editLockoutMs: Int = 700
 
@@ -85,6 +89,15 @@ public struct WebSplitMarkdownScreen: View {
 				typewriterMode: typewriterMode,
 				theme: theme,
 				onCursorPositionChanged: { line, col, sel, offset in onCursorPositionChanged?(line, col, sel, offset) },
+				onSelectionChanged: { range in
+					// Any selection activity here makes this the active pane:
+					// its own mirror is stale noise regardless of the new
+					// selection being empty or not.
+					if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw selection -> previewMirror=%@", String(describing: range)) }
+					rawMirror = nil
+					previewMirror = range
+				},
+				mirroredSelection: rawMirror,
 				caretTarget: caretTarget
 			)
 			.frame(minWidth: 150, maxWidth: .infinity)
@@ -104,6 +117,9 @@ public struct WebSplitMarkdownScreen: View {
 	private func suspendSyncWhileEditing() {
 		isEditing = true
 		scrollSource = .none
+		// Edits shift offsets; a stale mirror would highlight the wrong text.
+		previewMirror = nil
+		rawMirror = nil
 		editLockoutTask?.cancel()
 		editLockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.editLockoutMs))
@@ -120,6 +136,12 @@ public struct WebSplitMarkdownScreen: View {
 				? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)
 				: nil)
 			.onScrollFractionChanged { top, _, _ in didScroll(.formatted, fraction: Double(top)) }
+			.onSelectionChanged { range in
+				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] preview selection -> rawMirror=%@", String(describing: range)) }
+				previewMirror = nil
+				rawMirror = range
+			}
+			.mirroredSelection(previewMirror)
 			.caretTarget(caretTarget)
 		if let onCheckboxToggle {
 			view = view.onCheckboxToggle(onCheckboxToggle)

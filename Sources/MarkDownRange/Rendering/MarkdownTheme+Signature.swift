@@ -12,6 +12,6 @@ extension MarkdownTheme {
 	/// that field (e.g. fontFamily in the Theme Builder) gets short-circuited by
 	/// the render cache.
 	var signature: String {
-		"\(textColor.hashValue)|\(linkColor.hashValue)|\(codeBackground.hashValue)|\(codeForeground.hashValue)|\(secondaryColor.hashValue)|\(backgroundColor.hashValue)|\(headingColor.hashValue)|\(alternateRowBackground?.hashValue ?? 0)|\(fontFamily.rawValue)"
+		"\(textColor.hashValue)|\(linkColor.hashValue)|\(codeBackground.hashValue)|\(codeForeground.hashValue)|\(secondaryColor.hashValue)|\(backgroundColor.hashValue)|\(headingColor.hashValue)|\(alternateRowBackground?.hashValue ?? 0)|\(mirrorHighlightColor.hashValue)|\(fontFamily.rawValue)"
 	}
 }

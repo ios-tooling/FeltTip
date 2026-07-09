@@ -20,6 +20,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
+	/// Reports the selected source range whenever this (focused) editor's
+	/// selection changes; nil for a collapsed selection. Feeds the split
+	/// view's cross-pane selection mirroring.
+	var onSelectionChanged: ((NSRange?) -> Void)?
+	/// A selection made in the OTHER pane, shown here as an inactive-selection
+	/// highlight (temporary layout attributes — the real selection, text
+	/// storage, and undo state are untouched).
+	var mirroredSelection: NSRange?
 	var scrollToCharacterOffset: Int?
 	var caretTarget: MarkdownCaretTarget?
 
@@ -33,6 +41,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
+		onSelectionChanged: ((NSRange?) -> Void)? = nil,
+		mirroredSelection: NSRange? = nil,
 		scrollToCharacterOffset: Int? = nil,
 		caretTarget: MarkdownCaretTarget? = nil
 	) {
@@ -45,6 +55,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.typewriterMode = typewriterMode
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
+		self.onSelectionChanged = onSelectionChanged
+		self.mirroredSelection = mirroredSelection
 		self.scrollToCharacterOffset = scrollToCharacterOffset
 		self.caretTarget = caretTarget
 	}
@@ -194,6 +206,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
+		applyMirroredSelection(to: textView, coordinator: context.coordinator)
+
 		if let raw = selectedHeadingID, raw != context.coordinator.lastScrolledID {
 			context.coordinator.lastScrolledID = raw
 			let headingID = raw.components(separatedBy: "\t").first ?? raw
@@ -320,6 +334,29 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		updateHighlighting(textView: textView)
 	}
 
+	/// Show (or clear) the other pane's selection as an inactive-selection
+	/// wash, via temporary attributes so nothing about the document changes.
+	private func applyMirroredSelection(to textView: NSTextView, coordinator: Coordinator) {
+		guard coordinator.lastMirroredSelection != mirroredSelection else { return }
+		let textLength = (textView.string as NSString).length
+		if let previous = coordinator.lastMirroredSelection,
+		   previous.location + previous.length <= textLength {
+			textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: previous)
+		}
+		coordinator.lastMirroredSelection = mirroredSelection
+		if let range = mirroredSelection, range.length > 0, range.location + range.length <= textLength {
+			// A mirror means the OTHER pane is active; this editor's leftover
+			// (unemphasized) selection would read as a second selection.
+			if textView.window?.firstResponder !== textView, textView.selectedRange().length > 0 {
+				textView.setSelectedRange(NSRange(location: textView.selectedRange().location, length: 0))
+			}
+			textView.layoutManager?.addTemporaryAttribute(
+				.backgroundColor,
+				value: theme.map { NSColor($0.mirrorHighlightColor) } ?? .unemphasizedSelectedTextBackgroundColor,
+				forCharacterRange: range)
+		}
+	}
+
 	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView, coordinator: Coordinator) {
 		guard let theme else { return }
 		// Only on actual theme changes: `NSTextView.textColor`'s setter
@@ -392,6 +429,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedSyntaxEnabled: Bool = false
 		var lastHighlightedThemeSignature: String?
 		var lastAppliedThemeSignature: String?
+		var lastMirroredSelection: NSRange?
 		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
 		var highlightDebounceTimer: Timer?
@@ -471,10 +509,33 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
+		/// Focus arrived: report the current selection immediately so the
+		/// split view clears this pane's stale mirror without waiting for a
+		/// selection event — and remove the mirror wash synchronously, since
+		/// the report's round trip back through SwiftUI state is visibly slow.
+		/// `lastMirroredSelection` intentionally stays set: an interleaved
+		/// update with the not-yet-cleared host state must not re-apply it.
+		func reportSelectionOnFocus(_ textView: NSTextView) {
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw becomeFirstResponder mirror=%@ sel=%@", String(describing: lastMirroredSelection), NSStringFromRange(textView.selectedRange()))
+			}
+			if let stale = lastMirroredSelection,
+			   stale.location + stale.length <= (textView.string as NSString).length {
+				textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
+			}
+			guard parent.onSelectionChanged != nil else { return }
+			let range = textView.selectedRange()
+			parent.onSelectionChanged?(range.length > 0 ? range : nil)
+		}
+
 		public func textViewDidChangeSelection(_ notification: Notification) {
 			guard !isUpdatingFromSwiftUI, let tv = notification.object as? NSTextView else { return }
 			if parent.typewriterMode { centerCursor(in: tv) }
 			reportCursorPosition(in: tv)
+			if parent.onSelectionChanged != nil, tv.window?.firstResponder === tv {
+				let range = tv.selectedRange()
+				parent.onSelectionChanged?(range.length > 0 ? range : nil)
+			}
 		}
 
 		private func reportCursorPosition(in textView: NSTextView) {

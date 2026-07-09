@@ -111,6 +111,36 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		#expect(harness.rejections.isEmpty)
 	}
 
+	@Test func mirroredSelectionHighlightsWithoutSelecting() async throws {
+		// The other pane's selection shows as a CSS highlight overlay; the
+		// page's own selection must stay untouched.
+		let harness = EditBridgeHarness(source: "Alpha\n\nBeta")
+		let webView = try await makeEditableWebView(harness: harness)
+		try await run(webView, "window.__mdMirrorSelection(0, 5)")
+		let highlighted = try await evaluate(webView, "CSS.highlights.has('md-mirror') ? 'yes' : 'no'")
+		#expect(highlighted == "yes")
+		let ownSelection = try await evaluate(webView, "window.getSelection().toString()")
+		#expect(ownSelection == "", "mirror must not touch the real selection")
+		// A new mirror replaces the old one — never accumulates.
+		try await run(webView, "window.__mdMirrorSelection(7, 4)")
+		let count = try await evaluate(webView, "String(CSS.highlights.get('md-mirror').size)")
+		#expect(count == "1", "mirror accumulated ranges: \(count ?? "nil")")
+		// Applying a mirror while unfocused clears any leftover real
+		// selection, so the pane never shows two apparent selections.
+		try await run(webView, """
+			var r = document.createRange();
+			var span = document.querySelector('[data-s]');
+			r.selectNodeContents(span);
+			var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+			window.__mdMirrorSelection(7, 4);
+			""")
+		let realSel = try await evaluate(webView, "window.getSelection().toString()")
+		#expect(realSel == "", "stale real selection persisted alongside the mirror")
+		try await run(webView, "window.__mdMirrorSelection(null, 0)")
+		let cleared = try await evaluate(webView, "CSS.highlights.has('md-mirror') ? 'yes' : 'no'")
+		#expect(cleared == "no")
+	}
+
 	@Test func compositionReconcilesTheWholeRunAtOnce() async throws {
 		// The inline-predictive-text scenario: while a composition is live,
 		// plain keystrokes still arrive as ordinary insertText events, but

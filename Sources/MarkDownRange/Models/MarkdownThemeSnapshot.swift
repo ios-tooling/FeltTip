@@ -23,6 +23,7 @@ public struct MarkdownThemeSnapshot: Codable, Sendable, Equatable {
 	public var backgroundColor: ColorComponents
 	public var headingColor: ColorComponents
 	public var alternateRowBackground: ColorComponents?
+	public var mirrorHighlight: ColorComponents?
 	public var fontFamily: String
 
 	public struct ColorComponents: Codable, Sendable, Equatable {
@@ -50,6 +51,7 @@ public extension MarkdownTheme {
 			backgroundColor: backgroundColor.components,
 			headingColor: headingColor.components,
 			alternateRowBackground: alternateRowBackground?.components,
+			mirrorHighlight: mirrorHighlightColor.components,
 			fontFamily: fontFamily.rawValue
 		)
 	}
@@ -64,6 +66,7 @@ public extension MarkdownTheme {
 			backgroundColor: snapshot.backgroundColor.color,
 			headingColor: snapshot.headingColor.color,
 			alternateRowBackground: snapshot.alternateRowBackground?.color,
+			mirrorHighlightColor: snapshot.mirrorHighlight?.color,
 			fontFamily: MarkdownFontFamily(rawValue: snapshot.fontFamily) ?? .system
 		)
 	}

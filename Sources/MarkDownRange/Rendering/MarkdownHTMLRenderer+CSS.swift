@@ -78,6 +78,7 @@ extension MarkdownHTMLRenderer {
 			margin: 2em 0;
 		}
 		img { max-width: 100%; height: auto; }
+		::highlight(md-mirror) { background-color: \(rgba(theme.mirrorHighlightColor)); }
 		.mermaid-diagram { text-align: center; margin: 1em 0; }
 		.mermaid-diagram svg { max-width: 100%; height: auto; }
 		.image-row {

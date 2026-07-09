@@ -59,6 +59,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// Place the caret at a source offset (token-gated). Used by the host to
 	/// restore the insertion point after an undo/redo re-renders the page.
 	var caretTarget: MarkdownCaretTarget?
+	/// Reports the selected source range when this (focused) page's selection
+	/// changes; nil for a collapsed selection. Feeds cross-pane mirroring.
+	var onSelectionChanged: ((NSRange?) -> Void)?
+	/// A selection made in the OTHER pane, shown here as a highlight overlay
+	/// (CSS custom highlight — the page's real selection is untouched).
+	var mirroredSelection: NSRange?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -160,6 +166,20 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Reports selection changes as source ranges (nil when collapsed).
+	public func onSelectionChanged(_ callback: @escaping (NSRange?) -> Void) -> Self {
+		var copy = self
+		copy.onSelectionChanged = callback
+		return copy
+	}
+
+	/// Show the other pane's selection as a non-invasive highlight overlay.
+	public func mirroredSelection(_ range: NSRange?) -> Self {
+		var copy = self
+		copy.mirroredSelection = range
+		return copy
+	}
+
 	/// Custom scheme the page loads under so relative local-image paths resolve
 	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
 	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
@@ -187,6 +207,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 		context.coordinator.applyCaretTarget()
 		context.coordinator.load(into: webView)
 		context.coordinator.applyScrollControls(to: webView)
+		context.coordinator.applyMirroredSelection(to: webView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -396,6 +417,20 @@ public struct MarkdownWebView: NSViewRepresentable {
 			return responder === webView || responder.isDescendant(of: webView)
 		}
 
+		private var lastMirroredSelection: NSRange?
+
+		/// Show (or clear) the other pane's selection as a highlight overlay.
+		func applyMirroredSelection(to webView: WKWebView) {
+			guard lastMirroredSelection != parent.mirroredSelection else { return }
+			log("apply mirror \(String(describing: parent.mirroredSelection)) (was \(String(describing: lastMirroredSelection)))")
+			lastMirroredSelection = parent.mirroredSelection
+			if let range = parent.mirroredSelection, range.length > 0 {
+				webView.evaluateJavaScript("window.__mdMirrorSelection && window.__mdMirrorSelection(\(range.location), \(range.length));", completionHandler: nil)
+			} else {
+				webView.evaluateJavaScript("window.__mdMirrorSelection && window.__mdMirrorSelection(null, 0);", completionHandler: nil)
+			}
+		}
+
 		/// Apply token-gated scroll controls (target/delta) from the host.
 		func applyScrollControls(to webView: WKWebView) {
 			if let target = parent.scrollTarget, target.token != lastScrollTargetToken {
@@ -477,6 +512,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 			}
 			if body["type"] as? String == "ready" {
 				log("editor ready (bridge=\(body["bridge"] as? Bool ?? false))")
+				return
+			}
+			if body["type"] as? String == "selection" {
+				log("selection message start=\(body["start"] ?? "nil") length=\(body["length"] ?? "nil") handler=\(parent.onSelectionChanged != nil)")
+				if let start = body["start"] as? Int, let length = body["length"] as? Int, length > 0 {
+					parent.onSelectionChanged?(NSRange(location: start, length: length))
+				} else {
+					parent.onSelectionChanged?(nil)
+				}
 				return
 			}
 			if body["type"] as? String == "openLink" {
@@ -796,6 +840,81 @@ extension MarkdownWebView.Coordinator {
 	    }
 	    return null;
 	  }
+	  // Show the other pane's selection as a highlight overlay, without
+	  // touching this page's real selection. The ::highlight(md-mirror) rule
+	  // ships in the theme stylesheet (MarkdownHTMLRenderer.css(for:)), so the
+	  // wash color follows the theme.
+	  // WebKit does not repaint painted highlight regions when the
+	  // CSS.highlights registry mutates — a deleted mirror stays on screen
+	  // until something else invalidates it. Toggling a compositing layer on
+	  // the body forces the full repaint that flushes it.
+	  function repaintMirror() {
+	    var b = document.body;
+	    if (!b) { return; }
+	    b.style.transform = 'translateZ(0)';
+	    void b.offsetWidth;
+	    b.style.transform = '';
+	  }
+	  window.__mdMirrorSelection = function (offset, length) {
+	    if (!window.Highlight || !CSS.highlights) { return; }
+	    if (offset == null || !length) { CSS.highlights.delete('md-mirror'); repaintMirror(); return; }
+	    var start = spotFor(offset);
+	    var end = spotFor(offset + length);
+	    if (!start || !end) { CSS.highlights.delete('md-mirror'); repaintMirror(); return; }
+	    // A mirror means the OTHER pane is active — this page's leftover real
+	    // selection (e.g. restored by a style toggle) would read as a second
+	    // selection next to the mirror, so drop it while we're not focused.
+	    if (!document.hasFocus()) {
+	      var stale = window.getSelection();
+	      if (stale && !stale.isCollapsed) { stale.removeAllRanges(); }
+	    }
+	    var r = new Range();
+	    r.setStart(start.node, start.offset);
+	    r.setEnd(end.node, end.offset);
+	    CSS.highlights.set('md-mirror', new Highlight(r));
+	    repaintMirror();
+	  };
+	  // Report selection changes as source offsets for cross-pane mirroring;
+	  // only while this page is focused, so the mirror always reflects the
+	  // pane the user is actually working in.
+	  function reportSelection() {
+	    if (!document.hasFocus()) { return; }
+	    var sel = window.getSelection();
+	    if (!sel || !sel.rangeCount || sel.isCollapsed) { post({ type: 'selection' }); return; }
+	    var r = sel.getRangeAt(0);
+	    var startPos = normalizePosition(r.startContainer, r.startOffset);
+	    var endPos = normalizePosition(r.endContainer, r.endOffset);
+	    var start = sourceOffsetOf(startPos.node, startPos.offset);
+	    var end = sourceOffsetOf(endPos.node, endPos.offset);
+	    if (start == null || end == null || end <= start) { post({ type: 'selection' }); return; }
+	    post({ type: 'selection', start: start, length: end - start });
+	  }
+	  var selectionReportTimer = null;
+	  document.addEventListener('selectionchange', function () {
+	    if (selectionReportTimer) { clearTimeout(selectionReportTimer); }
+	    selectionReportTimer = setTimeout(function () {
+	      selectionReportTimer = null;
+	      reportSelection();
+	    }, 120);
+	  });
+	  // Becoming the active pane: this pane's own mirror is stale. Drop the
+	  // highlight synchronously — the host round trip (post → state →
+	  // updateNSView → evaluateJavaScript) is visibly slow — then report so
+	  // the host state follows. mousedown fires before focus arrives, so the
+	  // highlight is gone before the click even lands.
+	  function clearOwnMirror() {
+	    if (window.CSS && CSS.highlights && CSS.highlights.has('md-mirror')) {
+	      CSS.highlights.delete('md-mirror');
+	      repaintMirror();
+	    }
+	  }
+	  document.addEventListener('mousedown', clearOwnMirror, true);
+	  window.addEventListener('focus', function () {
+	    clearOwnMirror();
+	    // Deferred: during the focus event document.hasFocus() can still be
+	    // false, which would swallow the report inside reportSelection().
+	    setTimeout(reportSelection, 0);
+	  });
 	  // Restore the caret — or, with a length, the full selection (style
 	  // toggles keep their selection alive) — after a structural re-render.
 	  window.__mdPlaceCaret = function (offset, length) {
