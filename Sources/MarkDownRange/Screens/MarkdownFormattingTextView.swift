@@ -9,6 +9,10 @@ import AppKit
 public class MarkdownFormattingTextView: NSTextView {
 
 	override public func performKeyEquivalent(with event: NSEvent) -> Bool {
+		// Only when this editor is focused: performKeyEquivalent visits every
+		// view in the window, and in a split the raw pane was consuming the
+		// ⌘B/⌘I aimed at the styled pane, applying them to its own selection.
+		guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
 		let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
 		guard mods.contains(.command), !mods.contains(.option), !mods.contains(.control) else {
 			return super.performKeyEquivalent(with: event)

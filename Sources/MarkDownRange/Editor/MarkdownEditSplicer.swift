@@ -39,7 +39,10 @@ enum MarkdownEditSplicer {
 	}
 
 	enum Outcome {
-		case applied(String)
+		/// The new source, plus the selection to restore after a structural
+		/// re-render: style toggles keep the (shifted) selection selected;
+		/// other edits collapse to their caret target.
+		case applied(String, selection: NSRange?)
 		case rejected(String)
 	}
 
@@ -61,12 +64,30 @@ enum MarkdownEditSplicer {
 			return .rejected(reason)
 		}
 		if let marker = edit.wrapMarker {
-			return .applied(text.substring(to: edit.start) + marker + actual + marker + text.substring(from: edit.end))
+			// Toggle, not just wrap: a selection whose source is already
+			// wrapped in the marker (or its underscore twin) un-styles.
+			// Stacking markers instead produced `****text****`. Either way
+			// the restored selection covers the same content, shifted by the
+			// markers added or removed.
+			let alternates = marker == "**" ? ["**", "__"] : marker == "*" ? ["*", "_"] : [marker]
+			for alternate in alternates {
+				let length = (alternate as NSString).length
+				if edit.start >= length, edit.end + length <= text.length,
+				   text.substring(with: NSRange(location: edit.start - length, length: length)) == alternate,
+				   text.substring(with: NSRange(location: edit.end, length: length)) == alternate {
+					let unwrapped = text.substring(to: edit.start - length) + actual + text.substring(from: edit.end + length)
+					return .applied(unwrapped, selection: NSRange(location: edit.start - length, length: edit.end - edit.start))
+				}
+			}
+			let markerLength = (marker as NSString).length
+			let wrapped = text.substring(to: edit.start) + marker + actual + marker + text.substring(from: edit.end)
+			return .applied(wrapped, selection: NSRange(location: edit.start + markerLength, length: edit.end - edit.start))
 		}
 		guard let replacement = edit.replacement else {
 			return .rejected("no replacement or marker")
 		}
-		return .applied(text.replacingCharacters(in: range, with: replacement))
+		return .applied(text.replacingCharacters(in: range, with: replacement),
+						selection: edit.caret.map { NSRange(location: $0, length: 0) })
 	}
 
 	private static func contextMismatch(_ edit: Edit, in text: NSString) -> String? {

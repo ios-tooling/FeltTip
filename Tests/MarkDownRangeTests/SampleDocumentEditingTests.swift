@@ -291,6 +291,26 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	}
 
 
+	@Test func styleToggleKeepsTheSelection() async throws {
+		// After ⌘B the same text stays selected (shifted past the new
+		// markers), so repeated style commands keep operating on it.
+		let host = EditorHost(text: "Alpha\n\nBeta")
+		try await host.waitUntilReady()
+		try await host.run("""
+			window.__testNonce = 1;
+			window.__mdPlaceCaret(5);
+			var sel = window.getSelection();
+			for (var i = 0; i < 5; i++) sel.modify('extend', 'backward', 'character');
+			document.execCommand('bold');
+			""")
+		try await waitForText("**Alpha**\n\nBeta", in: host, context: "bold via command")
+		try await host.waitForFreshPage()
+		try await host.waitUntilReady()
+		try await Task.sleep(for: .milliseconds(400))   // selection restore runs after layout settles
+		let selected = try await host.evaluate("window.getSelection().toString()")
+		#expect(selected == "Alpha", "selection not preserved after bold (got \(selected ?? "nil"))")
+	}
+
 	@Test func enterKeepsTheScrollPosition() async throws {
 		// Return re-renders the page; the view must come back to where the
 		// user was, not to the top and not with the caret parked at the

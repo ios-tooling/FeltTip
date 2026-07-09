@@ -32,6 +32,32 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
 
+	// MARK: Formatting key equivalents
+
+	public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+		// Bare WKWebView doesn't map ⌘B/⌘I to editing commands without a
+		// menu; claim them when the web view is focused and drive WebKit's
+		// editor commands, which reach the source through the edit bridge's
+		// formatBold/formatItalic path.
+		let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+		guard mods == .command, webViewIsFocused else { return super.performKeyEquivalent(with: event) }
+		switch event.charactersIgnoringModifiers ?? "" {
+		case "b":
+			webView.evaluateJavaScript("document.execCommand('bold')", completionHandler: nil)
+			return true
+		case "i":
+			webView.evaluateJavaScript("document.execCommand('italic')", completionHandler: nil)
+			return true
+		default:
+			return super.performKeyEquivalent(with: event)
+		}
+	}
+
+	private var webViewIsFocused: Bool {
+		guard let responder = window?.firstResponder as? NSView else { return false }
+		return responder === webView || responder.isDescendant(of: webView)
+	}
+
 	// MARK: Find actions (routed from the app's Find menu, NSTextView-style)
 
 	public override func performTextFinderAction(_ sender: Any?) {

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MarkDownRange
 
@@ -11,7 +12,7 @@ import Testing
 	}
 
 	private func applied(_ outcome: MarkdownEditSplicer.Outcome) -> String? {
-		if case .applied(let new) = outcome { return new }
+		if case .applied(let new, _) = outcome { return new }
 		return nil
 	}
 
@@ -75,6 +76,21 @@ import Testing
 	@Test func wrapAppliesMarkersAroundVerifiedRange() {
 		let outcome = MarkdownEditSplicer.apply(edit(start: 0, end: 5, marker: "**", expected: "Alpha", after: "\n\nBet"), to: "Alpha\n\nBeta")
 		#expect(applied(outcome) == "**Alpha**\n\nBeta")
+	}
+
+	@Test func wrapTogglesOffWhenAlreadyWrapped() {
+		// ⌘B on already-bold text un-bolds instead of stacking markers, and
+		// the caret override lands at the (shrunken) end of the selection.
+		let bold = MarkdownEditSplicer.apply(edit(start: 2, end: 7, marker: "**", expected: "Alpha", caret: 11), to: "**Alpha**\n\nBeta")
+		guard case .applied(let unwrapped, let selection) = bold else {
+			Issue.record("unwrap did not apply")
+			return
+		}
+		#expect(unwrapped == "Alpha\n\nBeta")
+		#expect(selection == NSRange(location: 0, length: 5))
+		// The underscore twin unwraps too (the raw editor writes _italics_).
+		let italic = MarkdownEditSplicer.apply(edit(start: 1, end: 6, marker: "*", expected: "Alpha"), to: "_Alpha_\n\nBeta")
+		#expect(applied(italic) == "Alpha\n\nBeta")
 	}
 
 	@Test func outOfBoundsAndContextPastEdgesAreRejected() {

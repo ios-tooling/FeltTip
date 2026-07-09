@@ -214,8 +214,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 		/// through a requestAnimationFrame throttle that headless test windows
 		/// don't reliably run.
 		var lastScrollY: Double = 0
-		/// Source offset to place the caret at after a structural re-render.
-		private var pendingCaret: Int?
+		/// Selection (offset + length; length 0 = caret) to restore after a
+		/// structural re-render. Style toggles restore the full selection so
+		/// repeated ⌘B/⌘I keep operating on the same text.
+		private var pendingSelection: NSRange?
 		/// The source the DOM currently reflects. Advanced synchronously on every
 		/// edit so rapid edits chain off the right base — `parent.text` lags
 		/// because the SwiftUI round-trip back into `updateNSView` is async.
@@ -264,7 +266,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 			// after a debounce, so the preview neither flashes through a blank
 			// navigation nor re-renders on every keystroke.
 			let config = configSignature()
-			if lastKey == nil || pendingCaret != nil || config != lastConfigSignature
+			if lastKey == nil || pendingSelection != nil || config != lastConfigSignature
 				|| (parent.renderMermaid && !parent.isEditable) {
 				pendingSwap?.cancel()
 				pendingSwap = nil
@@ -291,7 +293,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 			let text = parent.text
 			let key = renderKey(text: text)
 			guard key != lastKey else { return }
-			guard configSignature() == lastConfigSignature, pendingCaret == nil else {
+			guard configSignature() == lastConfigSignature, pendingSelection == nil else {
 				load(into: webView)   // needs a full load after all
 				return
 			}
@@ -350,23 +352,23 @@ public struct MarkdownWebView: NSViewRepresentable {
 			}
 			// Restore position after a (re)load: a pending caret from a structural
 			// edit wins; then a one-time initial fraction; then the last offset.
-			if let caret = pendingCaret {
-				pendingCaret = nil
-				log("didFinish: placing caret at \(caret) (scrollY \(lastScrollY))")
+			if let selection = pendingSelection {
+				pendingSelection = nil
+				log("didFinish: restoring selection \(selection) (scrollY \(lastScrollY))")
 				// Put the view back where the user was FIRST — the reload
 				// starts at the top, and placing the caret from there parked
 				// it at the bottom edge of the viewport. With the position
 				// restored, the caret's own scrollIntoView(nearest) is a
 				// no-op unless the caret would be off-screen (e.g. Return on
 				// the last visible line), which nudges minimally.
-				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), \(caret));", completionHandler: nil)
+				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), \(selection.location), \(selection.length));", completionHandler: nil)
 			} else if !didApplyInitialScroll, let initial = parent.initialScrollFraction {
 				didApplyInitialScroll = true
 				log("didFinish: initial scroll fraction \(initial)")
 				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(initial));", completionHandler: nil)
 			} else if lastScrollY > 0 {
 				log("didFinish: restoring scrollY \(lastScrollY)")
-				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null);", completionHandler: nil)
+				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null, 0);", completionHandler: nil)
 			}
 		}
 
@@ -383,7 +385,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 			// split, the other (preview) pane just re-renders — arming a caret here
 			// would steal first responder from the focused pane and end editing.
 			guard isFirstResponder else { return }
-			pendingCaret = target.offset
+			pendingSelection = NSRange(location: target.offset, length: 0)
 			selfEditedText = nil
 		}
 
@@ -501,13 +503,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 			guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
 			let source = currentSource ?? parent.text
 			switch MarkdownEditSplicer.apply(edit, to: source) {
-			case .applied(let newSource):
+			case .applied(let newSource, let selection):
 				currentSource = newSource
 				log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count)")
-				if let caret = edit.caret {
-					// Structural edit: re-render (re-stamps data-s) and restore the
-					// caret. Don't suppress the reload.
-					pendingCaret = caret
+				if edit.caret != nil, let selection {
+					// Structural edit: re-render (re-stamps data-s) and restore
+					// the selection (style toggles keep their selection alive;
+					// other edits collapse to a caret). Don't suppress the reload.
+					pendingSelection = selection
 					parent.onSourceEdit?(newSource)
 				} else {
 					// In-place edit: the DOM already shows it (and the page shifted
@@ -535,7 +538,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 			pendingSwap?.cancel()
 			pendingSwap = nil
 			selfEditedText = nil
-			pendingCaret = caret
+			pendingSelection = caret.map { NSRange(location: $0, length: 0) }
 			lastKey = renderKey(text: source)
 			lastConfigSignature = configSignature()
 			loadHTML(for: source, into: webView)
@@ -780,18 +783,44 @@ extension MarkdownWebView.Coordinator {
 	  function blockOf(el) {
 	    return el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th') || el;
 	  }
-	  // Place the caret at a source offset after a structural re-render.
-	  window.__mdPlaceCaret = function (offset) {
+	  // DOM position for a source offset, or null when no run covers it.
+	  function spotFor(offset) {
 	    var spans = document.querySelectorAll('[data-s]');
-	    var prev = null, next = null;
 	    for (var i = 0; i < spans.length; i++) {
 	      var base = parseInt(spans[i].getAttribute('data-s'), 10);
 	      var len = textLength(spans[i]);
 	      if (offset >= base && offset <= base + len) {
 	        var spot = locate(spans[i], offset - base);
-	        if (spot) { placeCaretIn(spot.node, spot.offset, spans[i]); }
-	        return;
+	        if (spot) { spot.span = spans[i]; return spot; }
 	      }
+	    }
+	    return null;
+	  }
+	  // Restore the caret — or, with a length, the full selection (style
+	  // toggles keep their selection alive) — after a structural re-render.
+	  window.__mdPlaceCaret = function (offset, length) {
+	    length = length || 0;
+	    var start = spotFor(offset);
+	    if (start && length) {
+	      var end = spotFor(offset + length) || start;
+	      document.body.focus({ preventScroll: true });
+	      var sel = window.getSelection(), r = document.createRange();
+	      r.setStart(start.node, start.offset);
+	      r.setEnd(end.node, end.offset);
+	      sel.removeAllRanges(); sel.addRange(r);
+	      start.span.scrollIntoView({ block: 'nearest' });
+	      return;
+	    }
+	    if (start) {
+	      placeCaretIn(start.node, start.offset, start.span);
+	      return;
+	    }
+	    if (length) { return; }   // a selection can't restore into a void
+	    var spans = document.querySelectorAll('[data-s]');
+	    var prev = null, next = null;
+	    for (var i = 0; i < spans.length; i++) {
+	      var base = parseInt(spans[i].getAttribute('data-s'), 10);
+	      var len = textLength(spans[i]);
 	      if (base + len < offset) { prev = spans[i]; }
 	      if (base > offset && !next) { next = spans[i]; }
 	    }
@@ -966,6 +995,12 @@ extension MarkdownWebView.Coordinator {
 	    if (frozen) { e.preventDefault(); return; }
 	    var ranges = e.getTargetRanges();
 	    var range = ranges && ranges.length ? ranges[0] : null;
+	    if (!range && (e.inputType === 'formatBold' || e.inputType === 'formatItalic')) {
+	      // Formatting commands report no target ranges; they act on the
+	      // selection, so read it directly.
+	      var formatSel = window.getSelection();
+	      if (formatSel && formatSel.rangeCount) { range = formatSel.getRangeAt(0); }
+	    }
 	    if (!range) { e.preventDefault(); return; }
 	    var startPos = normalizePosition(range.startContainer, range.startOffset);
 	    var endPos = normalizePosition(range.endContainer, range.endOffset);
@@ -1198,7 +1233,7 @@ extension MarkdownWebView.Coordinator {
 	  // place the caret. Straight scrollTo at didFinish clamps to zero — the
 	  // content hasn't laid out yet — so retry until the page is tall enough
 	  // (or a deadline passes), and only then let the caret nudge the view.
-	  window.__mdRestoreScrollThenCaret = function (y, caret) {
+	  window.__mdRestoreScrollThenCaret = function (y, caret, length) {
 	    var deadline = Date.now() + 1000;
 	    function attempt() {
 	      var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
@@ -1206,7 +1241,7 @@ extension MarkdownWebView.Coordinator {
 	        var target = Math.min(y, Math.max(maxY, 0));
 	        driven = { y: target, until: Date.now() + 500 };
 	        window.scrollTo(0, target);
-	        if (caret != null && window.__mdPlaceCaret) { window.__mdPlaceCaret(caret); }
+	        if (caret != null && window.__mdPlaceCaret) { window.__mdPlaceCaret(caret, length || 0); }
 	      } else {
 	        // setTimeout, not requestAnimationFrame: rAF doesn't run in
 	        // occluded windows, and the restore must not depend on visibility.

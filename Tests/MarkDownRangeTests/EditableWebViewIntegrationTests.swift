@@ -23,7 +23,7 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		editCount += 1
 		guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
 		switch MarkdownEditSplicer.apply(edit, to: source) {
-		case .applied(let new): source = new
+		case .applied(let new, _): source = new
 		case .rejected(let reason): rejections.append(reason)
 		}
 	}
@@ -77,6 +77,37 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		try await run(webView, "window.__mdPlaceCaret(10); document.execCommand('insertText', false, 'Y');")
 		try await waitForEdits(2, in: harness)
 		#expect(harness.source == "Alpha andXY     more\n\nBeta")
+		#expect(harness.rejections.isEmpty)
+	}
+
+	@Test func boldCommandWrapsTheSelection() async throws {
+		// ⌘B in the styled editor runs WebKit's bold command; the bridge's
+		// formatBold path must wrap the verified selection in markers.
+		let harness = EditBridgeHarness(source: "Alpha\n\nBeta")
+		let webView = try await makeEditableWebView(harness: harness)
+		try await run(webView, """
+			window.__mdPlaceCaret(5);
+			var sel = window.getSelection();
+			for (var i = 0; i < 5; i++) sel.modify('extend', 'backward', 'character');
+			document.execCommand('bold');
+			""")
+		try await waitForEdits(1, in: harness)
+		#expect(harness.source == "**Alpha**\n\nBeta")
+		#expect(harness.rejections.isEmpty)
+	}
+
+	@Test func boldCommandTogglesOffBoldText() async throws {
+		// Selecting already-bold text and hitting ⌘B removes the markers.
+		let harness = EditBridgeHarness(source: "**Alpha**\n\nBeta")
+		let webView = try await makeEditableWebView(harness: harness)
+		try await run(webView, """
+			window.__mdPlaceCaret(7);
+			var sel = window.getSelection();
+			for (var i = 0; i < 5; i++) sel.modify('extend', 'backward', 'character');
+			document.execCommand('bold');
+			""")
+		try await waitForEdits(1, in: harness)
+		#expect(harness.source == "Alpha\n\nBeta")
 		#expect(harness.rejections.isEmpty)
 	}
 
