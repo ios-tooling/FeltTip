@@ -93,6 +93,13 @@ import Testing
 		#expect(applied(italic) == "Alpha\n\nBeta")
 	}
 
+	@Test func strikethroughWrapsAndTogglesOff() {
+		let wrap = MarkdownEditSplicer.apply(edit(start: 0, end: 5, marker: "~~", expected: "Alpha", after: "\n\nBet"), to: "Alpha\n\nBeta")
+		#expect(applied(wrap) == "~~Alpha~~\n\nBeta")
+		let unwrap = MarkdownEditSplicer.apply(edit(start: 2, end: 7, marker: "~~", expected: "Alpha"), to: "~~Alpha~~\n\nBeta")
+		#expect(applied(unwrap) == "Alpha\n\nBeta")
+	}
+
 	@Test func outOfBoundsAndContextPastEdgesAreRejected() {
 		#expect(applied(MarkdownEditSplicer.apply(edit(start: 10, end: 12, text: "x"), to: "short")) == nil)
 		#expect(applied(MarkdownEditSplicer.apply(edit(start: -1, end: 0, text: "x"), to: "short")) == nil)

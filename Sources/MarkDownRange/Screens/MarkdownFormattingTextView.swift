@@ -36,10 +36,17 @@ public class MarkdownFormattingTextView: NSTextView {
 		case "-" where !mods.contains(.shift): adjustHeading(promote: false); return true
 		case "6" where mods.contains(.shift): toggleInlineFormat("^"); return true
 		case "-" where mods.contains(.shift): toggleInlineFormat("~"); return true
+		case "x" where mods.contains(.shift), "X" where mods.contains(.shift):
+			toggleInlineFormat("~~"); return true
 		case "\r", "\u{3}": return false
 		default: return super.performKeyEquivalent(with: event)
 		}
 	}
+
+	/// Menu-item entry points, matching the key equivalents above.
+	public func toggleBold() { toggleInlineFormat("**") }
+	public func toggleItalic() { toggleInlineFormat("_") }
+	public func toggleStrikethrough() { toggleInlineFormat("~~") }
 
 	private func toggleInlineFormat(_ marker: String) {
 		let sel = selectedRange()

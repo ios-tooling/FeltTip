@@ -35,22 +35,39 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	// MARK: Formatting key equivalents
 
 	public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-		// Bare WKWebView doesn't map ⌘B/⌘I to editing commands without a
-		// menu; claim them when the web view is focused and drive WebKit's
+		// Bare WKWebView doesn't map ⌘B/⌘I/⌘⇧X to editing commands without
+		// a menu; claim them when the web view is focused and drive WebKit's
 		// editor commands, which reach the source through the edit bridge's
-		// formatBold/formatItalic path.
+		// formatBold/formatItalic/formatStrikeThrough path.
 		let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
-		guard mods == .command, webViewIsFocused else { return super.performKeyEquivalent(with: event) }
-		switch event.charactersIgnoringModifiers ?? "" {
-		case "b":
-			webView.evaluateJavaScript("document.execCommand('bold')", completionHandler: nil)
+		guard webViewIsFocused else { return super.performKeyEquivalent(with: event) }
+		switch (event.charactersIgnoringModifiers?.lowercased() ?? "", mods) {
+		case ("b", [.command]):
+			toggleBold()
 			return true
-		case "i":
-			webView.evaluateJavaScript("document.execCommand('italic')", completionHandler: nil)
+		case ("i", [.command]):
+			toggleItalic()
+			return true
+		case ("x", [.command, .shift]):
+			toggleStrikethrough()
 			return true
 		default:
 			return super.performKeyEquivalent(with: event)
 		}
+	}
+
+	/// Menu-item entry points: drive WebKit's editor commands, which reach
+	/// the markdown source through the edit bridge's format-command path.
+	public func toggleBold() {
+		webView.evaluateJavaScript("document.execCommand('bold')", completionHandler: nil)
+	}
+
+	public func toggleItalic() {
+		webView.evaluateJavaScript("document.execCommand('italic')", completionHandler: nil)
+	}
+
+	public func toggleStrikethrough() {
+		webView.evaluateJavaScript("document.execCommand('strikeThrough')", completionHandler: nil)
 	}
 
 	private var webViewIsFocused: Bool {

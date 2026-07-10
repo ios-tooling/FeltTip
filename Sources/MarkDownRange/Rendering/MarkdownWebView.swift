@@ -1114,7 +1114,7 @@ extension MarkdownWebView.Coordinator {
 	    if (frozen) { e.preventDefault(); return; }
 	    var ranges = e.getTargetRanges();
 	    var range = ranges && ranges.length ? ranges[0] : null;
-	    if (!range && (e.inputType === 'formatBold' || e.inputType === 'formatItalic')) {
+	    if (!range && (e.inputType === 'formatBold' || e.inputType === 'formatItalic' || e.inputType === 'formatStrikeThrough')) {
 	      // Formatting commands report no target ranges; they act on the
 	      // selection, so read it directly.
 	      var formatSel = window.getSelection();
@@ -1179,10 +1179,10 @@ extension MarkdownWebView.Coordinator {
 	      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length });
 	      return;
 	    }
-	    if (type === 'formatBold' || type === 'formatItalic') {
+	    if (type === 'formatBold' || type === 'formatItalic' || type === 'formatStrikeThrough') {
 	      e.preventDefault();
 	      if (start === end) return;  // need a selection to wrap
-	      var m = type === 'formatBold' ? '**' : '*';
+	      var m = type === 'formatBold' ? '**' : type === 'formatItalic' ? '*' : '~~';
 	      frozen = true;
 	      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, crossRun: crossRun, before: before, after: after, caret: end + 2 * m.length });
 	      return;

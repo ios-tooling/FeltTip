@@ -96,6 +96,22 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		#expect(harness.rejections.isEmpty)
 	}
 
+	@Test func strikethroughCommandWrapsTheSelection() async throws {
+		// ⌘⇧X runs WebKit's strikeThrough command; the bridge's
+		// formatStrikeThrough path wraps the verified selection in `~~`.
+		let harness = EditBridgeHarness(source: "Alpha\n\nBeta")
+		let webView = try await makeEditableWebView(harness: harness)
+		try await run(webView, """
+			window.__mdPlaceCaret(5);
+			var sel = window.getSelection();
+			for (var i = 0; i < 5; i++) sel.modify('extend', 'backward', 'character');
+			document.execCommand('strikeThrough');
+			""")
+		try await waitForEdits(1, in: harness)
+		#expect(harness.source == "~~Alpha~~\n\nBeta")
+		#expect(harness.rejections.isEmpty)
+	}
+
 	@Test func boldCommandTogglesOffBoldText() async throws {
 		// Selecting already-bold text and hitting ⌘B removes the markers.
 		let harness = EditBridgeHarness(source: "**Alpha**\n\nBeta")
