@@ -16,7 +16,7 @@ enum MarkdownSyntaxHighlighter {
 	/// O(N) → O(paragraph). When the affected range straddles a code-fence
 	/// boundary the meaning of distant text could change, so we transparently
 	/// fall back to a full-document highlight.
-	static func highlight(
+	@MainActor static func highlight(
 		textView: NSTextView,
 		theme: MarkdownTheme,
 		options: MarkdownOptions = .default,
@@ -93,7 +93,7 @@ enum MarkdownSyntaxHighlighter {
 
 	/// Clear any styling this highlighter added. Used when syntax highlighting
 	/// is toggled off so the heading weight + colors don't linger.
-	static func clearHighlighting(textView: NSTextView) {
+	@MainActor static func clearHighlighting(textView: NSTextView) {
 		guard let layoutManager = textView.layoutManager,
 			  let textStorage = textView.textStorage else { return }
 		let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
@@ -173,23 +173,23 @@ enum MarkdownSyntaxHighlighter {
 
 	private typealias Color = SwiftUI.Color
 
-	nonisolated(unsafe) private static let codeFencePattern = try! NSRegularExpression(
+	private static let codeFencePattern = try! NSRegularExpression(
 		pattern: "^```[^\\n]*\\n[\\s\\S]*?^```", options: [.anchorsMatchLines])
-	nonisolated(unsafe) private static let inlineCodePattern = try! NSRegularExpression(
+	private static let inlineCodePattern = try! NSRegularExpression(
 		pattern: "`[^`\\n]+`")
 
 	// Strict CommonMark: require a space after the final `#`.
-	nonisolated(unsafe) private static let strictHeadingMarkerPattern = try! NSRegularExpression(
+	private static let strictHeadingMarkerPattern = try! NSRegularExpression(
 		pattern: "^#{1,6}\\s", options: .anchorsMatchLines)
-	nonisolated(unsafe) private static let strictHeadingLinePattern = try! NSRegularExpression(
+	private static let strictHeadingLinePattern = try! NSRegularExpression(
 		pattern: "^#{1,6}\\s.*$", options: .anchorsMatchLines)
 	// Lenient: 1–6 `#` followed by anything that isn't another `#`. The
 	// negative lookahead `(?!#)` rules out `#######` runs (CommonMark caps
 	// headings at six). The marker variant also greedily eats a trailing
 	// space when present so `## Heading` still highlights `## ` as marker.
-	nonisolated(unsafe) private static let lenientHeadingMarkerPattern = try! NSRegularExpression(
+	private static let lenientHeadingMarkerPattern = try! NSRegularExpression(
 		pattern: "^#{1,6}(?!#)\\s?", options: .anchorsMatchLines)
-	nonisolated(unsafe) private static let lenientHeadingLinePattern = try! NSRegularExpression(
+	private static let lenientHeadingLinePattern = try! NSRegularExpression(
 		pattern: "^#{1,6}(?!#).*$", options: .anchorsMatchLines)
 
 	private static func headingMarkerPattern(for options: MarkdownOptions) -> NSRegularExpression {
@@ -199,19 +199,19 @@ enum MarkdownSyntaxHighlighter {
 	private static func headingLinePattern(for options: MarkdownOptions) -> NSRegularExpression {
 		options.headingsRequireSpaceAfterHash ? strictHeadingLinePattern : lenientHeadingLinePattern
 	}
-	nonisolated(unsafe) private static let boldPattern = try! NSRegularExpression(
+	private static let boldPattern = try! NSRegularExpression(
 		pattern: "(\\*\\*|__)(.*?)(\\1)")
-	nonisolated(unsafe) private static let italicPattern = try! NSRegularExpression(
+	private static let italicPattern = try! NSRegularExpression(
 		pattern: "(?<![*_])([*_])(?![*_])(.+?)(?<![*_])\\1(?![*_])")
-	nonisolated(unsafe) private static let linkBracketsPattern = try! NSRegularExpression(
+	private static let linkBracketsPattern = try! NSRegularExpression(
 		pattern: "\\[([^\\]]+)\\]\\(")
-	nonisolated(unsafe) private static let linkURLPattern = try! NSRegularExpression(
+	private static let linkURLPattern = try! NSRegularExpression(
 		pattern: "\\]\\(([^)]+)\\)")
-	nonisolated(unsafe) private static let blockquotePattern = try! NSRegularExpression(
+	private static let blockquotePattern = try! NSRegularExpression(
 		pattern: "^>\\s?.*$", options: .anchorsMatchLines)
-	nonisolated(unsafe) private static let listMarkerPattern = try! NSRegularExpression(
+	private static let listMarkerPattern = try! NSRegularExpression(
 		pattern: "^\\s*([-*+]|\\d+\\.)\\s", options: .anchorsMatchLines)
-	nonisolated(unsafe) private static let hrPattern = try! NSRegularExpression(
+	private static let hrPattern = try! NSRegularExpression(
 		pattern: "^(---+|\\*\\*\\*+|___+)$", options: .anchorsMatchLines)
 }
 #endif
