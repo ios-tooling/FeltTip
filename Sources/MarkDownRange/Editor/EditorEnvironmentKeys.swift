@@ -7,15 +7,15 @@
 import SwiftUI
 
 private struct ShowLineNumbersKey: EnvironmentKey {
-	nonisolated(unsafe) static let defaultValue: Bool = false
+	static let defaultValue: Bool = false
 }
 
 private struct SyntaxHighlightingEnabledKey: EnvironmentKey {
-	nonisolated(unsafe) static let defaultValue: Bool = false
+	static let defaultValue: Bool = false
 }
 
 private struct MarkdownOptionsKey: EnvironmentKey {
-	nonisolated(unsafe) static let defaultValue: MarkdownOptions = .default
+	static let defaultValue: MarkdownOptions = .default
 }
 
 public extension EnvironmentValues {

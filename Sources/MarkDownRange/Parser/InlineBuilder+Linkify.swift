@@ -93,14 +93,14 @@ extension InlineBuilder {
 
 	// MARK: - Cached regex / detector
 
-	nonisolated(unsafe) static let urlDetector: NSDataDetector? =
+	static let urlDetector: NSDataDetector? =
 		try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
 	/// `www.` followed by at least one `.<segment>` domain component, then an
 	/// optional path. Word-boundary anchor on `www` prevents `xwww.foo` from
 	/// matching. The path stops at whitespace or `<`/`>` so we don't sweep
 	/// surrounding inline HTML into the link.
-	nonisolated(unsafe) static let wwwPrefixRegex: NSRegularExpression? =
+	static let wwwPrefixRegex: NSRegularExpression? =
 		try? NSRegularExpression(
 			pattern: #"\bwww\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:/[^\s<>]*)?"#,
 			options: [.caseInsensitive]

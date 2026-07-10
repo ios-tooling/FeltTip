@@ -15,7 +15,7 @@ public enum MarkdownLinkAccessScope: String, Sendable, CaseIterable {
 }
 
 private struct MarkdownLinkAccessScopeKey: EnvironmentKey {
-	nonisolated(unsafe) static let defaultValue: MarkdownLinkAccessScope = .file
+	static let defaultValue: MarkdownLinkAccessScope = .file
 }
 
 public extension EnvironmentValues {
