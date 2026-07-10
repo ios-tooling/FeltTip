@@ -69,6 +69,11 @@ import Testing
 		#expect(html.contains("href=\"https://example.com\""))
 	}
 
+	@Test func rendersStrikethrough() {
+		let html = MarkdownHTMLRenderer.renderDocument(markdown: "text ~~gone~~ here", theme: .default)
+		#expect(html.contains("<del>gone</del>"))
+	}
+
 	@Test func imageRowsDoNotStretchBadgeImages() {
 		let markdown = """
 		[![GitHub release](https://img.shields.io/github/v/release/agalwood/Motrix.svg)](https://github.com/agalwood/Motrix/releases) ![Build/release](https://github.com/agalwood/Motrix/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/agalwood/Motrix/total.svg)

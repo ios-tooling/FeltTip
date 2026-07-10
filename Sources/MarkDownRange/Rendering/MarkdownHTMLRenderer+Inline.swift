@@ -8,7 +8,8 @@ import SwiftUI
 
 extension MarkdownHTMLRenderer {
 	/// Walks an AttributedString's runs and emits HTML that mirrors the
-	/// inline traits (bold/italic/monospaced) and link attributes. Adjacent
+	/// inline traits (bold/italic/monospaced), strikethrough, and link
+	/// attributes. Adjacent
 	/// runs may produce `</strong><strong>` boundaries — valid HTML, no
 	/// attempt at minimization since browsers and NSAttributedString import
 	/// handle it identically.
@@ -27,11 +28,14 @@ extension MarkdownHTMLRenderer {
 			if let url = run.link {
 				result += "<a href=\"\(attributeValue(url.absoluteString, allowedSchemes: linkSchemes))\">"
 			}
+			let struck = run.strikethroughStyle != nil
 			if traits.contains(.bold) { result += "<strong>" }
 			if traits.contains(.italic) { result += "<em>" }
+			if struck { result += "<del>" }
 			if traits.contains(.monospaced) { result += "<code>" }
 			result += text
 			if traits.contains(.monospaced) { result += "</code>" }
+			if struck { result += "</del>" }
 			if traits.contains(.italic) { result += "</em>" }
 			if traits.contains(.bold) { result += "</strong>" }
 			if run.link != nil { result += "</a>" }
