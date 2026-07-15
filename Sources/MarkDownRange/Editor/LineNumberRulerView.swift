@@ -9,6 +9,22 @@
 final class LineNumberRulerView: NSRulerView {
 	override var isFlipped: Bool { true }
 	var textColor: NSColor = .secondaryLabelColor
+	/// Host-supplied change indicators (e.g. a git diff), drawn as colored
+	/// bars along the gutter's left edge.
+	var lineChanges: MarkdownLineChanges? {
+		didSet {
+			guard lineChanges != oldValue else { return }
+			needsDisplay = true
+		}
+	}
+	/// False renders a bars-only gutter (change indicators without numbers).
+	var showsNumbers: Bool = true {
+		didSet {
+			guard showsNumbers != oldValue else { return }
+			if !lineStarts.isEmpty { ruleThickness = thickness(for: lineStarts.count) }
+			needsDisplay = true
+		}
+	}
 	private weak var textView: NSTextView?
 	private let gutterPadding: CGFloat = 8
 	/// UTF-16 offsets of each hard line's first character, rebuilt lazily
@@ -69,10 +85,32 @@ final class LineNumberRulerView: NSRulerView {
 			let rulerY = fragmentRect.origin.y + origin.y - scrollOffset
 			guard rulerY + fragmentRect.height >= 0, rulerY < visibleHeight else { return }
 
+			self.drawChangeMarkers(for: line, rulerY: rulerY, height: fragmentRect.height)
+			guard self.showsNumbers else { return }
 			let numStr = "\(line + 1)" as NSString
 			let size = numStr.size(withAttributes: attrs)
 			let x = self.ruleThickness - size.width - self.gutterPadding
 			numStr.draw(at: NSPoint(x: x, y: rulerY + (fragmentRect.height - size.height) / 2), withAttributes: attrs)
+		}
+	}
+
+	/// Added/modified lines get a colored bar beside their first fragment;
+	/// deletions draw a red tick on the boundary where lines used to be.
+	private func drawChangeMarkers(for line: Int, rulerY: CGFloat, height: CGFloat) {
+		guard let changes = lineChanges else { return }
+		if let kind = changes.changedLines[line] {
+			let color: NSColor = kind == .added ? .systemGreen : .systemBlue
+			color.setFill()
+			NSRect(x: 2, y: rulerY + 1, width: 3, height: height - 2).fill()
+		}
+		if changes.deletionsAfter.contains(line - 1) {
+			NSColor.systemRed.setFill()
+			NSRect(x: 0, y: rulerY - 1.5, width: 8, height: 3).fill()
+		}
+		// A deletion after the final line has no following line to anchor to.
+		if line == lineStarts.count - 1, changes.deletionsAfter.contains(line) {
+			NSColor.systemRed.setFill()
+			NSRect(x: 0, y: rulerY + height - 1.5, width: 8, height: 3).fill()
 		}
 	}
 
@@ -104,6 +142,7 @@ final class LineNumberRulerView: NSRulerView {
 	}
 
 	private func thickness(for lineCount: Int) -> CGFloat {
+		guard showsNumbers else { return 10 }  // bars-only gutter
 		let digits = max(2, String(max(1, lineCount)).count)
 		let charWidth = numberFont().advancement(forGlyph: NSGlyph(48)).width  // '0'
 		return CGFloat(digits) * charWidth + gutterPadding * 2

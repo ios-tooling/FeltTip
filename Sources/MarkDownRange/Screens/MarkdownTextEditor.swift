@@ -13,6 +13,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	@Environment(\.showLineNumbers) var showLineNumbers
 	@Environment(\.syntaxHighlightingEnabled) var syntaxHighlightingEnabled
 	@Environment(\.markdownOptions) var markdownOptions
+	@Environment(\.markdownLineChanges) var lineChanges
 	var fontSize: CGFloat = 13
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
@@ -259,11 +260,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	private func updateRuler(scrollView: NSScrollView, textView: NSTextView) {
 		let hadRuler = scrollView.verticalRulerView != nil
-		if showLineNumbers {
+		// Change indicators need the gutter even when line numbers are off —
+		// the ruler then draws bars only.
+		if showLineNumbers || lineChanges != nil {
 			if scrollView.verticalRulerView == nil {
 				let ruler = LineNumberRulerView(textView: textView)
 				ruler.textColor = NSColor(theme?.secondaryColor ?? .secondary)
 				scrollView.verticalRulerView = ruler
+			}
+			if let ruler = scrollView.verticalRulerView as? LineNumberRulerView {
+				if ruler.showsNumbers != showLineNumbers { ruler.showsNumbers = showLineNumbers }
+				if ruler.lineChanges != lineChanges { ruler.lineChanges = lineChanges }
 			}
 			if let ruler = scrollView.verticalRulerView as? LineNumberRulerView, let theme {
 				let newColor = NSColor(theme.secondaryColor)

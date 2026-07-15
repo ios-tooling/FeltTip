@@ -208,6 +208,8 @@ public struct MarkdownWebView: NSViewRepresentable {
 		context.coordinator.load(into: webView)
 		context.coordinator.applyScrollControls(to: webView)
 		context.coordinator.applyMirroredSelection(to: webView)
+		context.coordinator.currentLineChanges = context.environment.markdownLineChanges
+		context.coordinator.applyLineChanges(to: webView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -257,6 +259,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 		/// rejection). Toggle without rebuilding:
 		/// `defaults write <bundle-id> MDRDebugEditing -bool true`.
 		static let debugEditing = UserDefaults.standard.bool(forKey: "MDRDebugEditing")
+		/// Host-supplied change indicators, re-sent after every reload or body
+		/// swap (both rebuild the DOM the edge markers hang off).
+		var currentLineChanges: MarkdownLineChanges?
+		private var lastSentLineChangesJSON: String?
 
 		init(parent: MarkdownWebView) {
 			self.parent = parent
@@ -331,6 +337,23 @@ public struct MarkdownWebView: NSViewRepresentable {
 			}
 			log("body swap: textLen=\((text as NSString).length)")
 			webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json));", completionHandler: nil)
+			applyLineChanges(to: webView, force: true)
+		}
+
+		func applyLineChanges(to webView: WKWebView, force: Bool = false) {
+			let json = Self.lineChangesJSON(currentLineChanges)
+			guard force || json != lastSentLineChangesJSON else { return }
+			lastSentLineChangesJSON = json
+			webView.evaluateJavaScript("window.__mdSetLineChanges && window.__mdSetLineChanges(\(json));", completionHandler: nil)
+		}
+
+		static func lineChangesJSON(_ changes: MarkdownLineChanges?) -> String {
+			guard let changes else { return "null" }
+			let ranges = changes.changedRanges
+				.map { "{\"s\":\($0.range.lowerBound),\"e\":\($0.range.upperBound),\"k\":\"\($0.kind == .added ? "a" : "m")\"}" }
+				.joined(separator: ",")
+			let deletions = changes.deletionOffsets.map(String.init).joined(separator: ",")
+			return "{\"ranges\":[\(ranges)],\"deletions\":[\(deletions)]}"
 		}
 
 		private func loadHTML(for text: String, into webView: WKWebView) {
@@ -368,6 +391,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 			// Always install scroll reporting / control, even for a read-only
 			// preview, so a host can sync its scroll position to this view.
 			webView.evaluateJavaScript(Self.scrollSyncScript, completionHandler: nil)
+			applyLineChanges(to: webView, force: true)
 			if parent.isEditable {
 				webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
 			}
@@ -1376,7 +1400,71 @@ extension MarkdownWebView.Coordinator {
 	  window.__mdSwapContent = function (html) {
 	    document.body.innerHTML = html;
 	    if (window.__mdAfterSwap) { window.__mdAfterSwap(); }
+	    drawChangeMarkers();
 	  };
+	  // Host-supplied change indicators (a git diff against the committed
+	  // version): a colored bar down the page's left edge beside each changed
+	  // run, red ticks where lines were deleted. Positions come from the
+	  // `data-s` source stamps, so markers are re-drawn whenever the DOM or
+	  // layout changes under them.
+	  var changeState = null;
+	  function clearChangeMarkers() {
+	    document.querySelectorAll('.mdr-change-marker').forEach(function (el) { el.remove(); });
+	  }
+	  function drawChangeMarkers() {
+	    clearChangeMarkers();
+	    if (!changeState) { return; }
+	    var spans = document.querySelectorAll('[data-s]');
+	    if (!spans.length) { return; }
+	    function place(cls, top, height, color, left, width) {
+	      var bar = document.createElement('div');
+	      bar.className = 'mdr-change-marker';
+	      bar.style.cssText = 'position:absolute;pointer-events:none;z-index:9;border-radius:1.5px;'
+	        + 'left:' + left + 'px;width:' + width + 'px;top:' + top + 'px;height:' + height + 'px;background:' + color + ';';
+	      document.body.appendChild(bar);
+	    }
+	    changeState.ranges.forEach(function (range) {
+	      // Union the vertical extents of the runs overlapping [s, e).
+	      var top = null, bottom = null;
+	      for (var i = 0; i < spans.length; i++) {
+	        var base = parseInt(spans[i].getAttribute('data-s'), 10);
+	        if (base >= range.e) { break; }
+	        if (base + spans[i].textContent.length <= range.s) { continue; }
+	        var r = spans[i].getBoundingClientRect();
+	        if (r.height <= 0) { continue; }
+	        var t = r.top + window.scrollY, b = r.bottom + window.scrollY;
+	        if (top === null || t < top) { top = t; }
+	        if (bottom === null || b > bottom) { bottom = b; }
+	      }
+	      if (top === null) { return; }
+	      place('bar', top, Math.max(4, bottom - top), range.k === 'a' ? '#34c759' : '#0a84ff', 2, 3);
+	    });
+	    changeState.deletions.forEach(function (offset) {
+	      var y = null;
+	      for (var i = 0; i < spans.length; i++) {
+	        var base = parseInt(spans[i].getAttribute('data-s'), 10);
+	        if (base + spans[i].textContent.length >= offset) {
+	          y = spans[i].getBoundingClientRect().top + window.scrollY;
+	          break;
+	        }
+	      }
+	      if (y === null) {
+	        var last = spans[spans.length - 1].getBoundingClientRect();
+	        y = last.bottom + window.scrollY;
+	      }
+	      place('tick', y - 1.5, 3, '#ff453a', 0, 8);
+	    });
+	  }
+	  window.__mdSetLineChanges = function (state) {
+	    changeState = state;
+	    drawChangeMarkers();
+	    // Layout often settles after the first pass (fonts, images) — one
+	    // deferred redraw catches the common shifts.
+	    window.setTimeout(drawChangeMarkers, 300);
+	  };
+	  window.addEventListener('resize', function () {
+	    window.requestAnimationFrame(drawChangeMarkers);
+	  });
 	  report();
 	})();
 	"""
