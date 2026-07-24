@@ -57,6 +57,9 @@
     composing = null;
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
   };
+  // The revision this page currently addresses — lets the host (and tests)
+  // confirm a freshly rendered page is live before trusting its DOM.
+  window.__mdGetRev = function () { return stampRev; };
   function freeze() {
     var token = seq;
     frozen = { token: token };

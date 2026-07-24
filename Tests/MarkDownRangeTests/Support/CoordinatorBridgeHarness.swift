@@ -96,12 +96,16 @@ final class CoordinatorBridgeHarness {
 		try await waitUntil("source edit \(count)") { self.sourceEditCount >= count }
 	}
 
-	/// Wait until the emulated round-trip settles: no reload pending and the
-	/// page has (re)gained stamped content.
+	/// Wait until the emulated round-trip settles: renders happen off the main
+	/// actor now, so "settled" means the page ADDRESSES the coordinator's
+	/// current revision (a stale page's stamped content must not count) and
+	/// has stamped content again.
 	func waitQuiescent() async throws {
 		try await Task.sleep(for: .milliseconds(80))
-		try await waitUntil("quiescent stamped content") {
-			try await self.evaluate("document.querySelector('[data-s]') ? 'yes' : 'no'") == "yes"
+		try await waitUntil("page at current revision with stamped content") {
+			let pageRev = try await self.evaluate("window.__mdGetRev ? String(window.__mdGetRev()) : 'none'")
+			guard pageRev == String(self.coordinator.currentRev) else { return false }
+			return try await self.evaluate("document.querySelector('[data-s]') ? 'yes' : 'no'") == "yes"
 		}
 	}
 
