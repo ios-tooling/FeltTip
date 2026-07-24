@@ -41,9 +41,10 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
-	@Test func enterInCellNeverEditsSource() async throws {
-		// Enter navigates (next row) or is swallowed (last row) — either way
-		// it must never splice a paragraph break into the table.
+	@Test func enterInCellNeverSplicesAParagraphBreak() async throws {
+		// Enter navigates (next row) or appends a row (last row) — it must
+		// never splice a "\n\n" paragraph break into the table itself. From a
+		// mid-table cell it is a pure caret move: zero source edits.
 		let harness = try await CoordinatorBridgeHarness(source: Self.table)
 		try await harness.batch([
 			"window.__mdPlaceCaret(33)",
@@ -92,16 +93,23 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
-	@Test func enterOnLastRowIsStillSwallowed() async throws {
+	@Test func enterOnLastRowAppendsEmptyRow() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: Self.plainTable)
 		try await harness.batch([
 			"window.__mdPlaceCaret(47)",   // inside Bob (last row)
 			"document.execCommand('insertParagraph')",
 		])
-		try await Task.sleep(for: .milliseconds(300))
-		#expect(harness.source == Self.plainTable)
-		#expect(harness.sourceEditCount == 0)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == Self.plainTable + "\n|   |   |")
 		#expect(harness.coordinator.resyncCount == 0)
+
+		// The re-render must land the caret in the new row's first cell:
+		// typing with no explicit placement goes straight there.
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == Self.plainTable + "\n| Q  |   |")
+		#expect(harness.coordinator.hardRejections == 0)
 	}
 
 	@Test func backspaceAtCellStartNeverEatsPipes() async throws {

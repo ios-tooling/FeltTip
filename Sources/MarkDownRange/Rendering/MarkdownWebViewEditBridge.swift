@@ -71,6 +71,12 @@ extension MarkdownWebView.Coordinator {
 			resync(caretAt: nil)
 			return
 		}
+		// Enter on a table's last row: append an empty row after that row's
+		// line and land the caret in the new row's first cell.
+		if body["type"] as? String == "appendTableRow" {
+			appendTableRow(body)
+			return
+		}
 		log("message \(body)")
 		guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
 		// Revision gate. Every edit declares the source revision its offsets
@@ -136,6 +142,46 @@ extension MarkdownWebView.Coordinator {
 			log("REJECTED at matching rev \(currentRev): \(reason)")
 			resync(caretAt: min(max(0, edit.start), (source as NSString).length))
 		}
+	}
+
+	/// Splice a fresh empty row after the line containing `at` (a stamp from
+	/// the table's last row) and re-render with the caret in the new row's
+	/// first cell. Lives here rather than in the page because only the source
+	/// knows where the row's line ends. The page froze before posting, so
+	/// every early out must thaw (or resync) to keep typing alive.
+	private func appendTableRow(_ body: [String: Any]) {
+		func thaw() {
+			guard let seq = body["seq"] as? Int else { return }
+			webView?.evaluateJavaScript("window.__mdUnfreeze && window.__mdUnfreeze(\(seq));", completionHandler: nil)
+		}
+		if let rev = body["rev"] as? Int {
+			if rev < reseedRev {
+				droppedStaleEdits += 1
+				thaw()
+				return
+			}
+			if rev != currentRev {
+				bridgeIncidents.append("rev mismatch: appendTableRow rev=\(rev) currentRev=\(currentRev)")
+				log("rev mismatch on appendTableRow — resyncing")
+				resync(caretAt: nil)
+				return
+			}
+		}
+		let source = currentSource ?? parent.text
+		let ns = source as NSString
+		guard let at = body["at"] as? Int, let columns = body["columns"] as? Int,
+			  columns > 0, at >= 0, at < ns.length else { thaw(); return }
+		let tail = NSRange(location: at, length: ns.length - at)
+		let newlineAt = ns.range(of: "\n", range: tail).location
+		let lineEnd = newlineAt == NSNotFound ? ns.length : newlineAt
+		let row = "\n|" + String(repeating: "   |", count: columns)
+		currentSource = ns.substring(to: lineEnd) + row + ns.substring(from: lineEnd)
+		currentRev += 1
+		log("appendTableRow columns=\(columns) after line ending \(lineEnd) rev=\(currentRev)")
+		// The renderer stamps an empty cell's caret home on its second padding
+		// column — lineEnd + "\n|" + one space puts that at lineEnd + 3.
+		pendingSelection = NSRange(location: lineEnd + 3, length: 0)
+		parent.onSourceEdit?(currentSource ?? "", lineEnd + 3)
 	}
 
 	/// Reload the page from `currentSource` — not `parent.text`, which lags

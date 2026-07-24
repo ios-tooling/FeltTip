@@ -599,8 +599,9 @@
       // Inside a table cell a paragraph break would splice "\n\n" into the
       // middle of the row and shatter the table. Move to the same column in
       // the next row instead — spreadsheet-style — landing at the end of
-      // its text (or on an empty cell's caret home). On the last row there
-      // is nowhere to go and the keystroke is swallowed.
+      // its text (or on an empty cell's caret home). On the last row, ask
+      // the host to append a fresh empty row: the page can't splice that
+      // itself, since stamps don't reveal where the row's line ends.
       var enterHost = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentNode;
       var enterCell = enterHost && enterHost.closest ? enterHost.closest('td, th') : null;
       if (enterCell) {
@@ -612,7 +613,14 @@
             var home = below.querySelector('[data-s]');
             if (home) { placeCaretIn(home, 0, below); }
           }
+          return;
         }
+        var rowEl = enterCell.parentNode;
+        var rowSpan = rowEl.querySelector('[data-s]');
+        if (!rowSpan) return;
+        freeze();
+        post({ type: 'appendTableRow', at: parseInt(rowSpan.getAttribute('data-s'), 10),
+               columns: rowEl.children.length, rev: stampRev, seq: seq++ });
         return;
       }
       var marker = listItemMarker(range.startContainer) || '\n\n';
