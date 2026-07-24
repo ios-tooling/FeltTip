@@ -70,6 +70,10 @@ extension MarkdownWebView {
 		private var lastCaretToken: Int?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
+		/// Renders happen off the main actor; each new render bumps this and a
+		/// finished render only lands while its generation is still current, so
+		/// a slow render of stale text can't overwrite a newer page.
+		private var renderGeneration = 0
 		/// Logs the edit bridge to the console (every message, splice, and
 		/// rejection). Toggle without rebuilding:
 		/// `defaults write <bundle-id> MDRDebugEditing -bool true`.
@@ -139,32 +143,42 @@ extension MarkdownWebView {
 				try? await Task.sleep(for: .milliseconds(250))
 				guard !Task.isCancelled, let self, let webView else { return }
 				self.pendingSwap = nil
-				self.applyBodySwap(into: webView)
+				await self.applyBodySwap(into: webView)
 			}
 		}
 
 		/// Re-render the body and swap it into the loaded page in place.
 		/// Reads the freshest `parent` state at fire time — later updates may
-		/// have arrived during the debounce.
-		private func applyBodySwap(into webView: WKWebView) {
+		/// have arrived during the debounce. The render itself runs off the
+		/// main actor; the swap lands only if nothing changed underneath it.
+		private func applyBodySwap(into webView: WKWebView) async {
 			let text = parent.text
-			guard text != lastRenderedText || configSignature() != lastConfigSignature else { return }
-			guard configSignature() == lastConfigSignature, pendingSelection == nil else {
+			let config = configSignature()
+			guard text != lastRenderedText || config != lastConfigSignature else { return }
+			guard config == lastConfigSignature, pendingSelection == nil else {
 				load(into: webView)   // needs a full load after all
+				return
+			}
+			renderGeneration += 1
+			let generation = renderGeneration
+			let fragment = await MarkdownRenderService.shared.bodyFragment(
+				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
+				includeSourceOffsets: parent.isEditable,
+				interactiveCheckboxes: parent.onCheckboxToggle != nil)
+			// Re-validate: a newer render, a config change, a structural edit,
+			// or fresher text supersedes this result.
+			guard generation == renderGeneration, configSignature() == config,
+			      pendingSelection == nil, parent.text == text else { return }
+			guard let encoded = try? JSONEncoder().encode(fragment),
+			      let json = String(data: encoded, encoding: .utf8) else {
+				lastRenderedText = text
+				currentSource = text
+				loadHTML(for: text, into: webView)
 				return
 			}
 			lastRenderedText = text
 			currentSource = text
 			bumpEpoch()
-			let fragment = MarkdownHTMLRenderer.renderBodyFragment(
-				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
-				includeSourceOffsets: parent.isEditable,
-				interactiveCheckboxes: parent.onCheckboxToggle != nil)
-			guard let encoded = try? JSONEncoder().encode(fragment),
-			      let json = String(data: encoded, encoding: .utf8) else {
-				loadHTML(for: text, into: webView)
-				return
-			}
 			log("body swap: textLen=\((text as NSString).length) rev=\(currentRev)")
 			webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(currentRev));", completionHandler: nil)
 			applyLineChanges(to: webView, force: true)
@@ -186,21 +200,34 @@ extension MarkdownWebView {
 			return "{\"ranges\":[\(ranges)],\"deletions\":[\(deletions)]}"
 		}
 
+		/// Render `text` off the main actor and (still current) load it. The
+		/// caller has already committed the coordinator's state for this render
+		/// (lastRenderedText/currentSource/epoch), so a superseded render just
+		/// never navigates — the newer call's page wins.
 		func loadHTML(for text: String, into webView: WKWebView) {
-			let html = MarkdownHTMLRenderer.renderDocument(
-				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
-				includeSourceOffsets: parent.isEditable,
-				interactiveCheckboxes: parent.onCheckboxToggle != nil,
-				// Render mermaid as diagrams when the host opted in and we're not
-				// editing (editing keeps the raw, editable source). The engine
-				// loads through our scheme handler instead of being inlined.
-				embedMermaidEngine: parent.renderMermaid && !parent.isEditable,
-				mermaidEngineViaScheme: true)
-			// Load under the custom resource scheme (when we have a document
-			// folder) so relative <img> paths resolve to the scheme handler,
-			// which can actually read local files — WKWebView won't load
-			// file:// subresources of an loadHTMLString page.
-			webView.loadHTMLString(html, baseURL: resourceBaseURL(for: parent.baseURL) ?? parent.baseURL)
+			renderGeneration += 1
+			let generation = renderGeneration
+			let theme = parent.theme
+			let fontSize = parent.fontSize
+			let includeOffsets = parent.isEditable
+			let checkboxes = parent.onCheckboxToggle != nil
+			// Render mermaid as diagrams when the host opted in and we're not
+			// editing (editing keeps the raw, editable source). The engine
+			// loads through our scheme handler instead of being inlined.
+			let embedMermaid = parent.renderMermaid && !parent.isEditable
+			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
+			Task { @MainActor [weak self, weak webView] in
+				let html = await MarkdownRenderService.shared.documentHTML(
+					markdown: text, theme: theme, fontSize: fontSize,
+					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
+					embedMermaidEngine: embedMermaid)
+				guard let self, let webView, generation == self.renderGeneration else { return }
+				// Load under the custom resource scheme (when we have a document
+				// folder) so relative <img> paths resolve to the scheme handler,
+				// which can actually read local files — WKWebView won't load
+				// file:// subresources of an loadHTMLString page.
+				webView.loadHTMLString(html, baseURL: baseURL)
+			}
 		}
 
 		/// A `markerlocalres://res/<folder-path>/` base URL so relative image
