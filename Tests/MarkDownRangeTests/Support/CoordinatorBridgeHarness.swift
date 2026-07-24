@@ -20,6 +20,8 @@ import WebKit
 final class CoordinatorBridgeHarness {
 	private(set) var source: String
 	private(set) var sourceEditCount = 0
+	/// The post-edit caret hint delivered with the most recent onSourceEdit.
+	private(set) var lastCaretHint: Int?
 	let coordinator: MarkdownWebView.Coordinator
 	let webView: WKWebView
 	private let window: NSWindow
@@ -52,10 +54,11 @@ final class CoordinatorBridgeHarness {
 	private func wireRoundTrip(text: String) {
 		coordinator.parent = MarkdownWebView(text: text, theme: .default, fontSize: 14)
 			.editable(true)
-			.onSourceEdit { [weak self] newText, _ in
+			.onSourceEdit { [weak self] newText, caretHint in
 				guard let self else { return }
 				self.source = newText
 				self.sourceEditCount += 1
+				self.lastCaretHint = caretHint
 				guard !self.suppressRoundTrip else { return }
 				// SwiftUI delivers the state change on a later main-actor turn.
 				Task { @MainActor in
