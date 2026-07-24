@@ -288,7 +288,22 @@ struct BlockBuilder: MarkupWalker {
 	private func makeCell(_ cell: Markdown.Table.Cell) -> TableCell {
 		if let imageCell = imageOnlyTableCell(from: cell) { return imageCell }
 		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
-		return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed)
+		return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed,
+					 sourceStart: emptyCellSourceStart(cell))
+	}
+
+	/// Source offset typing into an EMPTY cell should splice at. The cell's
+	/// reported range runs from the first character after the opening pipe
+	/// THROUGH the closing pipe, so the insertable columns are
+	/// [lower, upper - 2]; land one past the padding space when the cell has
+	/// room, so the splice reads `| X |` rather than `|X  |`.
+	private func emptyCellSourceStart(_ cell: Markdown.Table.Cell) -> Int? {
+		guard cell.childCount == 0, let range = cell.range, let converter = sourceConverter else { return nil }
+		let lower = range.lowerBound.column
+		let column = max(lower, min(lower + 1, range.upperBound.column - 2))
+		return converter.verbatimUTF16Offset(
+			lowerLine: range.lowerBound.line, lowerColumn: column,
+			upperLine: range.lowerBound.line, upperColumn: column, renderedLength: 0)
 	}
 
 	/// If a table cell contains nothing but a single image (HTML <img> or

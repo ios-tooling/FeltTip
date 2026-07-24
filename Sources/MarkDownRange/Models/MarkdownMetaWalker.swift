@@ -83,7 +83,7 @@ struct MarkdownMetaWalker {
 
 	private mutating func collectLinks(in cell: TableCell) {
 		switch cell {
-		case .text(let str): collectLinks(in: str)
+		case .text(let str, _): collectLinks(in: str)
 		case .image(let source, let alt, _, _, _):
 			images.append(.init(source: source, alt: alt))
 		}

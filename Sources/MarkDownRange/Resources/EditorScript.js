@@ -241,6 +241,9 @@
       if (offset >= base && offset <= base + len) {
         var spot = locate(spans[i], offset - base);
         if (spot) { spot.span = spans[i]; return spot; }
+        // A text-less run (an empty table cell's caret home, or a leftover
+        // placeholder): the span element itself is the position.
+        if (len === 0) { return { node: spans[i], offset: 0, span: spans[i] }; }
       }
     }
     return null;
@@ -387,6 +390,19 @@
     }
     walk(root);
     return found;
+  }
+  // The same-column cell one row down (crossing thead → tbody), or null on
+  // the last row.
+  function tableCellBelow(cell) {
+    var row = cell.parentNode;
+    var table = cell.closest('table');
+    if (!row || !table) return null;
+    var rows = table.querySelectorAll('tr');
+    var ri = Array.prototype.indexOf.call(rows, row);
+    if (ri < 0 || ri + 1 >= rows.length) return null;
+    var next = rows[ri + 1];
+    var ci = Array.prototype.indexOf.call(row.children, cell);
+    return next.children[Math.min(ci, next.children.length - 1)] || null;
   }
   // List-item continuation marker, or null when not in a list.
   function listItemMarker(node) {
@@ -581,9 +597,24 @@
     if (type === 'insertParagraph') {
       e.preventDefault();
       // Inside a table cell a paragraph break would splice "\n\n" into the
-      // middle of the row and shatter the table — swallow the keystroke.
+      // middle of the row and shatter the table. Move to the same column in
+      // the next row instead — spreadsheet-style — landing at the end of
+      // its text (or on an empty cell's caret home). On the last row there
+      // is nowhere to go and the keystroke is swallowed.
       var enterHost = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentNode;
-      if (enterHost && enterHost.closest && enterHost.closest('td, th')) return;
+      var enterCell = enterHost && enterHost.closest ? enterHost.closest('td, th') : null;
+      if (enterCell) {
+        var below = tableCellBelow(enterCell);
+        if (below) {
+          var landing = lastTextIn(below);
+          if (landing) { placeCaretIn(landing, landing.nodeValue.length, below); }
+          else {
+            var home = below.querySelector('[data-s]');
+            if (home) { placeCaretIn(home, 0, below); }
+          }
+        }
+        return;
+      }
       var marker = listItemMarker(range.startContainer) || '\n\n';
       freeze();
       post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, rev: stampRev, seq: seq++ });

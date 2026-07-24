@@ -169,7 +169,15 @@ extension MarkdownHTMLRenderer {
 
 	private static func renderCell(_ cell: TableCell) -> String {
 		switch cell {
-		case .text(let attributed): return renderInline(attributed)
+		case .text(let attributed, let sourceStart):
+			let inline = renderInline(attributed)
+			// An empty cell renders no run, leaving the caret nowhere to map
+			// typing from. Give it the same stamped, text-less home that
+			// __mdPlaceCaret synthesizes for empty paragraphs.
+			if inline.isEmpty, emitSourceOffsets, let sourceStart {
+				return "<span data-s=\"\(sourceStart)\"><br></span>"
+			}
+			return inline
 		case .image(let source, let alt, let link, let width, let height):
 			return renderImage(source: source, alt: alt, width: width, height: height, link: link)
 		}

@@ -23,14 +23,18 @@ public struct ListItemContent: Sendable {
 }
 
 public enum TableCell: Sendable {
-	case text(AttributedString)
+	/// `sourceStart` is the offset typing into an EMPTY cell should splice
+	/// at (inside the pipes, past the padding). The editable renderer emits
+	/// it as the cell's caret home; non-empty cells derive positions from
+	/// their stamped runs instead and leave it nil.
+	case text(AttributedString, sourceStart: Int? = nil)
 	case image(source: String, alt: String, link: URL?, width: CGFloat? = nil, height: CGFloat? = nil)
 
 	public init(_ attributed: AttributedString) { self = .text(attributed) }
 
 	public var characters: AttributedString.CharacterView {
 		switch self {
-		case .text(let str): str.characters
+		case .text(let str, _): str.characters
 		case .image(_, let alt, _, _, _): AttributedString(alt).characters
 		}
 	}

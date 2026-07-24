@@ -74,7 +74,7 @@ public final class MarkdownAttachmentSizeCache {
 		var hasher = Hasher()
 		func combine(_ cell: TableCell) {
 			switch cell {
-			case .text(let str): hasher.combine(String(str.characters))
+			case .text(let str, _): hasher.combine(String(str.characters))
 			case .image(let source, _, _, _, _): hasher.combine(source)
 			}
 		}
