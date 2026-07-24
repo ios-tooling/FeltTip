@@ -15,6 +15,7 @@ public struct RawMarkdownScreen: View {
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
+	var onSourceEdit: ((String, Int) -> Void)?
 	var onSelectionChanged: ((NSRange?) -> Void)?
 	var mirroredSelection: NSRange?
 	var scrollToCharacterOffset: Int?
@@ -30,6 +31,7 @@ public struct RawMarkdownScreen: View {
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
+		onSourceEdit: ((String, Int) -> Void)? = nil,
 		onSelectionChanged: ((NSRange?) -> Void)? = nil,
 		mirroredSelection: NSRange? = nil,
 		scrollToCharacterOffset: Int? = nil,
@@ -44,6 +46,7 @@ public struct RawMarkdownScreen: View {
 		self.typewriterMode = typewriterMode
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
+		self.onSourceEdit = onSourceEdit
 		self.onSelectionChanged = onSelectionChanged
 		self.mirroredSelection = mirroredSelection
 		self.scrollToCharacterOffset = scrollToCharacterOffset
@@ -62,6 +65,7 @@ public struct RawMarkdownScreen: View {
 			typewriterMode: typewriterMode,
 			theme: theme,
 			onCursorPositionChanged: onCursorPositionChanged,
+			onSourceEdit: onSourceEdit,
 			onSelectionChanged: onSelectionChanged,
 			mirroredSelection: mirroredSelection,
 			scrollToCharacterOffset: scrollToCharacterOffset,

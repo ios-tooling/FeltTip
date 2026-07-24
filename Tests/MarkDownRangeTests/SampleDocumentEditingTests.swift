@@ -47,7 +47,7 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	private func updateParent() {
 		coordinator.parent = MarkdownWebView(text: text, theme: .default, fontSize: 16)
 			.editable(true)
-			.onSourceEdit { [weak self] new in
+			.onSourceEdit { [weak self] new, _ in
 				guard let self else { return }
 				self.text = new
 				self.updateParent()

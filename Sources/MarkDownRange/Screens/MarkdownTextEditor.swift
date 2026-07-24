@@ -21,6 +21,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var typewriterMode: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
+	/// When set, edits are reported here — with the post-edit caret offset —
+	/// INSTEAD of being written to the `text` binding, so a host tracking undo
+	/// state can record the caret alongside the new text. The host must feed
+	/// the new text back through the binding's backing store.
+	var onSourceEdit: ((String, Int) -> Void)?
 	/// Reports the selected source range whenever this (focused) editor's
 	/// selection changes; nil for a collapsed selection. Feeds the split
 	/// view's cross-pane selection mirroring.
@@ -42,6 +47,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		typewriterMode: Bool = false,
 		theme: MarkdownTheme? = nil,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
+		onSourceEdit: ((String, Int) -> Void)? = nil,
 		onSelectionChanged: ((NSRange?) -> Void)? = nil,
 		mirroredSelection: NSRange? = nil,
 		scrollToCharacterOffset: Int? = nil,
@@ -56,6 +62,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.typewriterMode = typewriterMode
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
+		self.onSourceEdit = onSourceEdit
 		self.onSelectionChanged = onSelectionChanged
 		self.mirroredSelection = mirroredSelection
 		self.scrollToCharacterOffset = scrollToCharacterOffset
@@ -488,7 +495,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		public func textDidChange(_ notification: Notification) {
 			guard let tv = notification.object as? NSTextView else { return }
-			parent.text = tv.string
+			if let onSourceEdit = parent.onSourceEdit {
+				onSourceEdit(tv.string, tv.selectedRange().location)
+			} else {
+				parent.text = tv.string
+			}
 			if parent.typewriterMode { centerCursor(in: tv) }
 			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			// Defer the re-highlight off the keystroke hot path: running 9

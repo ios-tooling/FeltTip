@@ -20,6 +20,9 @@ public struct WebSplitMarkdownScreen: View {
 	var baseURL: URL?
 	var editablePreview: Bool
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
+	/// When set, edits from either pane are reported here — with the post-edit
+	/// caret offset when known — instead of being written to the `text` binding.
+	var onSourceEdit: ((String, Int?) -> Void)?
 	var onVisibleSectionChanged: ((String) -> Void)?
 	var initialScrollFraction: Double?
 	var onScrollFractionChanged: ((Double) -> Void)?
@@ -40,6 +43,7 @@ public struct WebSplitMarkdownScreen: View {
 		baseURL: URL? = nil,
 		editablePreview: Bool = false,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
+		onSourceEdit: ((String, Int?) -> Void)? = nil,
 		onVisibleSectionChanged: ((String) -> Void)? = nil,
 		initialScrollFraction: Double? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
@@ -54,6 +58,7 @@ public struct WebSplitMarkdownScreen: View {
 		self.baseURL = baseURL
 		self.editablePreview = editablePreview
 		self.onCursorPositionChanged = onCursorPositionChanged
+		self.onSourceEdit = onSourceEdit
 		self.onVisibleSectionChanged = onVisibleSectionChanged
 		self.initialScrollFraction = initialScrollFraction
 		self.onScrollFractionChanged = onScrollFractionChanged
@@ -89,6 +94,7 @@ public struct WebSplitMarkdownScreen: View {
 				typewriterMode: typewriterMode,
 				theme: theme,
 				onCursorPositionChanged: { line, col, sel, offset in onCursorPositionChanged?(line, col, sel, offset) },
+				onSourceEdit: onSourceEdit.map { report in { new, caret in report(new, caret) } },
 				onSelectionChanged: { range in
 					// Any selection activity here makes this the active pane:
 					// its own mirror is stale noise regardless of the new
@@ -147,7 +153,9 @@ public struct WebSplitMarkdownScreen: View {
 			view = view.onCheckboxToggle(onCheckboxToggle)
 		}
 		if editablePreview {
-			view = view.editable(true).onSourceEdit { text = $0 }
+			view = view.editable(true).onSourceEdit { new, caret in
+				if let onSourceEdit { onSourceEdit(new, caret) } else { text = new }
+			}
 		}
 		return view
 	}

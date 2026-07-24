@@ -96,19 +96,24 @@ extension MarkdownWebView.Coordinator {
 			currentSource = newSource
 			currentRev += 1
 			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count) rev=\(currentRev)")
+			// Post-edit caret in the new source, forwarded so the host's undo
+			// bookkeeping doesn't have to guess it from a text diff (which is
+			// ambiguous when the edit repeats the surrounding characters).
+			let caretHint = selection?.upperBound
+				?? edit.start + ((edit.replacement ?? "") as NSString).length
 			if edit.caret != nil, let selection {
 				// Structural edit: re-render (re-stamps data-s) and restore
 				// the selection (style toggles keep their selection alive;
 				// other edits collapse to a caret). Don't suppress the reload.
 				pendingSelection = selection
-				parent.onSourceEdit?(newSource)
+				parent.onSourceEdit?(newSource, caretHint)
 			} else {
 				// In-place edit: the DOM already shows it (and the page shifted
 				// its own data-s stamps and advanced its stampRev in step), so
 				// skip the reload.
 				selfEdit = SelfEdit(rev: currentRev, text: newSource)
 				lastRenderedText = newSource
-				parent.onSourceEdit?(newSource)
+				parent.onSourceEdit?(newSource, caretHint)
 			}
 		case .rejected(let reason):
 			// Structural edits (those carrying a caret target) were

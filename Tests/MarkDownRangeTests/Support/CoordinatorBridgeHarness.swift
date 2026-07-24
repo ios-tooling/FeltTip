@@ -52,7 +52,7 @@ final class CoordinatorBridgeHarness {
 	private func wireRoundTrip(text: String) {
 		coordinator.parent = MarkdownWebView(text: text, theme: .default, fontSize: 14)
 			.editable(true)
-			.onSourceEdit { [weak self] newText in
+			.onSourceEdit { [weak self] newText, _ in
 				guard let self else { return }
 				self.source = newText
 				self.sourceEditCount += 1

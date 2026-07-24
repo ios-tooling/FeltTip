@@ -34,7 +34,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	let fontSize: CGFloat
 	var baseURL: URL?
 	var isEditable = false
-	var onSourceEdit: ((String) -> Void)?
+	var onSourceEdit: ((String, Int?) -> Void)?
 	var onCheckboxToggle: ((Int, Bool) -> Void)?
 	/// When true (and not editing), the ~3 MB mermaid engine is embedded inline
 	/// so mermaid code blocks render as diagrams. Off by default — the QuickLook
@@ -85,8 +85,12 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
-	/// Receives the rewritten Markdown after a styled-view edit is mapped back.
-	public func onSourceEdit(_ callback: @escaping (String) -> Void) -> Self {
+	/// Receives the rewritten Markdown after a styled-view edit is mapped back,
+	/// plus the post-edit caret offset (UTF-16, into the new source) when the
+	/// splicer knows it. Hosts deriving undo state by diffing old→new text
+	/// can't localize an edit made of repeated characters; the hint resolves
+	/// that ambiguity.
+	public func onSourceEdit(_ callback: @escaping (String, Int?) -> Void) -> Self {
 		var copy = self
 		copy.onSourceEdit = callback
 		return copy
