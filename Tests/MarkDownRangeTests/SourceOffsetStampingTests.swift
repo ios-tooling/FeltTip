@@ -78,6 +78,16 @@ import Testing
 		expectStampsVerbatim(in: "see [the docs](https://example.com/d) for more", minimumRuns: 2)
 	}
 
+	@Test func tableCellRunsStampVerbatim() {
+		// Cells run through the same stamped inline renderer as paragraphs;
+		// their runs must address the text between the pipes, styled cells
+		// included. (The styled view currently keeps tables contentEditable
+		// = false — these stamps are what cell editing would splice through.)
+		expectStampsVerbatim(
+			in: "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| **Bob** | 41 |",
+			minimumRuns: 6)
+	}
+
 	@Test func sampleReleaseNotesDocumentStampsVerbatim() throws {
 		// A real document: curly quotes and em dashes as literal source
 		// characters, bold runs mid-paragraph, and an emoji (surrogate pair).
