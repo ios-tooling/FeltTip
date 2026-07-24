@@ -30,11 +30,16 @@ import Testing
 		#expect(script.contains("target.insertAdjacentElement('afterend', button);"))
 	}
 
-	@Test @MainActor func editorScriptShiftsStampsAfterInPlaceEdits() {
+	@Test @MainActor func editorScriptShiftsStampsEagerlyWhenQueueing() {
+		// Stamps must shift when the edit is QUEUED, not at the input drain:
+		// later commands in a batched WebKit turn read their span bases during
+		// their own beforeinput, and stale bases put the batch's later edits at
+		// the wrong source offsets.
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("function shiftStamps(start, delta, editedSpan)"))
-		#expect(script.contains("shift: { start: start, delta: data.length - (end - start), span: startSpan }"))
-		#expect(script.contains("if (queued.shift) { shiftStamps(queued.shift.start, queued.shift.delta, queued.shift.span); }"))
+		#expect(script.contains("function queueFastEdit(msg, start, delta, span)"))
+		#expect(script.contains("shiftStamps(start, delta, span);"))
+		#expect(script.contains("stampRev += 1;"))
 	}
 
 	@Test @MainActor func editorScriptQueuesBatchedEdits() {
@@ -43,9 +48,30 @@ import Testing
 		// dropped all but the last edit in the batch.
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("var pendingEdits = [];"))
-		#expect(script.contains("pendingEdits.push({ msg: { start: start, end: end, text: data"))
-		#expect(script.contains("pendingEdits.push({ msg: { start: start, end: end, text: ''"))
+		#expect(script.contains("queueFastEdit({ start: start, end: end, text: data"))
+		#expect(script.contains("queueFastEdit({ start: start, end: end, text: ''"))
 		#expect(script.contains("while (pendingEdits.length) {"))
+	}
+
+	@Test @MainActor func editorScriptDeclaresRevisionOnEveryEdit() {
+		// Every edit message declares the source revision its offsets address
+		// (rev) and a monotonic seq; the host applies only exact rev matches.
+		let script = MarkdownWebView.Coordinator.editorScript
+		#expect(script.contains("var stampRev = 0;"))
+		#expect(script.contains("window.__mdSetRev = function (rev)"))
+		#expect(script.contains("msg.rev = stampRev;"))
+		#expect(script.contains("msg.seq = seq++;"))
+		#expect(script.contains("rev: stampRev, seq: seq++"))
+	}
+
+	@Test @MainActor func editorScriptFreezesWithTimeoutSafetyNet() {
+		// A structural edit freezes input until the host re-renders; if that
+		// re-render never comes, the armed deadline posts frozenTimeout so the
+		// host resyncs — typing can never stay silently dead.
+		let script = MarkdownWebView.Coordinator.editorScript
+		#expect(script.contains("function freeze() {"))
+		#expect(script.contains("frozen = { token: token };"))
+		#expect(script.contains("post({ type: 'frozenTimeout', token: token })"))
 	}
 
 	@Test @MainActor func editorScriptSendsContextAndEscalatesCrossRunEdits() {
@@ -61,11 +87,12 @@ import Testing
 		// External text changes update the loaded page via a body swap (no
 		// navigation flash); the editor re-arms its per-content state.
 		let scrollScript = MarkdownWebView.Coordinator.scrollSyncScript
-		#expect(scrollScript.contains("window.__mdSwapContent = function (html)"))
-		#expect(scrollScript.contains("if (window.__mdAfterSwap) { window.__mdAfterSwap(); }"))
+		#expect(scrollScript.contains("window.__mdSwapContent = function (html, rev)"))
+		#expect(scrollScript.contains("if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }"))
 		let editorScript = MarkdownWebView.Coordinator.editorScript
-		#expect(editorScript.contains("window.__mdAfterSwap = function ()"))
-		#expect(editorScript.contains("frozen = false;"))
+		#expect(editorScript.contains("window.__mdAfterSwap = function (rev)"))
+		#expect(editorScript.contains("frozen = null;"))
+		#expect(editorScript.contains("if (typeof rev === 'number') { stampRev = rev; }"))
 		#expect(editorScript.contains("installLinkOpenButtons();"))
 	}
 
@@ -78,7 +105,7 @@ import Testing
 		#expect(script.contains("if (composing || e.isComposing || e.inputType === 'insertCompositionText' || e.inputType === 'deleteCompositionText') return;"))
 		// Reconciliation replaces the whole run, verified by its prior text.
 		#expect(script.contains("beforeText: plain(span.textContent)"))
-		#expect(script.contains("post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '' });"))
+		#expect(script.contains("post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '', rev: stampRev, seq: seq++ });"))
 		#expect(script.contains("post({ type: 'desync' })"))
 	}
 }

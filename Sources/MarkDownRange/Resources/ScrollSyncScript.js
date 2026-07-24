@@ -101,9 +101,9 @@
   // user types in the other pane of a split). Swapping the body avoids a
   // navigation — no blank flash, scroll position preserved. The editor
   // page re-arms its per-content state via __mdAfterSwap.
-  window.__mdSwapContent = function (html) {
+  window.__mdSwapContent = function (html, rev) {
     document.body.innerHTML = html;
-    if (window.__mdAfterSwap) { window.__mdAfterSwap(); }
+    if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }
     drawChangeMarkers();
   };
   // Host-supplied change indicators (a git diff against the committed

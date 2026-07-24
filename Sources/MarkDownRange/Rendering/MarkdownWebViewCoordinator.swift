@@ -18,19 +18,34 @@ extension MarkdownWebView {
 	public final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 		var parent: MarkdownWebView
 		weak var webView: WKWebView?
-		var lastKey: String?
-		/// The non-text part of `lastKey`; a mismatch means CSS/config changed
-		/// and the page needs a real reload rather than a body swap.
+		/// The exact text the page currently renders; with `lastConfigSignature`
+		/// it decides whether a state update needs any render at all. A stored
+		/// string, not a hash — hash collisions silently skipped reloads.
+		var lastRenderedText: String?
+		/// A mismatch means CSS/config changed and the page needs a real reload
+		/// rather than a body swap.
 		var lastConfigSignature: String?
 		/// Debounced in-place body update for external text changes (typing in
 		/// the raw pane of a split re-renders the preview through here).
 		var pendingSwap: Task<Void, Never>?
-		/// The source produced by our own last edit. When the resulting
-		/// `session.text` update comes back through `load`, we skip the reload so
-		/// the live contentEditable DOM (which already shows the edit) isn't torn
-		/// down. Matched on the actual text, not a composite key, so it's robust
-		/// against theme-signature churn.
-		var selfEditedText: String?
+		/// The revision of `currentSource`. Advanced on every applied splice and
+		/// on every reload/swap; the page mirrors it in its `stampRev` and every
+		/// edit message declares the revision its offsets address. Only an exact
+		/// match is ever applied — a mismatch resyncs, a pre-reseed straggler is
+		/// dropped (its DOM state was already replaced).
+		var currentRev = 0
+		/// The revision seeded by the most recent full reload or body swap.
+		/// Messages declaring an older revision were composed against a DOM that
+		/// no longer exists.
+		var reseedRev = 0
+		/// The source produced by our own last edit, with the revision it made
+		/// current. When the resulting `session.text` update comes back through
+		/// `load`, we skip the reload so the live contentEditable DOM (which
+		/// already shows the edit) isn't torn down — but only while the revision
+		/// still matches, so a different path arriving at identical text can't
+		/// wrongly suppress a render.
+		struct SelfEdit { var rev: Int; var text: String }
+		var selfEdit: SelfEdit?
 		/// Last scroll position reported by the page, restored after any reload
 		/// so re-renders don't jump to the top.
 		/// Internal (not private) so tests can seed it — the page reports it
@@ -72,18 +87,23 @@ extension MarkdownWebView {
 			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
 		}
 
-		func renderKey(text: String) -> String {
-			"\(configSignature())|\(text.hashValue)"
+		/// Advance to a fresh revision epoch. Called whenever the page's DOM is
+		/// (about to be) rebuilt — full reload or body swap — so that edit
+		/// messages composed against the previous DOM identify themselves as
+		/// stale and get dropped instead of spliced into the wrong source.
+		func bumpEpoch() {
+			currentRev += 1
+			reseedRev = currentRev
 		}
 
 		func load(into webView: WKWebView) {
 			// Our own edit coming back round-trip — the DOM already shows it.
-			let key = renderKey(text: parent.text)
-			if let edited = selfEditedText, parent.text == edited {
-				selfEditedText = nil
-				if key == lastKey { return }
+			let config = configSignature()
+			if let edit = selfEdit, parent.text == edit.text, currentRev == edit.rev {
+				selfEdit = nil
+				if parent.text == lastRenderedText, config == lastConfigSignature { return }
 			}
-			guard key != lastKey else { return }
+			guard parent.text != lastRenderedText || config != lastConfigSignature else { return }
 			// A full (navigating) load is needed for the first render, for
 			// config changes (theme/font mean new CSS), for mermaid pages (the
 			// embedded engine script doesn't survive a body swap), and for our
@@ -92,15 +112,15 @@ extension MarkdownWebView {
 			// typing in the raw pane of a split — updates the page in place
 			// after a debounce, so the preview neither flashes through a blank
 			// navigation nor re-renders on every keystroke.
-			let config = configSignature()
-			if lastKey == nil || pendingSelection != nil || config != lastConfigSignature
+			if lastRenderedText == nil || pendingSelection != nil || config != lastConfigSignature
 				|| (parent.renderMermaid && !parent.isEditable) {
 				pendingSwap?.cancel()
 				pendingSwap = nil
-				lastKey = key
+				lastRenderedText = parent.text
 				lastConfigSignature = config
 				log("reload: textLen=\((parent.text as NSString).length)")
 				currentSource = parent.text
+				bumpEpoch()
 				loadHTML(for: parent.text, into: webView)
 				return
 			}
@@ -118,14 +138,14 @@ extension MarkdownWebView {
 		/// have arrived during the debounce.
 		private func applyBodySwap(into webView: WKWebView) {
 			let text = parent.text
-			let key = renderKey(text: text)
-			guard key != lastKey else { return }
+			guard text != lastRenderedText || configSignature() != lastConfigSignature else { return }
 			guard configSignature() == lastConfigSignature, pendingSelection == nil else {
 				load(into: webView)   // needs a full load after all
 				return
 			}
-			lastKey = key
+			lastRenderedText = text
 			currentSource = text
+			bumpEpoch()
 			let fragment = MarkdownHTMLRenderer.renderBodyFragment(
 				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
 				includeSourceOffsets: parent.isEditable,
@@ -135,8 +155,8 @@ extension MarkdownWebView {
 				loadHTML(for: text, into: webView)
 				return
 			}
-			log("body swap: textLen=\((text as NSString).length)")
-			webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json));", completionHandler: nil)
+			log("body swap: textLen=\((text as NSString).length) rev=\(currentRev)")
+			webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(currentRev));", completionHandler: nil)
 			applyLineChanges(to: webView, force: true)
 		}
 
@@ -194,6 +214,9 @@ extension MarkdownWebView {
 			applyLineChanges(to: webView, force: true)
 			if parent.isEditable {
 				webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
+				// Seed the freshly injected script with the revision this DOM
+				// renders, so its edit messages address the right source state.
+				webView.evaluateJavaScript("window.__mdSetRev && window.__mdSetRev(\(currentRev));", completionHandler: nil)
 			}
 			// Restore position after a (re)load: a pending caret from a structural
 			// edit wins; then a one-time initial fraction; then the last offset.
@@ -220,18 +243,22 @@ extension MarkdownWebView {
 		/// Pick up a token-gated caret-restore request (undo/redo) and arm it as
 		/// the pending caret. The accompanying `parent.text` change forces a
 		/// reload, after which `webView(_:didFinish:)` re-stamps `data-s` and
-		/// places the caret via `__mdPlaceCaret`. Clear `selfEditedText` so the
+		/// places the caret via `__mdPlaceCaret`. Clear `selfEdit` so the
 		/// reload is never skipped — even when the restored text happens to equal
 		/// our last in-place edit.
 		func applyCaretTarget() {
 			guard let target = parent.caretTarget, target.token != lastCaretToken else { return }
-			lastCaretToken = target.token
 			// Only the editor the user is actually in restores its caret. In a
 			// split, the other (preview) pane just re-renders — arming a caret here
 			// would steal first responder from the focused pane and end editing.
+			// The token is consumed only once the restore is actually armed:
+			// consuming it before this guard permanently lost the restore when
+			// focus was momentarily elsewhere (window activation churn) — now the
+			// next update pass retries.
 			guard isFirstResponder else { return }
+			lastCaretToken = target.token
 			pendingSelection = NSRange(location: target.offset, length: 0)
-			selfEditedText = nil
+			selfEdit = nil
 		}
 
 		/// True when this web view (or a descendant, e.g. the WKContentView) holds

@@ -63,13 +63,37 @@ extension MarkdownWebView.Coordinator {
 			resync(caretAt: nil)
 			return
 		}
+		// The page froze for a structural edit but the re-render that should
+		// clear it never arrived — a lifecycle bug somewhere upstream. Resync
+		// so typing comes back instead of staying silently dead.
+		if body["type"] as? String == "frozenTimeout" {
+			log("frozen timeout (token \(body["token"] ?? "?")) — resyncing")
+			resync(caretAt: nil)
+			return
+		}
 		log("message \(body)")
 		guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
+		// Revision gate. Every edit declares the source revision its offsets
+		// address. A pre-reseed straggler raced a reload/swap that already
+		// replaced its DOM — drop it. Any other mismatch means the page and
+		// the source genuinely disagree — resync, never guess.
+		if let rev = body["rev"] as? Int {
+			if rev < reseedRev {
+				log("dropping stale edit rev=\(rev) (reseeded at \(reseedRev)) seq=\(body["seq"] ?? "?")")
+				return
+			}
+			if rev != currentRev {
+				log("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") — resyncing")
+				resync(caretAt: min(max(0, edit.start), ((currentSource ?? parent.text) as NSString).length))
+				return
+			}
+		}
 		let source = currentSource ?? parent.text
 		switch MarkdownEditSplicer.apply(edit, to: source) {
 		case .applied(let newSource, let selection):
 			currentSource = newSource
-			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count)")
+			currentRev += 1
+			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count) rev=\(currentRev)")
 			if edit.caret != nil, let selection {
 				// Structural edit: re-render (re-stamps data-s) and restore
 				// the selection (style toggles keep their selection alive;
@@ -78,33 +102,36 @@ extension MarkdownWebView.Coordinator {
 				parent.onSourceEdit?(newSource)
 			} else {
 				// In-place edit: the DOM already shows it (and the page shifted
-				// its own data-s stamps), so skip the reload.
-				selfEditedText = newSource
-				lastKey = renderKey(text: newSource)
+				// its own data-s stamps and advanced its stampRev in step), so
+				// skip the reload.
+				selfEdit = SelfEdit(rev: currentRev, text: newSource)
+				lastRenderedText = newSource
 				parent.onSourceEdit?(newSource)
 			}
 		case .rejected(let reason):
-			// The offsets and the source disagree — and for the fast-path
-			// edits the browser has already mutated the DOM, so leaving the
-			// page alone would let the view drift away from the source.
-			// Re-render from the source we hold and put the caret back near
-			// the edit; the user loses one keystroke, never file content.
-			log("rejected: \(reason)")
+			// After the revision gate this should be unreachable — a mismatch
+			// here means the page's DOM text and the source disagree at the
+			// same revision, i.e. a real bridge bug. Log loudly and resync;
+			// the user loses one keystroke, never file content.
+			log("REJECTED at matching rev \(currentRev): \(reason)")
 			resync(caretAt: min(max(0, edit.start), (source as NSString).length))
 		}
 	}
 
 	/// Reload the page from `currentSource` — not `parent.text`, which lags
-	/// an in-flight SwiftUI round-trip — re-stamping every run.
+	/// an in-flight SwiftUI round-trip — re-stamping every run and opening a
+	/// fresh revision epoch so in-flight messages from the torn-down DOM are
+	/// dropped rather than spliced.
 	func resync(caretAt caret: Int?) {
 		guard let webView else { return }
 		let source = currentSource ?? parent.text
 		pendingSwap?.cancel()
 		pendingSwap = nil
-		selfEditedText = nil
+		selfEdit = nil
 		pendingSelection = caret.map { NSRange(location: $0, length: 0) }
-		lastKey = renderKey(text: source)
+		lastRenderedText = source
 		lastConfigSignature = configSignature()
+		bumpEpoch()
 		loadHTML(for: source, into: webView)
 	}
 }

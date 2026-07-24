@@ -23,8 +23,34 @@
   var pendingEdits = [];
   // A structural edit or desync was posted; swallow input until the host's
   // re-render (which reinjects this script) so nothing maps from a source
-  // that's about to change shape.
-  var frozen = false;
+  // that's about to change shape. Holds { token } while frozen; if the
+  // re-render never arrives (a lifecycle bug), the armed deadline posts
+  // frozenTimeout so the host resyncs — typing can never stay dead.
+  var frozen = null;
+  // Revision of the source the data-s stamps currently describe. Seeded by
+  // the host after every load (__mdSetRev) and swap (__mdSwapContent), and
+  // advanced locally each time an edit is queued together with its stamp
+  // shift — so every posted message declares exactly which source revision
+  // its offsets address, and the host accepts only an exact match. A
+  // mismatch means resync, never a guess.
+  var stampRev = 0;
+  // Monotonic message counter, for ordering diagnostics on the host side.
+  var seq = 0;
+  window.__mdSetRev = function (rev) {
+    stampRev = rev;
+    pendingEdits = [];
+    frozen = null;
+    composing = null;
+  };
+  function freeze() {
+    var token = seq;
+    frozen = { token: token };
+    window.setTimeout(function () {
+      if (frozen && frozen.token === token) {
+        try { post({ type: 'frozenTimeout', token: token }); } catch (e) {}
+      }
+    }, 2000);
+  }
   // State captured at compositionstart, reconciled at compositionend.
   var composing = null;
   installLinkOpenButtons();
@@ -139,10 +165,11 @@
   // The host swapped in freshly rendered content (see __mdSwapContent):
   // drop any in-flight edit state — its offsets described the old DOM —
   // and re-run the per-content setup. The body's own listeners survive.
-  window.__mdAfterSwap = function () {
+  window.__mdAfterSwap = function (rev) {
     pendingEdits = [];
-    frozen = false;
+    frozen = null;
     composing = null;
+    if (typeof rev === 'number') { stampRev = rev; }
     document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
       el.contentEditable = 'false';
     });
@@ -486,24 +513,24 @@
       data = plain(data);
       if (crossRun) {
         e.preventDefault();
-        frozen = true;
-        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start + data.length });
+        freeze();
+        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start + data.length, rev: stampRev, seq: seq++ });
         return;
       }
-      pendingEdits.push({ msg: { start: start, end: end, text: data, expected: expected, before: before, after: after },
-                          shift: { start: start, delta: data.length - (end - start), span: startSpan } });
+      queueFastEdit({ start: start, end: end, text: data, expected: expected, before: before, after: after },
+                    start, data.length - (end - start), startSpan);
       return;
     }
     if (type === 'deleteContentBackward' || type === 'deleteContentForward' ||
         type === 'deleteWordBackward' || type === 'deleteWordForward' || type === 'deleteByCut') {
       if (crossRun) {
         e.preventDefault();
-        frozen = true;
-        post({ start: start, end: end, text: '', expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start });
+        freeze();
+        post({ start: start, end: end, text: '', expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start, rev: stampRev, seq: seq++ });
         return;
       }
-      pendingEdits.push({ msg: { start: start, end: end, text: '', expected: expected, before: before, after: after },
-                          shift: { start: start, delta: -(end - start), span: startSpan } });
+      queueFastEdit({ start: start, end: end, text: '', expected: expected, before: before, after: after },
+                    start, -(end - start), startSpan);
       return;
     }
 
@@ -512,26 +539,39 @@
     if (type === 'insertParagraph') {
       e.preventDefault();
       var marker = listItemMarker(range.startContainer) || '\n\n';
-      frozen = true;
-      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length });
+      freeze();
+      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, rev: stampRev, seq: seq++ });
       return;
     }
     if (type === 'formatBold' || type === 'formatItalic' || type === 'formatStrikeThrough') {
       e.preventDefault();
       if (start === end) return;  // need a selection to wrap
       var m = type === 'formatBold' ? '**' : type === 'formatItalic' ? '*' : '~~';
-      frozen = true;
-      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, crossRun: crossRun, before: before, after: after, caret: end + 2 * m.length });
+      freeze();
+      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, crossRun: crossRun, before: before, after: after, caret: end + 2 * m.length, rev: stampRev, seq: seq++ });
       return;
     }
 
     e.preventDefault();  // line breaks, paste, etc. — not yet mapped
   });
+  // Queue a fast-path (in-place) edit and shift the stamps for it NOW, not
+  // at the `input` drain. WebKit batches several editing commands into one
+  // turn, and later commands in the batch read their span bases during
+  // their own beforeinput — shifting eagerly keeps every capture in the
+  // coordinates of the source as it will be once the edits ahead of it have
+  // been applied, which is exactly what the sequential splices on the Swift
+  // side produce. (In-span character offsets are always measured fresh from
+  // the DOM; only the data-s bases need this bookkeeping.)
+  function queueFastEdit(msg, start, delta, span) {
+    msg.rev = stampRev;
+    msg.seq = seq++;
+    pendingEdits.push(msg);
+    shiftStamps(start, delta, span);
+    stampRev += 1;
+  }
   document.body.addEventListener('input', function () {
     while (pendingEdits.length) {
-      var queued = pendingEdits.shift();
-      post(queued.msg);
-      if (queued.shift) { shiftStamps(queued.shift.start, queued.shift.delta, queued.shift.span); }
+      post(pendingEdits.shift());
     }
   });
   // Composition (IME, dead keys, macOS inline predictive text) can't be
@@ -563,14 +603,15 @@
     if (!c) return;
     if (c.desync || !c.span.isConnected) {
       // The DOM may hold composed text we couldn't map; re-render.
-      frozen = true;
+      freeze();
       post({ type: 'desync' });
       return;
     }
     var after = plain(c.span.textContent);
     if (after === c.beforeText) return;  // canceled, nothing changed
-    post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '' });
+    post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '', rev: stampRev, seq: seq++ });
     shiftStamps(c.base, after.length - c.beforeText.length, c.span);
+    stampRev += 1;
   });
   // Report scroll so a reload can restore the reader's place.
   window.addEventListener('scroll', function () {
