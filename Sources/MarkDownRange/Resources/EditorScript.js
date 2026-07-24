@@ -11,8 +11,11 @@
   document.body.contentEditable = 'true';
   document.body.style.outline = 'none';
   // Blocks we can't map edits inside become read-only islands, so the caret
-  // can't land somewhere a keystroke would be silently vetoed.
-  document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+  // can't land somewhere a keystroke would be silently vetoed. Tables are
+  // NOT among them: cell runs carry data-s stamps like any paragraph, so
+  // in-place cell edits splice normally — only the structural hazards
+  // (Enter mid-row; deletes that would eat a pipe) are vetoed downstream.
+  document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr').forEach(function (el) {
     el.contentEditable = 'false';
   });
   // Edits awaiting their `input` event, oldest first. A QUEUE, not a slot:
@@ -208,7 +211,7 @@
     frozen = null;
     composing = null;
     if (typeof rev === 'number') { stampRev = rev; }
-    document.querySelectorAll('pre, table, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+    document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr').forEach(function (el) {
       el.contentEditable = 'false';
     });
     installLinkOpenButtons();
@@ -577,6 +580,10 @@
     // restoring the caret. Block the browser's own DOM mutation.
     if (type === 'insertParagraph') {
       e.preventDefault();
+      // Inside a table cell a paragraph break would splice "\n\n" into the
+      // middle of the row and shatter the table — swallow the keystroke.
+      var enterHost = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentNode;
+      if (enterHost && enterHost.closest && enterHost.closest('td, th')) return;
       var marker = listItemMarker(range.startContainer) || '\n\n';
       freeze();
       post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, rev: stampRev, seq: seq++ });
