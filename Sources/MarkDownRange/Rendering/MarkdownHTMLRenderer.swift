@@ -90,6 +90,18 @@ public enum MarkdownHTMLRenderer {
 			includeSourceOffsets: includeSourceOffsets,
 			interactiveCheckboxes: interactiveCheckboxes,
 			mermaidDiagrams: mermaidDiagrams)
+		return wrapDocument(body: body, theme: theme, fontSize: fontSize,
+							embedMermaidEngine: embedMermaidEngine,
+							mermaidEngineViaScheme: mermaidEngineViaScheme)
+	}
+
+	/// Wraps an already-rendered body fragment in the standalone document
+	/// shell (doctype, CSS, optional mermaid engine). Split out so callers
+	/// that render per-block fragments can build the same document from them.
+	static func wrapDocument(
+		body: String, theme: MarkdownTheme, fontSize: CGFloat,
+		embedMermaidEngine: Bool = false, mermaidEngineViaScheme: Bool = false
+	) -> String {
 		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme, viaScheme: mermaidEngineViaScheme) : ""
 		return """
 		<!DOCTYPE html>

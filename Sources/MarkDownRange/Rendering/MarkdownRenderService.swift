@@ -25,16 +25,30 @@ actor MarkdownRenderService {
 			interactiveCheckboxes: interactiveCheckboxes)
 	}
 
+	func blockFragments(
+		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
+		includeSourceOffsets: Bool, interactiveCheckboxes: Bool
+	) -> [MarkdownBlockFragment] {
+		MarkdownHTMLRenderer.renderBlockFragments(
+			markdown: markdown, theme: theme, fontSize: fontSize,
+			includeSourceOffsets: includeSourceOffsets,
+			interactiveCheckboxes: interactiveCheckboxes)
+	}
+
+	/// The full document plus its per-block fragments — the coordinator keeps
+	/// the fragments as the baseline for later incremental patches.
 	func documentHTML(
 		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
 		includeSourceOffsets: Bool, interactiveCheckboxes: Bool,
 		embedMermaidEngine: Bool
-	) -> String {
-		MarkdownHTMLRenderer.renderDocument(
+	) -> (html: String, fragments: [MarkdownBlockFragment]) {
+		let fragments = MarkdownHTMLRenderer.renderBlockFragments(
 			markdown: markdown, theme: theme, fontSize: fontSize,
 			includeSourceOffsets: includeSourceOffsets,
-			interactiveCheckboxes: interactiveCheckboxes,
-			embedMermaidEngine: embedMermaidEngine,
-			mermaidEngineViaScheme: true)
+			interactiveCheckboxes: interactiveCheckboxes)
+		let html = MarkdownHTMLRenderer.wrapDocument(
+			body: fragments.map(\.html).joined(), theme: theme, fontSize: fontSize,
+			embedMermaidEngine: embedMermaidEngine, mermaidEngineViaScheme: true)
+		return (html, fragments)
 	}
 }

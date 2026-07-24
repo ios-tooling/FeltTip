@@ -128,6 +128,50 @@
     if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }
     drawChangeMarkers();
   };
+  // Replace a contiguous run of top-level blocks in place — the incremental
+  // path for structural edits and split-pane refreshes. Returns false (and
+  // touches nothing) when the live DOM doesn't look like the page the patch
+  // was computed against — caret holder paragraphs, unexpected structure —
+  // in which case the host falls back to a full swap/reload.
+  window.__mdPatchBlocks = function (start, removeCount, htmlArray, tailAnchorOffset, tailAnchorStamp, expectedOldCount, rev) {
+    var blocks = Array.prototype.filter.call(document.body.children, function (el) {
+      return !el.classList.contains('mdr-change-marker');
+    });
+    if (blocks.length !== expectedOldCount) { return false; }
+    if (start + removeCount > blocks.length) { return false; }
+    for (var i = 0; i < removeCount; i++) { blocks[start + i].remove(); }
+    var anchor = start + removeCount < blocks.length ? blocks[start + removeCount] : null;
+    var tpl = document.createElement('template');
+    tpl.innerHTML = htmlArray.join('');
+    document.body.insertBefore(tpl.content, anchor);
+    // Shift the surviving tail so its anchor block's first stamp equals the
+    // target the host computed from the fresh render. The delta comes from
+    // the LIVE stamps — the host's baseline can be stale by fast-path
+    // typing, whose shifts only exist here.
+    if (tailAnchorOffset >= 0) {
+      var tail = blocks.slice(start + removeCount);
+      var anchorEl = tail[tailAnchorOffset];
+      var firstStamped = anchorEl
+        ? (anchorEl.hasAttribute('data-s') ? anchorEl : anchorEl.querySelector('[data-s]'))
+        : null;
+      if (!firstStamped) { return false; }
+      var delta = tailAnchorStamp - parseInt(firstStamped.getAttribute('data-s'), 10);
+      if (delta) {
+        tail.forEach(function (block) {
+          if (block.hasAttribute('data-s')) {
+            block.setAttribute('data-s', String(parseInt(block.getAttribute('data-s'), 10) + delta));
+          }
+          block.querySelectorAll('[data-s]').forEach(function (el) {
+            el.setAttribute('data-s', String(parseInt(el.getAttribute('data-s'), 10) + delta));
+          });
+        });
+      }
+    }
+    window.__mdStampsInvalidate();
+    if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }
+    drawChangeMarkers();
+    return true;
+  };
   // Host-supplied change indicators (a git diff against the committed
   // version): a colored bar down the page's left edge beside each changed
   // run, red ticks where lines were deleted. Positions come from the

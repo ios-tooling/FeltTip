@@ -74,6 +74,9 @@ extension MarkdownWebView {
 		/// finished render only lands while its generation is still current, so
 		/// a slow render of stale text can't overwrite a newer page.
 		private var renderGeneration = 0
+		/// The per-block fragments of the page currently shown — the baseline
+		/// incremental patches diff against. Nil until a full render lands.
+		var lastFragments: [MarkdownBlockFragment]?
 		/// Logs the edit bridge to the console (every message, splice, and
 		/// rejection). Toggle without rebuilding:
 		/// `defaults write <bundle-id> MDRDebugEditing -bool true`.
@@ -126,6 +129,16 @@ extension MarkdownWebView {
 			// typing in the raw pane of a split — updates the page in place
 			// after a debounce, so the preview neither flashes through a blank
 			// navigation nor re-renders on every keystroke.
+			// A structural edit on a page we hold fragments for patches the DOM
+			// in place instead of navigating — no blank flash, no full-document
+			// re-render, scroll preserved by construction.
+			if pendingSelection != nil, config == lastConfigSignature,
+			   !(parent.renderMermaid && !parent.isEditable), lastFragments != nil {
+				pendingSwap?.cancel()
+				pendingSwap = nil
+				applyStructuralPatch(into: webView)
+				return
+			}
 			if lastRenderedText == nil || pendingSelection != nil || config != lastConfigSignature
 				|| (parent.renderMermaid && !parent.isEditable) {
 				pendingSwap?.cancel()
@@ -150,7 +163,8 @@ extension MarkdownWebView {
 		/// Re-render the body and swap it into the loaded page in place.
 		/// Reads the freshest `parent` state at fire time — later updates may
 		/// have arrived during the debounce. The render itself runs off the
-		/// main actor; the swap lands only if nothing changed underneath it.
+		/// main actor; the update lands only if nothing changed underneath it,
+		/// and patches just the changed blocks when a baseline exists.
 		private func applyBodySwap(into webView: WKWebView) async {
 			let text = parent.text
 			let config = configSignature()
@@ -161,7 +175,7 @@ extension MarkdownWebView {
 			}
 			renderGeneration += 1
 			let generation = renderGeneration
-			let fragment = await MarkdownRenderService.shared.bodyFragment(
+			let fragments = await MarkdownRenderService.shared.blockFragments(
 				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
 				includeSourceOffsets: parent.isEditable,
 				interactiveCheckboxes: parent.onCheckboxToggle != nil)
@@ -169,19 +183,77 @@ extension MarkdownWebView {
 			// or fresher text supersedes this result.
 			guard generation == renderGeneration, configSignature() == config,
 			      pendingSelection == nil, parent.text == text else { return }
-			guard let encoded = try? JSONEncoder().encode(fragment),
-			      let json = String(data: encoded, encoding: .utf8) else {
-				lastRenderedText = text
-				currentSource = text
-				loadHTML(for: text, into: webView)
-				return
-			}
 			lastRenderedText = text
 			currentSource = text
 			bumpEpoch()
-			log("body swap: textLen=\((text as NSString).length) rev=\(currentRev)")
-			webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(currentRev));", completionHandler: nil)
-			applyLineChanges(to: webView, force: true)
+			apply(fragments: fragments, into: webView, thenPlaceCaret: nil)
+		}
+
+		/// A structural edit's re-render: patch the changed blocks in place and
+		/// restore the caret/selection; fall back to a full navigation when the
+		/// patch can't be computed or the live DOM refuses it.
+		private func applyStructuralPatch(into webView: WKWebView) {
+			let text = parent.text
+			lastRenderedText = text
+			renderGeneration += 1
+			let generation = renderGeneration
+			let selection = pendingSelection
+			let theme = parent.theme
+			let fontSize = parent.fontSize
+			let includeOffsets = parent.isEditable
+			let checkboxes = parent.onCheckboxToggle != nil
+			Task { @MainActor [weak self, weak webView] in
+				let fragments = await MarkdownRenderService.shared.blockFragments(
+					markdown: text, theme: theme, fontSize: fontSize,
+					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes)
+				guard let self, let webView, generation == self.renderGeneration else { return }
+				self.currentSource = text
+				self.bumpEpoch()
+				self.pendingSelection = nil
+				self.apply(fragments: fragments, into: webView, thenPlaceCaret: selection)
+			}
+		}
+
+		/// Land freshly rendered fragments on the page: patch the changed span
+		/// when the baseline allows it, otherwise swap the whole body. Assumes
+		/// the caller has already committed coordinator state (text, epoch).
+		private func apply(fragments: [MarkdownBlockFragment], into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
+			let fullSwap = { [weak self, weak webView] in
+				guard let self, let webView else { return }
+				guard let encoded = try? JSONEncoder().encode(fragments.map(\.html).joined()),
+				      let json = String(data: encoded, encoding: .utf8) else {
+					self.loadHTML(for: self.currentSource ?? self.parent.text, into: webView)
+					return
+				}
+				self.log("body swap: \(fragments.count) blocks rev=\(self.currentRev)")
+				webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(self.currentRev));", completionHandler: nil)
+				self.placeCaretAfterUpdate(selection, into: webView)
+				self.applyLineChanges(to: webView, force: true)
+			}
+			defer { lastFragments = fragments }
+			guard let old = lastFragments, let patch = MarkdownBlockDiff.patch(from: old, to: fragments),
+			      let htmlData = try? JSONEncoder().encode(patch.html),
+			      let htmlJSON = String(data: htmlData, encoding: .utf8) else {
+				fullSwap()
+				return
+			}
+			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchor \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp), rev \(currentRev)")
+			let call = "window.__mdPatchBlocks ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.expectedOldCount), \(currentRev)) : false"
+			webView.evaluateJavaScript(call) { [weak self, weak webView] result, error in
+				guard let self, let webView else { return }
+				if (result as? Bool) == true, error == nil {
+					self.placeCaretAfterUpdate(selection, into: webView)
+					self.applyLineChanges(to: webView, force: true)
+				} else {
+					self.log("patch refused by page — full swap fallback")
+					fullSwap()
+				}
+			}
+		}
+
+		private func placeCaretAfterUpdate(_ selection: NSRange?, into webView: WKWebView) {
+			guard let selection else { return }
+			webView.evaluateJavaScript("window.__mdPlaceCaret && window.__mdPlaceCaret(\(selection.location), \(selection.length));", completionHandler: nil)
 		}
 
 		func applyLineChanges(to webView: WKWebView, force: Bool = false) {
@@ -217,16 +289,17 @@ extension MarkdownWebView {
 			let embedMermaid = parent.renderMermaid && !parent.isEditable
 			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
 			Task { @MainActor [weak self, weak webView] in
-				let html = await MarkdownRenderService.shared.documentHTML(
+				let rendered = await MarkdownRenderService.shared.documentHTML(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
 					embedMermaidEngine: embedMermaid)
 				guard let self, let webView, generation == self.renderGeneration else { return }
+				self.lastFragments = rendered.fragments
 				// Load under the custom resource scheme (when we have a document
 				// folder) so relative <img> paths resolve to the scheme handler,
 				// which can actually read local files — WKWebView won't load
 				// file:// subresources of an loadHTMLString page.
-				webView.loadHTMLString(html, baseURL: baseURL)
+				webView.loadHTMLString(rendered.html, baseURL: baseURL)
 			}
 		}
 

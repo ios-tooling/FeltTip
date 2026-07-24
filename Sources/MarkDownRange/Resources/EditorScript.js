@@ -60,6 +60,10 @@
   // The revision this page currently addresses — lets the host (and tests)
   // confirm a freshly rendered page is live before trusting its DOM.
   window.__mdGetRev = function () { return stampRev; };
+  // Whether the page is frozen awaiting a structural re-render. A structural
+  // edit freezes synchronously in its own turn, so "not frozen and at the
+  // current revision" is a deterministic settled-state check.
+  window.__mdIsFrozen = function () { return !!frozen; };
   function freeze() {
     var token = seq;
     frozen = { token: token };

@@ -31,13 +31,13 @@ import Testing
 			}
 			return ticks
 		}
-		let html = await MarkdownRenderService.shared.documentHTML(
+		let rendered = await MarkdownRenderService.shared.documentHTML(
 			markdown: doc, theme: .default, fontSize: 16,
 			includeSourceOffsets: true, interactiveCheckboxes: false,
 			embedMermaidEngine: false)
 		heartbeat.cancel()
 		let ticks = await heartbeat.value
-		#expect(html.contains("Section 2000"))
+		#expect(rendered.html.contains("Section 2000"))
 		#expect(ticks >= 3, "main actor only ticked \(ticks)× during a background render — was it blocked?")
 	}
 }

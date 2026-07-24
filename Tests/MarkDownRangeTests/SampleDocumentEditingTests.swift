@@ -83,14 +83,20 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		Issue.record("editor page never became ready (probe: \(probe ?? "-"))")
 	}
 
-	/// Waits until a `window.__testNonce = 1` stamped before a structural edit
-	/// has been wiped by the resulting reload — proof the fresh page is up.
+	/// Waits until a structural edit has fully landed. Structural edits patch
+	/// the page in place now (no navigation), so "fresh" means: the page is
+	/// not frozen — the edit froze it synchronously in its own turn — and it
+	/// addresses the coordinator's current revision.
 	func waitForFreshPage() async throws {
 		for _ in 0..<100 {
-			if try await evaluate("typeof window.__testNonce === 'undefined' ? 'yes' : 'no'") == "yes" { return }
+			let state = try await evaluate("""
+				(window.__mdIsFrozen && window.__mdIsFrozen()) ? 'frozen'
+					: (window.__mdGetRev ? String(window.__mdGetRev()) : 'none')
+				""")
+			if state == String(coordinator.currentRev) { return }
 			try await Task.sleep(for: .milliseconds(50))
 		}
-		Issue.record("page never reloaded after structural edit")
+		Issue.record("page never settled after structural edit")
 	}
 }
 
