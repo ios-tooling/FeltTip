@@ -79,10 +79,12 @@ extension MarkdownWebView.Coordinator {
 		// the source genuinely disagree — resync, never guess.
 		if let rev = body["rev"] as? Int {
 			if rev < reseedRev {
+				droppedStaleEdits += 1
 				log("dropping stale edit rev=\(rev) (reseeded at \(reseedRev)) seq=\(body["seq"] ?? "?")")
 				return
 			}
 			if rev != currentRev {
+				bridgeIncidents.append("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") body=\(body)")
 				log("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") — resyncing")
 				resync(caretAt: min(max(0, edit.start), ((currentSource ?? parent.text) as NSString).length))
 				return
@@ -109,10 +111,23 @@ extension MarkdownWebView.Coordinator {
 				parent.onSourceEdit?(newSource)
 			}
 		case .rejected(let reason):
-			// After the revision gate this should be unreachable — a mismatch
-			// here means the page's DOM text and the source disagree at the
-			// same revision, i.e. a real bridge bug. Log loudly and resync;
-			// the user loses one keystroke, never file content.
+			// Structural edits (those carrying a caret target) were
+			// preventDefault'ed on the page — the DOM never mutated, so a
+			// refusal (e.g. the collapsed cross-run delete guard protecting
+			// hidden syntax) leaves nothing out of sync. Thaw the page and
+			// drop the keystroke as a deliberate no-op.
+			if edit.caret != nil, let token = body["seq"] as? Int {
+				vetoedEdits += 1
+				log("vetoed structural edit seq=\(token): \(reason)")
+				webView?.evaluateJavaScript("window.__mdUnfreeze && window.__mdUnfreeze(\(token));", completionHandler: nil)
+				return
+			}
+			// A fast-path edit failed verification at a matching revision:
+			// the browser already mutated the DOM, and the page's text and
+			// the source genuinely disagree — a real bridge bug. Log loudly
+			// and resync; the user loses one keystroke, never file content.
+			hardRejections += 1
+			bridgeIncidents.append("REJECTED at rev \(currentRev): \(reason)")
 			log("REJECTED at matching rev \(currentRev): \(reason)")
 			resync(caretAt: min(max(0, edit.start), (source as NSString).length))
 		}
@@ -124,6 +139,7 @@ extension MarkdownWebView.Coordinator {
 	/// dropped rather than spliced.
 	func resync(caretAt caret: Int?) {
 		guard let webView else { return }
+		resyncCount += 1
 		let source = currentSource ?? parent.text
 		pendingSwap?.cancel()
 		pendingSwap = nil

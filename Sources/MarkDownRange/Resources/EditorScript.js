@@ -51,6 +51,12 @@
       }
     }, 2000);
   }
+  // The host refused a structural edit it had vetoed on safety grounds (the
+  // page prevented the DOM mutation, so nothing is out of sync) — thaw so
+  // typing continues; the vetoed keystroke is simply a no-op.
+  window.__mdUnfreeze = function (token) {
+    if (frozen && frozen.token === token) { frozen = null; }
+  };
   // State captured at compositionstart, reconciled at compositionend.
   var composing = null;
   installLinkOpenButtons();

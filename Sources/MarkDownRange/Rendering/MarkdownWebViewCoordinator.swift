@@ -78,6 +78,16 @@ extension MarkdownWebView {
 		/// swap (both rebuild the DOM the edge markers hang off).
 		var currentLineChanges: MarkdownLineChanges?
 		private var lastSentLineChangesJSON: String?
+		/// Diagnostics counters (also asserted by the edit-bridge test suites):
+		/// a healthy session never resyncs, drops, or hard-rejects.
+		var resyncCount = 0
+		var droppedStaleEdits = 0
+		var hardRejections = 0
+		/// Structural edits refused on safety grounds (DOM untouched) — a
+		/// user-visible no-op, not an incident.
+		var vetoedEdits = 0
+		/// Why each resync/rejection happened, for test failure messages.
+		var bridgeIncidents: [String] = []
 
 		init(parent: MarkdownWebView) {
 			self.parent = parent

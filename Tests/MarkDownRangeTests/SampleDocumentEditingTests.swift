@@ -380,16 +380,17 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		let host = try await makeHost()
 		// The paragraph above "Any feedback" ends in bold, so the separator
 		// slice is "**\n\n" — merging would eat the closing marker and
-		// unbalance the markup. The edit must be rejected, the text left
-		// untouched, and the editor must keep working after the resync.
+		// unbalance the markup. The edit must be vetoed with the text left
+		// untouched — and because the page prevented the DOM mutation, the
+		// veto needs NO resync reload: the page thaws in place (the nonce
+		// survives) and typing keeps working immediately.
 		let before = host.text
 		let caret = (host.text as NSString).range(of: "Any feedback").location
-		// A nonce marks the current page; the rejection's resync reload drops
-		// it, telling us deterministically when the fresh page is up.
 		try await host.run("window.__testNonce = 1; window.__mdPlaceCaret(\(caret)); document.execCommand('delete');")
-		try await host.waitForFreshPage()
+		try await Task.sleep(for: .milliseconds(400))
 		#expect(host.text == before)
-		try await host.waitUntilReady()
+		let nonce = try await host.evaluate("typeof window.__testNonce === 'number' ? 'alive' : 'gone'")
+		#expect(nonce == "alive", "a veto must thaw in place, not reload the page")
 		try await type("B2", after: "Any feedback", in: host)
 	}
 
