@@ -192,8 +192,10 @@ extension MarkdownWebView {
 				includeSourceOffsets: parent.isEditable,
 				interactiveCheckboxes: parent.onCheckboxToggle != nil,
 				// Render mermaid as diagrams when the host opted in and we're not
-				// editing (editing keeps the raw, editable source).
-				embedMermaidEngine: parent.renderMermaid && !parent.isEditable)
+				// editing (editing keeps the raw, editable source). The engine
+				// loads through our scheme handler instead of being inlined.
+				embedMermaidEngine: parent.renderMermaid && !parent.isEditable,
+				mermaidEngineViaScheme: true)
 			// Load under the custom resource scheme (when we have a document
 			// folder) so relative <img> paths resolve to the scheme handler,
 			// which can actually read local files — WKWebView won't load

@@ -82,6 +82,7 @@ public enum MarkdownHTMLRenderer {
 		includeSourceOffsets: Bool = false,
 		interactiveCheckboxes: Bool = false,
 		embedMermaidEngine: Bool = false,
+		mermaidEngineViaScheme: Bool = false,
 		mermaidDiagrams: [String: String] = [:]
 	) -> String {
 		let body = renderBodyFragment(
@@ -89,7 +90,7 @@ public enum MarkdownHTMLRenderer {
 			includeSourceOffsets: includeSourceOffsets,
 			interactiveCheckboxes: interactiveCheckboxes,
 			mermaidDiagrams: mermaidDiagrams)
-		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme) : ""
+		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme, viaScheme: mermaidEngineViaScheme) : ""
 		return """
 		<!DOCTYPE html>
 		<html>
@@ -112,11 +113,25 @@ public enum MarkdownHTMLRenderer {
 	/// shown — including the QuickLook extension, whose WKWebView doesn't run
 	/// `evaluateJavaScript`/`didFinish` injections reliably. Empty when there are
 	/// no mermaid blocks (keeps the ~3 MB engine off ordinary documents).
-	private static func mermaidEmbed(forBody body: String, theme: MarkdownTheme) -> String {
+	/// `viaScheme` serves the ~3 MB engine through the custom resource scheme
+	/// (`markerlocalres://mermaid/engine.js`) instead of inlining it into the
+	/// HTML string — pages loaded in a web view that registers
+	/// `LocalResourceSchemeHandler` skip the multi-megabyte string build and
+	/// parse on every reload. Callers without the handler (exports, snapshot
+	/// tests, QuickLook) must keep the inline embed.
+	private static func mermaidEmbed(forBody body: String, theme: MarkdownTheme, viaScheme: Bool = false) -> String {
 		#if os(macOS)
-		guard body.contains("language-mermaid"), let engine = MermaidResources.engineJS else { return "" }
+		guard body.contains("language-mermaid") else { return "" }
+		let engineTag: String
+		if viaScheme {
+			engineTag = "<script src=\"markerlocalres://mermaid/engine.js\"></script>"
+		} else if let engine = MermaidResources.engineJS {
+			engineTag = "<script>\(engine)</script>"
+		} else {
+			return ""
+		}
 		return """
-		<script>\(engine)</script>
+		\(engineTag)
 		<script>
 		(function () {
 		  document.querySelectorAll('pre > code.language-mermaid').forEach(function (code) {

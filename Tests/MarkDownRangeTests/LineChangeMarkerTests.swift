@@ -20,19 +20,24 @@
 			deletionOffsets: [12]
 		)
 		let json = MarkdownWebView.Coordinator.lineChangesJSON(changes)
+		// Redraws are coalesced onto a short timer now, so poll rather than
+		// asserting synchronously.
 		try await run(webView, "window.__mdSetLineChanges(\(json))")
-		let count = try await evaluate(webView, "String(document.querySelectorAll('.mdr-change-marker').length)")
-		#expect(count == "2", "expected a bar and a tick, got \(count ?? "nil")")
+		try await waitUntil("a bar and a tick") {
+			try await self.markerCount(webView) == "2"
+		}
 
 		// A body swap rebuilds the DOM; the markers must be redrawn from state.
 		try await run(webView, "window.__mdSwapContent(document.body.innerHTML)")
-		let afterSwap = try await evaluate(webView, "String(document.querySelectorAll('.mdr-change-marker').length)")
-		#expect(afterSwap == "2", "markers lost across a body swap: \(afterSwap ?? "nil")")
+		try await waitUntil("markers redrawn after swap") {
+			try await self.markerCount(webView) == "2"
+		}
 
 		// nil state clears everything.
 		try await run(webView, "window.__mdSetLineChanges(null)")
-		let cleared = try await evaluate(webView, "String(document.querySelectorAll('.mdr-change-marker').length)")
-		#expect(cleared == "0")
+		try await waitUntil("markers cleared") {
+			try await self.markerCount(webView) == "0"
+		}
 	}
 
 	@Test func jsonEncodesRangesKindsAndDeletions() {
@@ -61,6 +66,10 @@
 		}
 		try await run(webView, MarkdownWebView.Coordinator.scrollSyncScript)
 		return webView
+	}
+
+	private func markerCount(_ webView: WKWebView) async throws -> String? {
+		try await evaluate(webView, "String(document.querySelectorAll('.mdr-change-marker').length)")
 	}
 
 	private func evaluate(_ webView: WKWebView, _ script: String) async throws -> String? {

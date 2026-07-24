@@ -48,23 +48,34 @@ public enum MarkdownPreprocessor {
 		let src = Array(source.utf16)
 		let dst = Array(processed.utf16)
 		if src == dst { return Array(0..<dst.count) }
-		let diff = dst.difference(from: src)
+		// Trim the common prefix and suffix before diffing: Myers cost grows
+		// with input length as well as edit distance, and preprocessing
+		// usually rewrites a small slice of a large document.
+		var prefix = 0
+		while prefix < src.count, prefix < dst.count, src[prefix] == dst[prefix] { prefix += 1 }
+		var suffix = 0
+		while suffix < src.count - prefix, suffix < dst.count - prefix,
+		      src[src.count - 1 - suffix] == dst[dst.count - 1 - suffix] { suffix += 1 }
+		let srcMiddle = Array(src[prefix..<(src.count - suffix)])
+		let dstMiddle = Array(dst[prefix..<(dst.count - suffix)])
+		let diff = dstMiddle.difference(from: srcMiddle)
 		// Transform an identity array of source offsets exactly as the diff
-		// transforms `src` into `dst`: drop removed positions (descending so
-		// offsets stay valid), then give each inserted position its nearest
-		// surviving neighbor's source offset.
-		var offsets = Array(0..<src.count)
+		// transforms the middle of `src` into the middle of `dst`: drop
+		// removed positions (descending so offsets stay valid), then give
+		// each inserted position its nearest surviving neighbor's offset.
+		var offsets = Array(prefix..<(src.count - suffix))
 		for change in diff.removals.reversed() {
 			if case let .remove(offset, _, _) = change { offsets.remove(at: offset) }
 		}
 		for change in diff.insertions {
 			if case let .insert(offset, _, _) = change {
 				let neighbor = offset > 0 ? offsets[offset - 1]
-					: (offset < offsets.count ? offsets[offset] : (offsets.last ?? 0))
+					: (offset < offsets.count ? offsets[offset] : (prefix > 0 ? prefix - 1 : 0))
 				offsets.insert(neighbor, at: offset)
 			}
 		}
-		return offsets
+		let shift = src.count - dst.count
+		return Array(0..<prefix) + offsets + (dst.count - suffix..<dst.count).map { $0 + shift }
 	}
 
 	/// Appends footnote bodies as a trailing section so renderers that don't

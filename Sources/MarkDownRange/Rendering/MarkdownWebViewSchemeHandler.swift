@@ -20,9 +20,23 @@ final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
 		super.init()
 	}
 
+	/// The bundled mermaid engine, served once per process instead of being
+	/// inlined (~3 MB) into every rendered HTML string. See `mermaidEmbed`.
+	private static let mermaidEngineData: Data? = MermaidResources.engineJS.map { Data($0.utf8) }
+
 	func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
 		guard let url = task.request.url else {
 			task.didFailWithError(URLError(.badURL)); return
+		}
+		if url.host == "mermaid" {
+			guard let data = Self.mermaidEngineData else {
+				task.didFailWithError(URLError(.fileDoesNotExist)); return
+			}
+			let response = URLResponse(url: url, mimeType: "text/javascript", expectedContentLength: data.count, textEncodingName: "utf-8")
+			task.didReceive(response)
+			task.didReceive(data)
+			task.didFinish()
+			return
 		}
 		let fileURL = URL(fileURLWithPath: url.path)
 		guard let data = try? Data(contentsOf: fileURL) else {

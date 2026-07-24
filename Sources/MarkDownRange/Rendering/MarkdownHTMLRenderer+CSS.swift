@@ -7,10 +7,27 @@ import Foundation
 import SwiftUI
 
 extension MarkdownHTMLRenderer {
+	/// Memoized stylesheets, keyed on the theme's signature + font size. The
+	/// stylesheet is a pure function of those inputs but rebuilding the whole
+	/// string on every reload showed up in render profiles; a handful of
+	/// entries covers every theme/size combination a session realistically
+	/// touches.
+	// NSCache is documented thread-safe; the annotation only silences the
+	// Sendable diagnostic (same pattern as MermaidResources' caches).
+	nonisolated(unsafe) private static let cssCache = NSCache<NSString, NSString>()
+
 	/// Stylesheet matching the live preview's appearance under `theme`. Exports
 	/// can drop this into a `<style>` block to keep PDF/HTML output visually
 	/// aligned with what the user sees in the editor preview.
 	public static func css(for theme: MarkdownTheme, fontSize: CGFloat = 16) -> String {
+		let key = "\(theme.signature)|\(fontSize)" as NSString
+		if let cached = cssCache.object(forKey: key) { return cached as String }
+		let built = buildCSS(for: theme, fontSize: fontSize)
+		cssCache.setObject(built as NSString, forKey: key)
+		return built
+	}
+
+	private static func buildCSS(for theme: MarkdownTheme, fontSize: CGFloat) -> String {
 		let bodyFont = fontFamilyStack(for: theme.fontFamily)
 		return """
 		body {

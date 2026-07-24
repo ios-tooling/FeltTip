@@ -101,8 +101,30 @@
   // user types in the other pane of a split). Swapping the body avoids a
   // navigation — no blank flash, scroll position preserved. The editor
   // page re-arms its per-content state via __mdAfterSwap.
+  // Cached [data-s] runs — elements plus parsed numeric bases, in document
+  // order (the renderer emits ascending source offsets). Rebuilt lazily after
+  // invalidation so per-keystroke and per-marker work stops paying a full
+  // querySelectorAll + parseInt walk over the whole document.
+  var stampCache = null;
+  window.__mdStampsInvalidate = function () { stampCache = null; };
+  window.__mdStamps = function () {
+    if (!stampCache) {
+      var els = Array.prototype.slice.call(document.querySelectorAll('[data-s]'));
+      stampCache = { els: els, bases: els.map(function (el) { return parseInt(el.getAttribute('data-s'), 10); }) };
+    }
+    return stampCache;
+  };
+  // First index whose base is >= offset (with a small backward scan so a
+  // locally out-of-order entry can't hide an overlapping run).
+  function stampLowerBound(bases, offset) {
+    var lo = 0, hi = bases.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (bases[mid] < offset) { lo = mid + 1; } else { hi = mid; } }
+    while (lo > 0 && bases[lo - 1] >= offset) { lo--; }
+    return lo;
+  }
   window.__mdSwapContent = function (html, rev) {
     document.body.innerHTML = html;
+    window.__mdStampsInvalidate();
     if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }
     drawChangeMarkers();
   };
@@ -118,8 +140,9 @@
   function drawChangeMarkers() {
     clearChangeMarkers();
     if (!changeState) { return; }
-    var spans = document.querySelectorAll('[data-s]');
-    if (!spans.length) { return; }
+    var stamps = window.__mdStamps();
+    var els = stamps.els, bases = stamps.bases;
+    if (!els.length) { return; }
     function place(cls, top, height, color, left, width) {
       var bar = document.createElement('div');
       bar.className = 'mdr-change-marker';
@@ -128,13 +151,15 @@
       document.body.appendChild(bar);
     }
     changeState.ranges.forEach(function (range) {
-      // Union the vertical extents of the runs overlapping [s, e).
+      // Union the vertical extents of the runs overlapping [s, e) — only
+      // the runs the binary search scopes to, not every span on the page
+      // (each rect read forces layout).
       var top = null, bottom = null;
-      for (var i = 0; i < spans.length; i++) {
-        var base = parseInt(spans[i].getAttribute('data-s'), 10);
-        if (base >= range.e) { break; }
-        if (base + spans[i].textContent.length <= range.s) { continue; }
-        var r = spans[i].getBoundingClientRect();
+      var start = Math.max(0, stampLowerBound(bases, range.s) - 1);
+      for (var i = start; i < els.length; i++) {
+        if (bases[i] >= range.e) { break; }
+        if (bases[i] + els[i].textContent.length <= range.s) { continue; }
+        var r = els[i].getBoundingClientRect();
         if (r.height <= 0) { continue; }
         var t = r.top + window.scrollY, b = r.bottom + window.scrollY;
         if (top === null || t < top) { top = t; }
@@ -145,29 +170,37 @@
     });
     changeState.deletions.forEach(function (offset) {
       var y = null;
-      for (var i = 0; i < spans.length; i++) {
-        var base = parseInt(spans[i].getAttribute('data-s'), 10);
-        if (base + spans[i].textContent.length >= offset) {
-          y = spans[i].getBoundingClientRect().top + window.scrollY;
+      var start = Math.max(0, stampLowerBound(bases, offset) - 1);
+      for (var i = start; i < els.length; i++) {
+        if (bases[i] + els[i].textContent.length >= offset) {
+          y = els[i].getBoundingClientRect().top + window.scrollY;
           break;
         }
       }
       if (y === null) {
-        var last = spans[spans.length - 1].getBoundingClientRect();
+        var last = els[els.length - 1].getBoundingClientRect();
         y = last.bottom + window.scrollY;
       }
       place('tick', y - 1.5, 3, '#ff453a', 0, 8);
     });
   }
+  // Marker redraws coalesce into one pass — several triggers can land
+  // together (swap + line-change push + resize). setTimeout, not
+  // requestAnimationFrame: rAF doesn't run in occluded windows, and markers
+  // must still appear there (see __mdRestoreScrollThenCaret).
+  var markerRedrawArmed = false;
+  function scheduleChangeMarkerRedraw() {
+    if (markerRedrawArmed) { return; }
+    markerRedrawArmed = true;
+    window.setTimeout(function () { markerRedrawArmed = false; drawChangeMarkers(); }, 16);
+  }
   window.__mdSetLineChanges = function (state) {
     changeState = state;
-    drawChangeMarkers();
+    scheduleChangeMarkerRedraw();
     // Layout often settles after the first pass (fonts, images) — one
     // deferred redraw catches the common shifts.
-    window.setTimeout(drawChangeMarkers, 300);
+    window.setTimeout(scheduleChangeMarkerRedraw, 300);
   };
-  window.addEventListener('resize', function () {
-    window.requestAnimationFrame(drawChangeMarkers);
-  });
+  window.addEventListener('resize', scheduleChangeMarkerRedraw);
   report();
 })();

@@ -36,11 +36,26 @@
   var stampRev = 0;
   // Monotonic message counter, for ordering diagnostics on the host side.
   var seq = 0;
+  // Shared stamp cache — normally installed by the scroll-sync script, which
+  // loads first; defined here too so the editor script stands alone (the
+  // integration-test harness injects only this script).
+  if (!window.__mdStamps) {
+    var stampCache = null;
+    window.__mdStampsInvalidate = function () { stampCache = null; };
+    window.__mdStamps = function () {
+      if (!stampCache) {
+        var els = Array.prototype.slice.call(document.querySelectorAll('[data-s]'));
+        stampCache = { els: els, bases: els.map(function (el) { return parseInt(el.getAttribute('data-s'), 10); }) };
+      }
+      return stampCache;
+    };
+  }
   window.__mdSetRev = function (rev) {
     stampRev = rev;
     pendingEdits = [];
     frozen = null;
     composing = null;
+    if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
   };
   function freeze() {
     var token = seq;
@@ -157,16 +172,26 @@
   }
   // After an in-place edit, every run at or past the edit moved by the
   // edit's length delta; keep the data-s stamps in step so the next edit
-  // maps from fresh offsets instead of pre-edit geometry.
+  // maps from fresh offsets instead of pre-edit geometry. Runs once per
+  // keystroke, so it works from the shared stamp cache and touches only the
+  // tail the binary search scopes to — not every span on the page.
   function shiftStamps(start, delta, editedSpan) {
     if (!delta) return;
-    document.querySelectorAll('[data-s]').forEach(function (el) {
-      if (el === editedSpan) return;
-      var base = parseInt(el.getAttribute('data-s'), 10);
-      var follows = base > start || (base === start && editedSpan &&
+    var stamps = window.__mdStamps();
+    var els = stamps.els, bases = stamps.bases;
+    var lo = 0, hi = bases.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (bases[mid] < start) { lo = mid + 1; } else { hi = mid; } }
+    while (lo > 0 && bases[lo - 1] >= start) { lo--; }
+    for (var i = lo; i < els.length; i++) {
+      var el = els[i];
+      if (el === editedSpan) continue;
+      var follows = bases[i] > start || (bases[i] === start && editedSpan &&
         (editedSpan.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
-      if (follows) el.setAttribute('data-s', String(base + delta));
-    });
+      if (follows) {
+        bases[i] += delta;
+        el.setAttribute('data-s', String(bases[i]));
+      }
+    }
   }
   // The host swapped in freshly rendered content (see __mdSwapContent):
   // drop any in-flight edit state — its offsets described the old DOM —
@@ -337,6 +362,7 @@
       else { document.body.appendChild(target); }
     }
     target.insertBefore(holder, target.firstChild);
+    if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
     placeCaretIn(holder, 0, holder);
   };
   // DOM position for the `target`-th character inside `root`.
