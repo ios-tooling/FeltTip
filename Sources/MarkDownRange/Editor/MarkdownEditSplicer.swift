@@ -74,6 +74,16 @@ enum MarkdownEditSplicer {
 			return .rejected(reason)
 		}
 		if let marker = edit.wrapMarker {
+			// A cross-run DOM selection can stop immediately before hidden
+			// Markdown delimiters. Blindly inserting a new pair there creates
+			// overlapping source such as `~~Alpha **Beta~~**`. Until the bridge
+			// can expand selections using parser source spans, veto any wrap
+			// whose selected source crosses inline syntax rather than damaging
+			// the document.
+			if edit.crossRun, actual.rangeOfCharacter(
+				from: CharacterSet(charactersIn: "*_~`[]()")) != nil {
+				return .rejected("cross-run wrap intersects hidden inline syntax")
+			}
 			// Toggle, not just wrap: a selection whose source is already
 			// wrapped in the marker (or its underscore twin) un-styles.
 			// Stacking markers instead produced `****text****`. Either way

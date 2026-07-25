@@ -38,6 +38,12 @@ leave the visible text correct.
    match, and the before/after context must match. Verification failure means the
    page and source genuinely disagree → resync (full re-render). Never guess.
 
+Host-driven source changes (typing in the raw half of split view) close the old
+page's revision epoch and freeze it **when the update is scheduled**, before the
+debounce/render. The old DOM must never remain editable while `parent.text`
+already names newer source: an accepted old-page edit would publish a whole
+stale-based string and overwrite the raw-pane change.
+
 ## Revisions
 
 `currentRev` numbers the source; the page mirrors it in `stampRev` and every
@@ -67,8 +73,10 @@ pre-restore source — typing the undo straight back out.
 | Checkbox click | host callback | `onCheckboxToggle` |
 
 **Not mapped** (blocked, no-ops): drag-and-drop text, list indent/outdent,
+formatting a cross-run selection that intersects hidden inline Markdown syntax,
 anything else. A blocked input must leave the source untouched and the page
-usable — `EditBridgeUnmappedInputTests` enforces exactly that.
+usable — `EditBridgeUnmappedInputTests` and `EditBridgeMixedSelectionTests`
+enforce exactly that.
 
 ### Paste
 
@@ -89,6 +97,10 @@ markdown *is* the rich form. Inside a table cell newlines fold to spaces.
   fragment baseline stale.
 - A patch the live DOM doesn't recognize returns `false` and falls back to a full
   swap, so a mis-patch is impossible by construction.
+- Patch/full-swap callbacks are generation- and revision-gated, and the fragment
+  baseline advances only after WebKit acknowledges the DOM transaction. A late
+  callback can never overwrite newer HTML or make future diffs target a page
+  that never accepted their baseline.
 - Documents are untrusted input: `HTMLPassthroughSanitizer` strips script,
   framing and remote-loading HTML from the one seam (`.htmlBlock`) where a
   document's own markup reaches the page. The page hosts the edit bridge, so

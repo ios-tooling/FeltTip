@@ -28,6 +28,10 @@ extension MarkdownWebView {
 		/// Debounced in-place body update for external text changes (typing in
 		/// the raw pane of a split re-renders the preview through here).
 		var pendingSwap: Task<Void, Never>?
+		/// Newest host-owned source waiting for its debounced render. While this
+		/// is non-nil the old page is frozen and its revision epoch is closed:
+		/// accepting an edit from that DOM could overwrite newer raw-pane text.
+		var pendingHostText: String?
 		/// The revision of `currentSource`. Advanced on every applied splice and
 		/// on every reload/swap; the page mirrors it in its `stampRev` and every
 		/// edit message declares the revision its offsets address. Only an exact
@@ -74,6 +78,10 @@ extension MarkdownWebView {
 		/// finished render only lands while its generation is still current, so
 		/// a slow render of stale text can't overwrite a newer page.
 		private var renderGeneration = 0
+		/// Currently executing full/fragment render. Superseding work cancels
+		/// the task as well as advancing the generation, so cancellable render
+		/// stages can stop consuming CPU instead of merely dropping their result.
+		var renderTask: Task<Void, Never>?
 		/// The per-block fragments of the page currently shown — the baseline
 		/// incremental patches diff against. Nil until a full render lands.
 		var lastFragments: [MarkdownBlockFragment]?
@@ -120,7 +128,21 @@ extension MarkdownWebView {
 				selfEdit = nil
 				if parent.text == lastRenderedText, config == lastConfigSignature { return }
 			}
-			guard parent.text != lastRenderedText || config != lastConfigSignature else { return }
+			guard parent.text != lastRenderedText || config != lastConfigSignature else {
+				// A burst may return to the text the page already shows before
+				// its debounced host update lands. Cancel that render and thaw
+				// the still-correct DOM at the coordinator's current revision.
+				if pendingHostText != nil {
+					pendingSwap?.cancel()
+					pendingSwap = nil
+					pendingHostText = nil
+					currentSource = parent.text
+					webView.evaluateJavaScript(
+						"window.__mdSetRev && window.__mdSetRev(\(currentRev));",
+						completionHandler: nil)
+				}
+				return
+			}
 			// A full (navigating) load is needed for the first render, for
 			// config changes (theme/font mean new CSS), for mermaid pages (the
 			// embedded engine script doesn't survive a body swap), and for our
@@ -136,6 +158,7 @@ extension MarkdownWebView {
 			   !(parent.renderMermaid && !parent.isEditable), lastFragments != nil {
 				pendingSwap?.cancel()
 				pendingSwap = nil
+				pendingHostText = nil
 				applyStructuralPatch(into: webView)
 				return
 			}
@@ -143,6 +166,7 @@ extension MarkdownWebView {
 				|| (parent.renderMermaid && !parent.isEditable) {
 				pendingSwap?.cancel()
 				pendingSwap = nil
+				pendingHostText = nil
 				lastRenderedText = parent.text
 				lastConfigSignature = config
 				log("reload: textLen=\((parent.text as NSString).length)")
@@ -151,13 +175,31 @@ extension MarkdownWebView {
 				loadHTML(for: parent.text, into: webView)
 				return
 			}
+			beginHostUpdate(parent.text, in: webView)
 			pendingSwap?.cancel()
 			pendingSwap = Task { @MainActor [weak self, weak webView] in
 				try? await Task.sleep(for: .milliseconds(250))
 				guard !Task.isCancelled, let self, let webView else { return }
 				self.pendingSwap = nil
-				await self.applyBodySwap(into: webView)
+				self.applyBodySwap(into: webView)
 			}
+		}
+
+		/// Close the edit epoch as soon as fresher host text arrives, not after
+		/// the debounce and render. The page still projects the old source in
+		/// that interval, so it must not accept input based on stale offsets.
+		private func beginHostUpdate(_ text: String, in webView: WKWebView) {
+			guard pendingHostText != text else { return }
+			pendingHostText = text
+			currentSource = text
+			selfEdit = nil
+			renderTask?.cancel()
+			renderTask = nil
+			renderGeneration += 1
+			bumpEpoch()
+			webView.evaluateJavaScript(
+				"window.__mdBeginHostUpdate && window.__mdBeginHostUpdate();",
+				completionHandler: nil)
 		}
 
 		/// Re-render the body and swap it into the loaded page in place.
@@ -165,7 +207,7 @@ extension MarkdownWebView {
 		/// have arrived during the debounce. The render itself runs off the
 		/// main actor; the update lands only if nothing changed underneath it,
 		/// and patches just the changed blocks when a baseline exists.
-		private func applyBodySwap(into webView: WKWebView) async {
+		private func applyBodySwap(into webView: WKWebView) {
 			let text = parent.text
 			let config = configSignature()
 			guard text != lastRenderedText || config != lastConfigSignature else { return }
@@ -173,20 +215,30 @@ extension MarkdownWebView {
 				load(into: webView)   // needs a full load after all
 				return
 			}
+			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
-			let fragments = await MarkdownRenderService.shared.blockFragments(
-				markdown: text, theme: parent.theme, fontSize: parent.fontSize,
-				includeSourceOffsets: parent.isEditable,
-				interactiveCheckboxes: parent.onCheckboxToggle != nil)
-			// Re-validate: a newer render, a config change, a structural edit,
-			// or fresher text supersedes this result.
-			guard generation == renderGeneration, configSignature() == config,
-			      pendingSelection == nil, parent.text == text else { return }
-			lastRenderedText = text
-			currentSource = text
-			bumpEpoch()
-			apply(fragments: fragments, into: webView, thenPlaceCaret: nil)
+			let theme = parent.theme
+			let fontSize = parent.fontSize
+			let includeOffsets = parent.isEditable
+			let checkboxes = parent.onCheckboxToggle != nil
+			renderTask = Task { @MainActor [weak self, weak webView] in
+				let fragments = await MarkdownRenderService.shared.blockFragments(
+					markdown: text, theme: theme, fontSize: fontSize,
+					includeSourceOffsets: includeOffsets,
+					interactiveCheckboxes: checkboxes)
+				// Re-validate: a newer render, a config change, a structural edit,
+				// or fresher text supersedes this result.
+				guard let self, let webView, !Task.isCancelled,
+				      generation == self.renderGeneration, self.configSignature() == config,
+				      self.pendingSelection == nil, self.parent.text == text,
+				      self.pendingHostText == text else { return }
+				self.renderTask = nil
+				self.lastRenderedText = text
+				self.currentSource = text
+				self.pendingHostText = nil
+				self.apply(fragments: fragments, into: webView, thenPlaceCaret: nil)
+			}
 		}
 
 		/// A structural edit's re-render: patch the changed blocks in place and
@@ -212,11 +264,13 @@ extension MarkdownWebView {
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
-			Task { @MainActor [weak self, weak webView] in
+			renderTask?.cancel()
+			renderTask = Task { @MainActor [weak self, weak webView] in
 				let fragments = await MarkdownRenderService.shared.blockFragments(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes)
 				guard let self, let webView, generation == self.renderGeneration else { return }
+				self.renderTask = nil
 				self.pendingSelection = nil
 				self.apply(fragments: fragments, into: webView, thenPlaceCaret: selection)
 			}
@@ -226,30 +280,39 @@ extension MarkdownWebView {
 		/// when the baseline allows it, otherwise swap the whole body. Assumes
 		/// the caller has already committed coordinator state (text, epoch).
 		private func apply(fragments: [MarkdownBlockFragment], into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
+			let generation = renderGeneration
+			let revision = currentRev
 			let fullSwap = { [weak self, weak webView] in
 				guard let self, let webView else { return }
+				guard generation == self.renderGeneration, revision == self.currentRev else { return }
 				guard let encoded = try? JSONEncoder().encode(fragments.map(\.html).joined()),
 				      let json = String(data: encoded, encoding: .utf8) else {
 					self.loadHTML(for: self.currentSource ?? self.parent.text, into: webView)
 					return
 				}
-				self.log("body swap: \(fragments.count) blocks rev=\(self.currentRev)")
-				webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(self.currentRev));", completionHandler: nil)
-				self.placeCaretAfterUpdate(selection, into: webView)
-				self.applyLineChanges(to: webView, force: true)
+				self.log("body swap: \(fragments.count) blocks rev=\(revision)")
+				webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(revision));") {
+					[weak self, weak webView] _, error in
+					guard let self, let webView, error == nil,
+					      generation == self.renderGeneration, revision == self.currentRev else { return }
+					self.lastFragments = fragments
+					self.placeCaretAfterUpdate(selection, into: webView)
+					self.applyLineChanges(to: webView, force: true)
+				}
 			}
-			defer { lastFragments = fragments }
 			guard let old = lastFragments, let patch = MarkdownBlockDiff.patch(from: old, to: fragments),
 			      let htmlData = try? JSONEncoder().encode(patch.html),
 			      let htmlJSON = String(data: htmlData, encoding: .utf8) else {
 				fullSwap()
 				return
 			}
-			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchor \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp), rev \(currentRev)")
-			let call = "window.__mdPatchBlocks ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.expectedOldCount), \(currentRev)) : false"
+			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchor \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp), rev \(revision)")
+			let call = "window.__mdPatchBlocks ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.expectedOldCount), \(revision)) : false"
 			webView.evaluateJavaScript(call) { [weak self, weak webView] result, error in
 				guard let self, let webView else { return }
+				guard generation == self.renderGeneration, revision == self.currentRev else { return }
 				if (result as? Bool) == true, error == nil {
+					self.lastFragments = fragments
 					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				} else {
@@ -285,6 +348,7 @@ extension MarkdownWebView {
 		/// (lastRenderedText/currentSource/epoch), so a superseded render just
 		/// never navigates — the newer call's page wins.
 		func loadHTML(for text: String, into webView: WKWebView) {
+			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
 			let theme = parent.theme
@@ -296,12 +360,13 @@ extension MarkdownWebView {
 			// loads through our scheme handler instead of being inlined.
 			let embedMermaid = parent.renderMermaid && !parent.isEditable
 			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
-			Task { @MainActor [weak self, weak webView] in
+			renderTask = Task { @MainActor [weak self, weak webView] in
 				let rendered = await MarkdownRenderService.shared.documentHTML(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
 					embedMermaidEngine: embedMermaid)
 				guard let self, let webView, generation == self.renderGeneration else { return }
+				self.renderTask = nil
 				self.lastFragments = rendered.fragments
 				// Load under the custom resource scheme (when we have a document
 				// folder) so relative <img> paths resolve to the scheme handler,

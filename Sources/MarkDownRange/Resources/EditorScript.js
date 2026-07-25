@@ -82,6 +82,15 @@
   window.__mdUnfreeze = function (token) {
     if (frozen && frozen.token === token) { frozen = null; }
   };
+  // The host has adopted newer source (for example from the raw split pane)
+  // while this DOM still renders the previous revision. Block edits until the
+  // debounced patch lands; otherwise an old-page splice could overwrite the
+  // host's newer full string.
+  window.__mdBeginHostUpdate = function () {
+    pendingEdits = [];
+    composing = null;
+    frozen = { token: null, hostUpdate: true };
+  };
   // State captured at compositionstart, reconciled at compositionend.
   var composing = null;
   installLinkOpenButtons();

@@ -25,14 +25,17 @@ final class CoordinatorBridgeHarness {
 	let coordinator: MarkdownWebView.Coordinator
 	let webView: WKWebView
 	private let window: NSWindow
+	private let checkboxToggle: ((Int, Bool) -> Void)?
 	/// When true, the emulated SwiftUI round-trip is suppressed — the page
 	/// never gets the re-render a structural edit expects, which is exactly
 	/// the stuck-freeze condition the frozenTimeout safety net exists for.
 	var suppressRoundTrip = false
 
-	init(source: String) async throws {
+	init(source: String, onCheckboxToggle: ((Int, Bool) -> Void)? = nil) async throws {
 		self.source = source
-		let view = MarkdownWebView(text: source, theme: .default, fontSize: 14).editable(true)
+		self.checkboxToggle = onCheckboxToggle
+		var view = MarkdownWebView(text: source, theme: .default, fontSize: 14).editable(true)
+		if let onCheckboxToggle { view = view.onCheckboxToggle(onCheckboxToggle) }
 		coordinator = MarkdownWebView.Coordinator(parent: view)
 		let config = WKWebViewConfiguration()
 		config.userContentController.add(WeakScriptMessageHandler(coordinator), name: "mdedit")
@@ -52,7 +55,7 @@ final class CoordinatorBridgeHarness {
 	/// Rebuild the parent view the way updateNSView sees a fresh one after a
 	/// state change, keeping the onSourceEdit wiring alive.
 	private func wireRoundTrip(text: String) {
-		coordinator.parent = MarkdownWebView(text: text, theme: .default, fontSize: 14)
+		var view = MarkdownWebView(text: text, theme: .default, fontSize: 14)
 			.editable(true)
 			.onSourceEdit { [weak self] newText, caretHint in
 				guard let self else { return }
@@ -66,11 +69,14 @@ final class CoordinatorBridgeHarness {
 					self.coordinator.load(into: self.webView)
 				}
 			}
+		if let checkboxToggle { view = view.onCheckboxToggle(checkboxToggle) }
+		coordinator.parent = view
 	}
 
 	/// Push new text in from outside the page — the split-pane case, where the
 	/// other editor is typing — which re-renders through the body-swap path.
 	func replaceExternally(_ text: String) async throws {
+		source = text
 		wireRoundTrip(text: text)
 		coordinator.load(into: webView)
 	}

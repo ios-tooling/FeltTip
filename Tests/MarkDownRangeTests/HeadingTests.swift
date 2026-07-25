@@ -43,4 +43,16 @@ import Foundation
 		}
 		#expect(headings == [1, 2, 3])
 	}
+
+	@Test func markdownHeadingRangesUseUTF16Offsets() throws {
+		let source = "🙂 preface\n\n# First\n\ncafé\n\n## Second"
+		let headings = MarkdownHeading.parse(from: source)
+		let first = try #require(headings.first)
+		let second = try #require(headings.last)
+		#expect(first.sourceRange.location == (source as NSString).range(of: "# First").location)
+		#expect(second.sourceRange.location == (source as NSString).range(of: "## Second").location)
+		#expect(MarkdownHeading.characterRange(for: second.id, in: source) == second.sourceRange)
+		#expect(MarkdownHeading.heading(
+			atCharacterOffset: second.sourceRange.location, in: source)?.id == second.id)
+	}
 }

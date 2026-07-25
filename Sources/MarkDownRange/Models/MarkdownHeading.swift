@@ -9,24 +9,36 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 	public let id: String
 	public let level: Int
 	public let text: String
+	/// UTF-16 source range of the complete heading line, matching NSTextView,
+	/// NSRange, and the web edit bridge's offset units.
+	public let sourceRange: NSRange
 
 	public static func parse(from markdown: String) -> [MarkdownHeading] {
 		var headings: [MarkdownHeading] = []
 		var inCodeBlock = false
+		var sourceOffset = 0
 
 		for line in markdown.components(separatedBy: .newlines) {
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			let lineLength = line.utf16.count
 
 			if trimmed.hasPrefix("```") {
 				inCodeBlock.toggle()
+				sourceOffset += lineLength + 1
 				continue
 			}
-			if inCodeBlock { continue }
+			if inCodeBlock {
+				sourceOffset += lineLength + 1
+				continue
+			}
 
 			if let (level, text) = parseHeadingLine(trimmed) {
 				let id = "\(headings.count)-\(text)"
-				headings.append(MarkdownHeading(id: id, level: level, text: text))
+				headings.append(MarkdownHeading(
+					id: id, level: level, text: text,
+					sourceRange: NSRange(location: sourceOffset, length: lineLength)))
 			}
+			sourceOffset += lineLength + 1
 		}
 		return headings
 	}
@@ -64,12 +76,17 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 			if !inCodeBlock, let (level, headingText) = parseHeadingLine(trimmed) {
-				let heading = MarkdownHeading(id: "\(headingIndex)-\(headingText)", level: level, text: headingText)
+				let heading = MarkdownHeading(
+					id: "\(headingIndex)-\(headingText)", level: level, text: headingText,
+					sourceRange: NSRange(location: charOffset, length: line.utf16.count))
 				if charOffset > offset { return lastHeading }
 				lastHeading = heading
 				headingIndex += 1
 			}
-			charOffset += line.count + 1
+			// Every caller supplies NSTextView / JavaScript source offsets,
+			// which are UTF-16. Swift `Character` counts drift as soon as a
+			// preceding line contains emoji or a composed character.
+			charOffset += line.utf16.count + 1
 			if lineEnd == end { break }
 			lineStart = text.index(after: lineEnd)
 		}
@@ -88,11 +105,11 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 			if !inCodeBlock, let (_, headingText) = parseHeadingLine(trimmed) {
 				let id = "\(headingIndex)-\(headingText)"
 				if id == headingID {
-					return NSRange(location: charOffset, length: line.count)
+					return NSRange(location: charOffset, length: line.utf16.count)
 				}
 				headingIndex += 1
 			}
-			charOffset += line.count + 1
+			charOffset += line.utf16.count + 1
 		}
 		return nil
 	}

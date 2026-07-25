@@ -51,7 +51,28 @@ extension MarkdownWebView.Coordinator {
 		}
 		// Task-list checkbox click (QuickLook): map index → source and write.
 		if body["type"] as? String == "checkbox" {
-			if let index = body["index"] as? Int, let checked = body["checked"] as? Bool {
+			guard let index = body["index"] as? Int,
+			      let checked = body["checked"] as? Bool,
+			      let rev = body["rev"] as? Int else {
+				resync(caretAt: nil)
+				return
+			}
+			if rev < reseedRev {
+				droppedStaleEdits += 1
+				return
+			}
+			guard rev == currentRev else {
+				bridgeIncidents.append("rev mismatch: checkbox rev=\(rev) currentRev=\(currentRev)")
+				resync(caretAt: nil)
+				return
+			}
+			let source = currentSource ?? parent.text
+			guard let current = Self.checkboxState(at: index, in: source) else {
+				bridgeIncidents.append("checkbox index \(index) missing at rev \(rev)")
+				resync(caretAt: nil)
+				return
+			}
+			if current != checked {
 				parent.onCheckboxToggle?(index, checked)
 			}
 			return
@@ -176,6 +197,20 @@ extension MarkdownWebView.Coordinator {
 		return text.isEmpty ? nil : text
 	}
 
+	/// State of the document-wide indexed task-list marker. Checkbox messages
+	/// are revision-gated first, then verified against source so a stale DOM
+	/// index can never toggle a different item.
+	private static func checkboxState(at target: Int, in source: String) -> Bool? {
+		guard target >= 0 else { return nil }
+		let pattern = try! NSRegularExpression(
+			pattern: #"(?m)^\s*(?:[-*+]|\d+[.)]) +\[([ xX])\]"#)
+		let range = NSRange(location: 0, length: (source as NSString).length)
+		let matches = pattern.matches(in: source, range: range)
+		guard target < matches.count else { return nil }
+		let marker = (source as NSString).substring(with: matches[target].range(at: 1))
+		return marker.lowercased() == "x"
+	}
+
 	/// Splice a fresh empty row after the line containing `at` (a stamp from
 	/// the table's last row) and re-render with the caret in the new row's
 	/// first cell. Lives here rather than in the page because only the source
@@ -226,6 +261,9 @@ extension MarkdownWebView.Coordinator {
 		let source = currentSource ?? parent.text
 		pendingSwap?.cancel()
 		pendingSwap = nil
+		pendingHostText = nil
+		renderTask?.cancel()
+		renderTask = nil
 		selfEdit = nil
 		pendingSelection = caret.map { NSRange(location: $0, length: 0) }
 		lastRenderedText = source

@@ -90,6 +90,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
 		textView.string = text
+		context.coordinator.rebuildLineStarts(for: text)
 		context.coordinator.scheduleIncrementalLayout(for: textView)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
@@ -194,6 +195,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			(scrollView.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			let sel = textView.selectedRange()
 			textView.string = text
+			context.coordinator.rebuildLineStarts(for: text)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
 			context.coordinator.scheduleIncrementalLayout(for: textView)
@@ -205,8 +207,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		// focused editor restores its caret — in a split, the unfocused pane
 		// setting a selection would show no caret and could fight the other pane.
 		if let caret = caretTarget, caret.token != context.coordinator.lastCaretToken {
-			context.coordinator.lastCaretToken = caret.token
 			if textView.window?.firstResponder === textView {
+				// Consume only when the restore is actually applied. Menu
+				// activation can temporarily move first responder; consuming
+				// first permanently lost the caret request on the raw pane.
+				context.coordinator.lastCaretToken = caret.token
 				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw caret scroll to %d", caret.offset) }
 				let clamped = min(max(0, caret.offset), (textView.string as NSString).length)
 				textView.setSelectedRange(NSRange(location: clamped, length: 0))
@@ -450,7 +455,40 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// Accumulates the edited range between debounced highlight passes.
 		/// Cleared each time the debounced timer fires.
 		var pendingHighlightRange: NSRange?
+		/// UTF-16 offsets of logical line starts. Maintained incrementally from
+		/// NSTextStorage edits so cursor reports can binary-search instead of
+		/// allocating and splitting the entire prefix on every movement.
+		private var lineStarts: [Int] = [0]
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
+
+		func rebuildLineStarts(for text: String) {
+			lineStarts = [0]
+			let ns = text as NSString
+			for index in 0..<ns.length where ns.character(at: index) == 0x0A {
+				lineStarts.append(index + 1)
+			}
+		}
+
+		private func updateLineStarts(
+			in text: NSString, editedRange: NSRange, delta: Int
+		) {
+			let oldLength = max(0, editedRange.length - delta)
+			let oldEnd = editedRange.location + oldLength
+			lineStarts = lineStarts.compactMap { start in
+				if start > editedRange.location, start <= oldEnd { return nil }
+				return start > oldEnd ? start + delta : start
+			}
+			guard editedRange.location <= text.length,
+			      NSMaxRange(editedRange) <= text.length else {
+				rebuildLineStarts(for: text as String)
+				return
+			}
+			for index in editedRange.location..<NSMaxRange(editedRange)
+			where text.character(at: index) == 0x0A {
+				lineStarts.append(index + 1)
+			}
+			lineStarts.sort()
+		}
 
 		public func textStorage(
 			_ textStorage: NSTextStorage,
@@ -462,6 +500,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// edits (which we generate ourselves when applying styles) would
 			// otherwise create a feedback loop.
 			guard editedMask.contains(.editedCharacters) else { return }
+			updateLineStarts(in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
@@ -560,9 +599,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard parent.onCursorPositionChanged != nil else { return }
 			let range = textView.selectedRange()
 			let insertion = range.location
-			let prefix = (textView.string as NSString).substring(to: min(insertion, (textView.string as NSString).length))
-			let lines = prefix.components(separatedBy: "\n")
-			parent.onCursorPositionChanged?(lines.count, (lines.last?.count ?? 0) + 1, range.length, insertion)
+			var low = 0
+			var high = lineStarts.count
+			while low < high {
+				let mid = (low + high) / 2
+				if lineStarts[mid] <= insertion { low = mid + 1 } else { high = mid }
+			}
+			let lineIndex = max(0, low - 1)
+			let lineStart = lineStarts.indices.contains(lineIndex) ? lineStarts[lineIndex] : 0
+			parent.onCursorPositionChanged?(
+				lineIndex + 1, insertion - lineStart + 1, range.length, insertion)
 		}
 
 		/// Typewriter scrolling with a dead band. Rather than hard-snapping the

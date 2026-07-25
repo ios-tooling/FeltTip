@@ -18,21 +18,31 @@ actor MarkdownRenderService {
 	func bodyFragment(
 		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
 		includeSourceOffsets: Bool, interactiveCheckboxes: Bool
-	) -> String {
-		MarkdownHTMLRenderer.renderBodyFragment(
-			markdown: markdown, theme: theme, fontSize: fontSize,
-			includeSourceOffsets: includeSourceOffsets,
-			interactiveCheckboxes: interactiveCheckboxes)
+	) async -> String {
+		let worker = Task.detached {
+			MarkdownHTMLRenderer.renderBodyFragment(
+				markdown: markdown, theme: theme, fontSize: fontSize,
+				includeSourceOffsets: includeSourceOffsets,
+				interactiveCheckboxes: interactiveCheckboxes)
+		}
+		return await withTaskCancellationHandler(
+			operation: { await worker.value },
+			onCancel: { worker.cancel() })
 	}
 
 	func blockFragments(
 		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
 		includeSourceOffsets: Bool, interactiveCheckboxes: Bool
-	) -> [MarkdownBlockFragment] {
-		MarkdownHTMLRenderer.renderBlockFragments(
-			markdown: markdown, theme: theme, fontSize: fontSize,
-			includeSourceOffsets: includeSourceOffsets,
-			interactiveCheckboxes: interactiveCheckboxes)
+	) async -> [MarkdownBlockFragment] {
+		let worker = Task.detached {
+			MarkdownHTMLRenderer.renderBlockFragments(
+				markdown: markdown, theme: theme, fontSize: fontSize,
+				includeSourceOffsets: includeSourceOffsets,
+				interactiveCheckboxes: interactiveCheckboxes)
+		}
+		return await withTaskCancellationHandler(
+			operation: { await worker.value },
+			onCancel: { worker.cancel() })
 	}
 
 	/// The full document plus its per-block fragments — the coordinator keeps
@@ -41,14 +51,19 @@ actor MarkdownRenderService {
 		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
 		includeSourceOffsets: Bool, interactiveCheckboxes: Bool,
 		embedMermaidEngine: Bool
-	) -> (html: String, fragments: [MarkdownBlockFragment]) {
-		let fragments = MarkdownHTMLRenderer.renderBlockFragments(
-			markdown: markdown, theme: theme, fontSize: fontSize,
-			includeSourceOffsets: includeSourceOffsets,
-			interactiveCheckboxes: interactiveCheckboxes)
-		let html = MarkdownHTMLRenderer.wrapDocument(
-			body: fragments.map(\.html).joined(), theme: theme, fontSize: fontSize,
-			embedMermaidEngine: embedMermaidEngine, mermaidEngineViaScheme: true)
-		return (html, fragments)
+	) async -> (html: String, fragments: [MarkdownBlockFragment]) {
+		let worker = Task.detached {
+			let fragments = MarkdownHTMLRenderer.renderBlockFragments(
+				markdown: markdown, theme: theme, fontSize: fontSize,
+				includeSourceOffsets: includeSourceOffsets,
+				interactiveCheckboxes: interactiveCheckboxes)
+			let html = MarkdownHTMLRenderer.wrapDocument(
+				body: fragments.map(\.html).joined(), theme: theme, fontSize: fontSize,
+				embedMermaidEngine: embedMermaidEngine, mermaidEngineViaScheme: true)
+			return (html, fragments)
+		}
+		return await withTaskCancellationHandler(
+			operation: { await worker.value },
+			onCancel: { worker.cancel() })
 	}
 }
