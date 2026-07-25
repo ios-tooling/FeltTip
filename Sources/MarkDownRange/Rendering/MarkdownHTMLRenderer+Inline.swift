@@ -20,7 +20,13 @@ extension MarkdownHTMLRenderer {
 		// per trait/link/span, which dominated HTML generation on inline-heavy
 		// documents. Nesting (outer→inner): span > a > strong > em > code.
 		for run in attributed.runs {
-			let text = escape(String(attributed[run.range].characters))
+			// A hard line break arrives as a newline in the run text (which the
+			// NSTextView path renders literally). HTML collapses that to a
+			// space, so the break vanished from the styled view; it needs a
+			// <br>. Breaks are their own unstamped run, so replacing the
+			// character leaves every stamped run's text — and so every source
+			// offset — untouched.
+			let text = withLineBreakElements(escape(String(attributed[run.range].characters)))
 			guard !text.isEmpty else { continue }
 			let traits = run.inlineFontTraits ?? []
 			let offset = emitSourceOffsets ? run.markdownSourceOffset : nil
@@ -42,6 +48,13 @@ extension MarkdownHTMLRenderer {
 			if offset != nil { result += "</span>" }
 		}
 		return result
+	}
+
+	/// Hard line breaks as `<br>`. Most runs hold no newline at all, so the
+	/// scan short-circuits before any allocation.
+	static func withLineBreakElements(_ escaped: String) -> String {
+		guard escaped.utf8.contains(0x0A) else { return escaped }
+		return escaped.replacingOccurrences(of: "\n", with: "<br>")
 	}
 
 	static let linkSchemes: Set<String> = ["http", "https", "mailto", "file", "tel", "sms"]
