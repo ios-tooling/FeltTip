@@ -623,9 +623,13 @@
                columns: rowEl.children.length, rev: stampRev, seq: seq++ });
         return;
       }
-      var marker = listItemMarker(range.startContainer) || '\n\n';
+      // In a list the continuation marker needs the item's own indentation,
+      // which only the source knows (the DOM shows nesting as structure, not
+      // as leading spaces) — flag it and let the splice prefix it.
+      var listMarker = listItemMarker(range.startContainer);
+      var marker = listMarker || '\n\n';
       freeze();
-      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, rev: stampRev, seq: seq++ });
+      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, listBreak: !!listMarker, rev: stampRev, seq: seq++ });
       return;
     }
     if (type === 'formatBold' || type === 'formatItalic' || type === 'formatStrikeThrough') {

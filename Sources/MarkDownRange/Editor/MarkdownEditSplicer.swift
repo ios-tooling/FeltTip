@@ -36,6 +36,11 @@ enum MarkdownEditSplicer {
 		/// Source offset to restore the caret to after a structural re-render;
 		/// nil for in-place edits, which keep the browser's own caret.
 		var caret: Int?
+		/// The replacement is a list-item continuation ("\n- " / "\n1. ") the
+		/// page composed from DOM structure. Only the source shows how deeply
+		/// the item is indented, so the splice re-indents the new item to match
+		/// the one being continued.
+		var listBreak = false
 	}
 
 	enum Outcome {
@@ -83,11 +88,30 @@ enum MarkdownEditSplicer {
 			let wrapped = text.substring(to: edit.start) + marker + actual + marker + text.substring(from: edit.end)
 			return .applied(wrapped, selection: NSRange(location: edit.start + markerLength, length: edit.end - edit.start))
 		}
-		guard let replacement = edit.replacement else {
+		guard var replacement = edit.replacement else {
 			return .rejected("no replacement or marker")
 		}
+		var caret = edit.caret
+		// Re-indent a list continuation to the item it continues; without this a
+		// nested item's Enter produced a top-level item and reflowed the list.
+		if edit.listBreak, replacement.hasPrefix("\n") {
+			let indent = lineIndent(in: text, at: edit.start)
+			if !indent.isEmpty {
+				replacement = "\n" + indent + replacement.dropFirst()
+				caret = caret.map { $0 + (indent as NSString).length }
+			}
+		}
 		return .applied(text.replacingCharacters(in: range, with: replacement),
-						selection: edit.caret.map { NSRange(location: $0, length: 0) })
+						selection: caret.map { NSRange(location: $0, length: 0) })
+	}
+
+	/// Leading whitespace of the line containing `offset`.
+	private static func lineIndent(in text: NSString, at offset: Int) -> String {
+		var lineStart = min(max(0, offset), text.length)
+		while lineStart > 0, text.character(at: lineStart - 1) != 0x0A { lineStart -= 1 }
+		var end = lineStart
+		while end < text.length, text.character(at: end) == 0x20 || text.character(at: end) == 0x09 { end += 1 }
+		return text.substring(with: NSRange(location: lineStart, length: end - lineStart))
 	}
 
 	private static func contextMismatch(_ edit: Edit, in text: NSString) -> String? {
@@ -135,5 +159,6 @@ extension MarkdownEditSplicer.Edit {
 		self.before = body["before"] as? String ?? ""
 		self.after = body["after"] as? String ?? ""
 		self.caret = body["caret"] as? Int
+		self.listBreak = body["listBreak"] as? Bool ?? false
 	}
 }

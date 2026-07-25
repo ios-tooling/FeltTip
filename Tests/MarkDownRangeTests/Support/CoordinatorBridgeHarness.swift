@@ -91,6 +91,44 @@ final class CoordinatorBridgeHarness {
 		try await evaluate("Array.from(document.querySelectorAll('[data-s]')).map(e => e.textContent).filter(t => t.length).join('|')") ?? ""
 	}
 
+	/// Every stamped run's text must equal the source at its own stamp — the
+	/// invariant the whole offset-mapping scheme rests on. Returns a
+	/// description of each violation (empty when the page and source agree),
+	/// so a test can assert it after any edit sequence, however exotic.
+	func stampMismatches() async throws -> [String] {
+		let dump = try await evaluate("""
+			Array.from(document.querySelectorAll('[data-s]'))
+			  .map(e => e.getAttribute('data-s') + '\\u0001' + e.textContent)
+			  .join('\\u0002')
+			""") ?? ""
+		let ns = source as NSString
+		var problems: [String] = []
+		for entry in dump.components(separatedBy: "\u{2}") where !entry.isEmpty {
+			let parts = entry.components(separatedBy: "\u{1}")
+			guard parts.count == 2, let stamp = Int(parts[0]) else { continue }
+			let shown = normalized(parts[1])
+			guard !shown.isEmpty else { continue }   // caret-holder span
+			let length = (shown as NSString).length
+			guard stamp >= 0, stamp + length <= ns.length else {
+				problems.append("run at \(stamp) (\(quoted(shown))) runs past the \(ns.length)-char source")
+				continue
+			}
+			let inSource = normalized(ns.substring(with: NSRange(location: stamp, length: length)))
+			if inSource != shown {
+				problems.append("run at \(stamp) shows \(quoted(shown)) but source has \(quoted(inSource))")
+			}
+		}
+		return problems
+	}
+
+	private func normalized(_ s: String) -> String {
+		s.replacingOccurrences(of: "\u{00A0}", with: " ")
+	}
+
+	private func quoted(_ s: String) -> String {
+		"\"\(s.replacingOccurrences(of: "\n", with: "\\n"))\""
+	}
+
 	func stamps() async throws -> String {
 		try await evaluate("Array.from(document.querySelectorAll('[data-s]')).map(e => e.getAttribute('data-s')).join(',')") ?? ""
 	}
