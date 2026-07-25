@@ -195,6 +195,16 @@ extension MarkdownWebView {
 		private func applyStructuralPatch(into webView: WKWebView) {
 			let text = parent.text
 			lastRenderedText = text
+			// Close the revision epoch NOW, before awaiting the render. Until the
+			// patch lands, the page still shows the previous DOM and still
+			// declares the previous revision — and a host-driven restore (undo /
+			// redo) doesn't freeze the page, so a keystroke in that window would
+			// arrive at a *matching* revision and splice into the pre-restore
+			// source, handing the undone text straight back. Reseeding here makes
+			// those stragglers pre-reseed: dropped, costing one keystroke instead
+			// of the undo.
+			currentSource = text
+			bumpEpoch()
 			renderGeneration += 1
 			let generation = renderGeneration
 			let selection = pendingSelection
@@ -207,8 +217,6 @@ extension MarkdownWebView {
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes)
 				guard let self, let webView, generation == self.renderGeneration else { return }
-				self.currentSource = text
-				self.bumpEpoch()
 				self.pendingSelection = nil
 				self.apply(fragments: fragments, into: webView, thenPlaceCaret: selection)
 			}

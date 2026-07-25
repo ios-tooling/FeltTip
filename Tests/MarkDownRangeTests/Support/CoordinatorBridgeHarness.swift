@@ -68,6 +68,24 @@ final class CoordinatorBridgeHarness {
 			}
 	}
 
+	/// Adopt text the host set directly (an undo/redo restore), keeping the
+	/// harness's mirror of the source in step without counting an edit.
+	func adoptHostText(_ text: String) {
+		source = text
+	}
+
+	/// Record an edit that arrived while a test had swapped the parent view, so
+	/// the standard round-trip wiring wasn't in place.
+	func recordExternalEdit(_ text: String) {
+		source = text
+		sourceEditCount += 1
+	}
+
+	/// Put the standard round-trip wiring back after a test swapped the parent.
+	func rewireRoundTrip() {
+		wireRoundTrip(text: source)
+	}
+
 	/// Run several editing commands in ONE JavaScript turn — the same shape as
 	/// a batched WebKit editing turn (quote + retrocurl, autocorrect + insert).
 	func batch(_ commands: [String]) async throws {
