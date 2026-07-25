@@ -19,8 +19,14 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	public let webView: WKWebView
 	private let bar = NSVisualEffectView()
 	private let searchField = NSSearchField()
+	private lazy var previousButton = chevronButton(system: "chevron.up", action: #selector(findPrevious))
+	private lazy var nextButton = chevronButton(system: "chevron.down", action: #selector(findNext))
+	private lazy var doneButton = NSButton(title: "Done", target: self, action: #selector(dismissBar))
 	private var barVisible = false
 	private let barHeight: CGFloat = 34
+	private let barInset: CGFloat = 8
+	private let barSpacing: CGFloat = 6
+	private let searchFieldMaxWidth: CGFloat = 320
 
 	public init(webView: WKWebView) {
 		self.webView = webView
@@ -140,26 +146,18 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		searchField.sendsSearchStringImmediately = false
 		searchField.sendsWholeSearchString = true
 
-		let previous = chevronButton(system: "chevron.up", action: #selector(findPrevious))
-		let next = chevronButton(system: "chevron.down", action: #selector(findNext))
-		let done = NSButton(title: "Done", target: self, action: #selector(dismissBar))
-		done.bezelStyle = .accessoryBarAction
-		done.controlSize = .small
+		doneButton.bezelStyle = .accessoryBarAction
+		doneButton.controlSize = .small
 
-		let stack = NSStackView(views: [searchField, previous, next, done])
-		stack.orientation = .horizontal
-		stack.spacing = 6
-		stack.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
-		stack.translatesAutoresizingMaskIntoConstraints = false
-		bar.addSubview(stack)
+		// Framed by hand in `layoutBar()` rather than pinned with constraints:
+		// this view lays its subviews out manually, so the bar is zero-sized
+		// until the first `layout()`. Auto Layout content inside a zero-width
+		// container is unsatisfiable, and SwiftUI measures the host (forcing a
+		// constraint pass) while creating the document window — which AppKit
+		// reports as a mutually-exclusive conflict and can escalate to a raised
+		// LAYOUT_CONSTRAINTS_NOT_SATISFIABLE exception.
+		for view in [searchField, previousButton, nextButton, doneButton] { bar.addSubview(view) }
 		addSubview(bar)
-		NSLayoutConstraint.activate([
-			stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-			stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-			stack.topAnchor.constraint(equalTo: bar.topAnchor),
-			stack.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-			searchField.widthAnchor.constraint(lessThanOrEqualToConstant: 320)
-		])
 	}
 
 	private func chevronButton(system name: String, action: Selector) -> NSButton {
@@ -195,6 +193,25 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		let height = barVisible ? barHeight : 0
 		bar.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: barHeight)
 		webView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
+		layoutBar()
+	}
+
+	/// Packed from the leading edge — search field (capped at its maximum, and
+	/// the first thing to give up room when the bar is narrow), then previous,
+	/// next and Done.
+	private func layoutBar() {
+		let buttons = [previousButton, nextButton, doneButton]
+		let buttonsWidth = buttons.reduce(0) { $0 + $1.fittingSize.width + barSpacing }
+		let available = bar.bounds.width - barInset * 2 - buttonsWidth
+		let height = searchField.fittingSize.height
+		let width = max(0, min(searchFieldMaxWidth, available))
+		searchField.frame = NSRect(x: barInset, y: bar.bounds.midY - height / 2, width: width, height: height)
+		var leading = searchField.frame.maxX + barSpacing
+		for button in buttons {
+			let size = button.fittingSize
+			button.frame = NSRect(x: leading, y: bar.bounds.midY - size.height / 2, width: size.width, height: size.height)
+			leading += size.width + barSpacing
+		}
 	}
 
 	public override func resizeSubviews(withOldSize oldSize: NSSize) {
