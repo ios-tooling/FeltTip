@@ -65,7 +65,9 @@ extension MarkdownHTMLRenderer {
 			return "<figure>\(img)<figcaption>\(escape(caption))</figcaption></figure>"
 
 		case .htmlBlock(let content, _):
-			return content
+			// The one place a document's own markup reaches the page verbatim,
+			// and that page hosts the edit bridge — so it must not carry script.
+			return HTMLPassthroughSanitizer.sanitize(content)
 
 		case .details(let summary, let children, _):
 			var inner = ""

@@ -68,6 +68,13 @@ final class CoordinatorBridgeHarness {
 			}
 	}
 
+	/// Push new text in from outside the page — the split-pane case, where the
+	/// other editor is typing — which re-renders through the body-swap path.
+	func replaceExternally(_ text: String) async throws {
+		wireRoundTrip(text: text)
+		coordinator.load(into: webView)
+	}
+
 	/// Adopt text the host set directly (an undo/redo restore), keeping the
 	/// harness's mirror of the source in step without counting an edit.
 	func adoptHostText(_ text: String) {
