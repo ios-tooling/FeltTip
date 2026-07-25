@@ -55,4 +55,13 @@ import Foundation
 		#expect(MarkdownHeading.heading(
 			atCharacterOffset: second.sourceRange.location, in: source)?.id == second.id)
 	}
+
+	@Test func markdownHeadingRangesHandleCRLFWithoutDrift() throws {
+		let source = "🙂 preface\r\n# First\r\nbody\r\n## Second"
+		let headings = MarkdownHeading.parse(from: source)
+		let first = try #require(headings.first)
+		let second = try #require(headings.last)
+		#expect(first.sourceRange == (source as NSString).range(of: "# First"))
+		#expect(second.sourceRange == (source as NSString).range(of: "## Second"))
+	}
 }

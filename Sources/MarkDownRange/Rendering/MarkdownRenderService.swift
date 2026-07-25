@@ -58,7 +58,7 @@ actor MarkdownRenderService {
 				includeSourceOffsets: includeSourceOffsets,
 				interactiveCheckboxes: interactiveCheckboxes)
 			let html = MarkdownHTMLRenderer.wrapDocument(
-				body: fragments.map(\.html).joined(), theme: theme, fontSize: fontSize,
+				body: fragments.lazy.map(\.html).joined(), theme: theme, fontSize: fontSize,
 				embedMermaidEngine: embedMermaidEngine, mermaidEngineViaScheme: true)
 			return (html, fragments)
 		}

@@ -90,7 +90,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
 		textView.string = text
-		context.coordinator.rebuildLineStarts(for: text)
+		context.coordinator.lineIndex.rebuild(for: text)
 		context.coordinator.scheduleIncrementalLayout(for: textView)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
@@ -195,7 +195,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			(scrollView.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			let sel = textView.selectedRange()
 			textView.string = text
-			context.coordinator.rebuildLineStarts(for: text)
+			context.coordinator.lineIndex.rebuild(for: text)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
 			context.coordinator.scheduleIncrementalLayout(for: textView)
@@ -458,37 +458,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// UTF-16 offsets of logical line starts. Maintained incrementally from
 		/// NSTextStorage edits so cursor reports can binary-search instead of
 		/// allocating and splitting the entire prefix on every movement.
-		private var lineStarts: [Int] = [0]
+		var lineIndex = MarkdownLineIndex()
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
-
-		func rebuildLineStarts(for text: String) {
-			lineStarts = [0]
-			let ns = text as NSString
-			for index in 0..<ns.length where ns.character(at: index) == 0x0A {
-				lineStarts.append(index + 1)
-			}
-		}
-
-		private func updateLineStarts(
-			in text: NSString, editedRange: NSRange, delta: Int
-		) {
-			let oldLength = max(0, editedRange.length - delta)
-			let oldEnd = editedRange.location + oldLength
-			lineStarts = lineStarts.compactMap { start in
-				if start > editedRange.location, start <= oldEnd { return nil }
-				return start > oldEnd ? start + delta : start
-			}
-			guard editedRange.location <= text.length,
-			      NSMaxRange(editedRange) <= text.length else {
-				rebuildLineStarts(for: text as String)
-				return
-			}
-			for index in editedRange.location..<NSMaxRange(editedRange)
-			where text.character(at: index) == 0x0A {
-				lineStarts.append(index + 1)
-			}
-			lineStarts.sort()
-		}
 
 		public func textStorage(
 			_ textStorage: NSTextStorage,
@@ -500,7 +471,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// edits (which we generate ourselves when applying styles) would
 			// otherwise create a feedback loop.
 			guard editedMask.contains(.editedCharacters) else { return }
-			updateLineStarts(in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
+			lineIndex.applyEdit(
+				in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
@@ -599,16 +571,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard parent.onCursorPositionChanged != nil else { return }
 			let range = textView.selectedRange()
 			let insertion = range.location
-			var low = 0
-			var high = lineStarts.count
-			while low < high {
-				let mid = (low + high) / 2
-				if lineStarts[mid] <= insertion { low = mid + 1 } else { high = mid }
-			}
-			let lineIndex = max(0, low - 1)
-			let lineStart = lineStarts.indices.contains(lineIndex) ? lineStarts[lineIndex] : 0
+			let position = lineIndex.position(at: insertion)
 			parent.onCursorPositionChanged?(
-				lineIndex + 1, insertion - lineStart + 1, range.length, insertion)
+				position.line, position.column, range.length, insertion)
 		}
 
 		/// Typewriter scrolling with a dead band. Rather than hard-snapping the
@@ -642,6 +607,71 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetTop))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
 		}
+	}
+}
+
+/// Incremental UTF-16 line index shared by cursor reporting. Character edits
+/// remove only starts inside the replaced span, shift the surviving suffix,
+/// and insert newly-created starts in their already-sorted position. This
+/// avoids allocating and sorting the entire line table for every keystroke.
+struct MarkdownLineIndex {
+	private(set) var starts: [Int] = [0]
+
+	init(text: String = "") {
+		rebuild(for: text)
+	}
+
+	mutating func rebuild(for text: String) {
+		starts = [0]
+		var offset = 0
+		for unit in text.utf16 {
+			offset += 1
+			if unit == 0x0A { starts.append(offset) }
+		}
+	}
+
+	mutating func applyEdit(in text: NSString, editedRange: NSRange, delta: Int) {
+		guard editedRange.location >= 0, editedRange.location <= text.length,
+		      editedRange.length >= 0, NSMaxRange(editedRange) <= text.length else {
+			rebuild(for: text as String)
+			return
+		}
+		let oldLength = max(0, editedRange.length - delta)
+		let oldEnd = editedRange.location + oldLength
+		let firstAffected = upperBound(of: editedRange.location)
+		let afterRemoved = upperBound(of: oldEnd)
+		if firstAffected < afterRemoved {
+			starts.removeSubrange(firstAffected..<afterRemoved)
+		}
+		if delta != 0, firstAffected < starts.count {
+			for index in firstAffected..<starts.count {
+				starts[index] += delta
+			}
+		}
+		var inserted: [Int] = []
+		for index in editedRange.location..<NSMaxRange(editedRange)
+		where text.character(at: index) == 0x0A {
+			inserted.append(index + 1)
+		}
+		if !inserted.isEmpty {
+			starts.insert(contentsOf: inserted, at: firstAffected)
+		}
+	}
+
+	func position(at offset: Int) -> (line: Int, column: Int) {
+		let clamped = max(0, offset)
+		let index = max(0, upperBound(of: clamped) - 1)
+		return (index + 1, clamped - starts[index] + 1)
+	}
+
+	private func upperBound(of value: Int) -> Int {
+		var low = 0
+		var high = starts.count
+		while low < high {
+			let mid = (low + high) / 2
+			if starts[mid] <= value { low = mid + 1 } else { high = mid }
+		}
+		return low
 	}
 }
 

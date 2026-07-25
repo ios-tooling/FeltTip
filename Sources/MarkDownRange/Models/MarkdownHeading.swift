@@ -16,29 +16,29 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 	public static func parse(from markdown: String) -> [MarkdownHeading] {
 		var headings: [MarkdownHeading] = []
 		var inCodeBlock = false
-		var sourceOffset = 0
-
-		for line in markdown.components(separatedBy: .newlines) {
+		// Walk the source storage directly rather than materializing every line.
+		// The supplied ranges also preserve exact UTF-16 locations for either
+		// LF or CRLF line endings.
+		markdown.enumerateSubstrings(
+			in: markdown.startIndex..<markdown.endIndex,
+			options: [.byLines, .substringNotRequired]
+		) { _, lineRange, _, _ in
+			let sourceRange = NSRange(lineRange, in: markdown)
+			let line = String(markdown[lineRange])
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			let lineLength = line.utf16.count
 
 			if trimmed.hasPrefix("```") {
 				inCodeBlock.toggle()
-				sourceOffset += lineLength + 1
-				continue
+				return
 			}
-			if inCodeBlock {
-				sourceOffset += lineLength + 1
-				continue
-			}
+			guard !inCodeBlock else { return }
 
 			if let (level, text) = parseHeadingLine(trimmed) {
 				let id = "\(headings.count)-\(text)"
 				headings.append(MarkdownHeading(
 					id: id, level: level, text: text,
-					sourceRange: NSRange(location: sourceOffset, length: lineLength)))
+					sourceRange: sourceRange))
 			}
-			sourceOffset += lineLength + 1
 		}
 		return headings
 	}

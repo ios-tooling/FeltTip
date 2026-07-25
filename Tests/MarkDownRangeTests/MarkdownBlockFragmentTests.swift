@@ -42,6 +42,26 @@ import Testing
 		#expect(f.signature == "<hr>")
 	}
 
+	@Test func signaturesStayLazyWhenADiffOnlyNeedsTheUnchangedPrefix() throws {
+		let before = (0..<200).map { "paragraph \($0)" }.joined(separator: "\n\n")
+		let after = before + " edited"
+		let old = MarkdownHTMLRenderer.renderBlockFragments(
+			markdown: before, includeSourceOffsets: true)
+		let new = MarkdownHTMLRenderer.renderBlockFragments(
+			markdown: after, includeSourceOffsets: true)
+
+		#expect(old.allSatisfy { !$0.hasCachedSignature })
+		#expect(new.allSatisfy { !$0.hasCachedSignature })
+		let patch = try #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.start == 199)
+		// The suffix probe signs only the mismatching final block. The 199-block
+		// unchanged prefix never pays the normalization/allocation cost.
+		#expect(old.dropLast().allSatisfy { !$0.hasCachedSignature })
+		#expect(new.dropLast().allSatisfy { !$0.hasCachedSignature })
+		#expect(old.last?.hasCachedSignature == true)
+		#expect(new.last?.hasCachedSignature == true)
+	}
+
 	@Test func textThatLooksLikeAStampIsNotRewritten() {
 		// Only real attributes are stamps; escaped body text must survive.
 		let f = fragment("<p><span data-s=\"5\">data-s=\"99\"</span></p>")

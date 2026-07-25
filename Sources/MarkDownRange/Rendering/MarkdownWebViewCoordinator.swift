@@ -285,7 +285,7 @@ extension MarkdownWebView {
 			let fullSwap = { [weak self, weak webView] in
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
-				guard let encoded = try? JSONEncoder().encode(fragments.map(\.html).joined()),
+				guard let encoded = try? JSONEncoder().encode(fragments.lazy.map(\.html).joined()),
 				      let json = String(data: encoded, encoding: .utf8) else {
 					self.loadHTML(for: self.currentSource ?? self.parent.text, into: webView)
 					return
