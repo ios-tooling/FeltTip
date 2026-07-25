@@ -741,8 +741,4 @@
     shiftStamps(c.base, after.length - c.beforeText.length, c.span);
     stampRev += 1;
   });
-  // Report scroll so a reload can restore the reader's place.
-  window.addEventListener('scroll', function () {
-    window.webkit.messageHandlers.mdedit.postMessage({ type: 'scroll', y: window.scrollY });
-  }, { passive: true });
 })();

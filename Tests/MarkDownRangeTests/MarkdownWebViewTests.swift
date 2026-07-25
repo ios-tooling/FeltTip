@@ -108,5 +108,23 @@ import Testing
 		#expect(script.contains("post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '', rev: stampRev, seq: seq++ });"))
 		#expect(script.contains("post({ type: 'desync' })"))
 	}
+
+	@Test @MainActor func onlySharedScrollScriptReportsScrollEvents() {
+		let editor = MarkdownWebView.Coordinator.editorScript
+		let scroll = MarkdownWebView.Coordinator.scrollSyncScript
+		#expect(!editor.contains("addEventListener('scroll'"))
+		#expect(scroll.contains("addEventListener('scroll'"))
+		#expect(scroll.contains("requestAnimationFrame"))
+		#expect(scroll.contains("type: 'scroll'"))
+	}
+
+	@Test @MainActor func scrollScriptCachesAndInvalidatesDocumentDimensions() {
+		let script = MarkdownWebView.Coordinator.scrollSyncScript
+		#expect(script.contains("var dimensions = null"))
+		#expect(script.contains("function scrollDimensions()"))
+		#expect(script.contains("new ResizeObserver(invalidateDimensions)"))
+		#expect(script.contains("window.addEventListener('resize', invalidateDimensions"))
+		#expect(script.components(separatedBy: "invalidateDimensions();").count >= 3)
+	}
 }
 #endif

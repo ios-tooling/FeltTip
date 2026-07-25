@@ -1,8 +1,27 @@
 (function () {
   if (window.__mdScrollSyncInstalled) { return; }
   window.__mdScrollSyncInstalled = true;
+  // Scroll height is stable during ordinary scrolling, but reading it can
+  // force WebKit to flush layout. Cache dimensions across scroll frames and
+  // invalidate only when viewport/content geometry actually changes.
+  var dimensions = null;
+  function invalidateDimensions() { dimensions = null; }
+  function scrollDimensions() {
+    if (!dimensions) {
+      var height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 1);
+      var visible = window.innerHeight;
+      dimensions = { height: height, visible: visible, maxY: Math.max(height - visible, 0) };
+    }
+    return dimensions;
+  }
   function docHeight() {
-    return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 1);
+    return scrollDimensions().height;
+  }
+  window.addEventListener('resize', invalidateDimensions, { passive: true });
+  if (window.ResizeObserver) {
+    var geometryObserver = new ResizeObserver(invalidateDimensions);
+    geometryObserver.observe(document.documentElement);
+    geometryObserver.observe(document.body);
   }
   // While a host-driven scroll is in flight, its echo must not report as
   // a user scroll — in a split view that echo claims scroll-sourcehood
@@ -11,8 +30,9 @@
   // period, if the user interrupted the drive).
   var driven = null;
   function report() {
-    var h = docHeight();
-    var vis = window.innerHeight;
+    var dims = scrollDimensions();
+    var h = dims.height;
+    var vis = dims.visible;
     var y = window.scrollY || window.pageYOffset || 0;
     if (driven) {
       if (Math.abs(y - driven.y) < 3) {
@@ -29,7 +49,7 @@
     // viewport)), matching MarkdownTextEditor's convention on both its
     // report and apply sides — full-height fractions max out below 1.0
     // and leave the synced pane short of the bottom.
-    var maxY = Math.max(h - vis, 0);
+    var maxY = dims.maxY;
     var top = maxY > 0 ? Math.max(0, Math.min(1, y / maxY)) : 0;
     var visible = Math.max(0, Math.min(1, vis / h));
     var content = vis > 0 ? Math.min(1, h / vis) : 1;
@@ -44,9 +64,7 @@
     window.requestAnimationFrame(function () { ticking = false; report(); });
   }, { passive: true });
   window.__mdScrollToFraction = function (f) {
-    var h = docHeight();
-    var vis = window.innerHeight;
-    var maxY = Math.max(h - vis, 0);
+    var maxY = scrollDimensions().maxY;
     // Top-anchored fraction of the scrollable range — the same units
     // report() emits, so a drive→echo round trip is the identity and the
     // panes agree at both ends of the document.
@@ -124,6 +142,7 @@
   }
   window.__mdSwapContent = function (html, rev) {
     document.body.innerHTML = html;
+    invalidateDimensions();
     window.__mdStampsInvalidate();
     if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }
     drawChangeMarkers();
@@ -144,6 +163,7 @@
     var tpl = document.createElement('template');
     tpl.innerHTML = htmlArray.join('');
     document.body.insertBefore(tpl.content, anchor);
+    invalidateDimensions();
     // Shift the surviving tail so its anchor block's first stamp equals the
     // target the host computed from the fresh render. The delta comes from
     // the LIVE stamps — the host's baseline can be stale by fast-path
