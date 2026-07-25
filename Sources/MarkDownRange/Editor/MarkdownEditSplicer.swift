@@ -41,6 +41,11 @@ enum MarkdownEditSplicer {
 		/// the item is indented, so the splice re-indents the new item to match
 		/// the one being continued.
 		var listBreak = false
+		/// The replacement ends a line with a hard break ("\\\n"). Whitespace
+		/// left at the start of the following line is stripped when rendered,
+		/// which would stamp that run at the whitespace instead of its first
+		/// character, so the splice swallows it.
+		var hardBreak = false
 	}
 
 	enum Outcome {
@@ -101,7 +106,18 @@ enum MarkdownEditSplicer {
 				caret = caret.map { $0 + (indent as NSString).length }
 			}
 		}
-		return .applied(text.replacingCharacters(in: range, with: replacement),
+		// A hard break takes the following line's leading whitespace with it: the
+		// renderer strips that whitespace, and a stamped run whose text has lost
+		// characters the source still has no longer addresses its own offset.
+		var spliceRange = range
+		if edit.hardBreak, replacement.hasSuffix("\n") {
+			var cursor = edit.end
+			while cursor < text.length, text.character(at: cursor) == 0x20 || text.character(at: cursor) == 0x09 {
+				cursor += 1
+			}
+			spliceRange = NSRange(location: edit.start, length: cursor - edit.start)
+		}
+		return .applied(text.replacingCharacters(in: spliceRange, with: replacement),
 						selection: caret.map { NSRange(location: $0, length: 0) })
 	}
 
@@ -160,5 +176,6 @@ extension MarkdownEditSplicer.Edit {
 		self.after = body["after"] as? String ?? ""
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
+		self.hardBreak = body["hardBreak"] as? Bool ?? false
 	}
 }

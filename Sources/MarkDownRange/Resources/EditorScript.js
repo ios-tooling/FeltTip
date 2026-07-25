@@ -632,6 +632,36 @@
       post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, listBreak: !!listMarker, rev: stampRev, seq: seq++ });
       return;
     }
+    // Paste: take the plain text only (markdown IS the rich form here) and
+    // splice it through the verified structural route, so a multi-line paste
+    // re-renders into real blocks instead of leaving pasted markup in the DOM
+    // that the source doesn't have.
+    // Paste: report the range and let the host read the clipboard. WebKit
+    // sanitizes the plain-text flavor on a paste's dataTransfer — a multi-line
+    // paste arrives here with its newlines already stripped — so the pasteboard
+    // itself is the only faithful source. Markdown IS the rich form, so plain
+    // text is all we ever want.
+    if (type === 'insertFromPaste') {
+      e.preventDefault();
+      var pasteHost = startPos.node.nodeType === 1 ? startPos.node : startPos.node.parentNode;
+      var inCell = !!(pasteHost && pasteHost.closest && pasteHost.closest('td, th'));
+      freeze();
+      post({ op: 'paste', inCell: inCell, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, before: before, after: after, rev: stampRev, seq: seq++ });
+      return;
+    }
+    // Shift-Enter: a hard break inside the paragraph. Written as a backslash
+    // break rather than two trailing spaces — invisible trailing whitespace
+    // makes the run it ends non-verbatim, which costs it its data-s stamp and
+    // leaves that text uneditable.
+    if (type === 'insertLineBreak') {
+      e.preventDefault();
+      var breakHost = startPos.node.nodeType === 1 ? startPos.node : startPos.node.parentNode;
+      if (breakHost && breakHost.closest && breakHost.closest('td, th')) { return; }
+      var hardBreak = '\\\n';
+      freeze();
+      post({ start: start, end: end, text: hardBreak, expected: expected, crossRun: crossRun, selected: selected, before: before, after: after, caret: start + hardBreak.length, hardBreak: true, rev: stampRev, seq: seq++ });
+      return;
+    }
     if (type === 'formatBold' || type === 'formatItalic' || type === 'formatStrikeThrough') {
       e.preventDefault();
       if (start === end) return;  // need a selection to wrap

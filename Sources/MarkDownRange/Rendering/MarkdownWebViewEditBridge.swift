@@ -78,7 +78,25 @@ extension MarkdownWebView.Coordinator {
 			return
 		}
 		log("message \(body)")
-		guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
+		var payload = body
+		// A paste carries no text: the page can't read the clipboard faithfully
+		// (WebKit sanitizes the plain-text flavor of a paste's dataTransfer, and
+		// a multi-line paste reaches the page with its newlines stripped), so it
+		// reports the range and the pasteboard's own string fills it in.
+		// Everything after this — revision gate, context verification,
+		// structural re-render — is the ordinary edit path.
+		if body["op"] as? String == "paste" {
+			guard let pasted = Self.pasteboardText(foldingNewlines: body["inCell"] as? Bool == true) else {
+				log("paste with nothing usable on the pasteboard")
+				if let token = body["seq"] as? Int {
+					webView?.evaluateJavaScript("window.__mdUnfreeze && window.__mdUnfreeze(\(token));", completionHandler: nil)
+				}
+				return
+			}
+			payload["text"] = pasted
+			payload["caret"] = (body["start"] as? Int ?? 0) + (pasted as NSString).length
+		}
+		guard let edit = MarkdownEditSplicer.Edit(body: payload) else { return }
 		// Revision gate. Every edit declares the source revision its offsets
 		// address. A pre-reseed straggler raced a reload/swap that already
 		// replaced its DOM — drop it. Any other mismatch means the page and
@@ -142,6 +160,20 @@ extension MarkdownWebView.Coordinator {
 			log("REJECTED at matching rev \(currentRev): \(reason)")
 			resync(caretAt: min(max(0, edit.start), (source as NSString).length))
 		}
+	}
+
+	/// The clipboard's plain text, with line endings normalized. Nil when there
+	/// is nothing pastable. Inside a table cell newlines fold to spaces: a
+	/// newline would shatter the row, and a cell can't show one anyway.
+	static func pasteboardText(foldingNewlines: Bool) -> String? {
+		guard let raw = NSPasteboard.general.string(forType: .string), !raw.isEmpty else { return nil }
+		var text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+		if foldingNewlines {
+			text = text.split(separator: "\n", omittingEmptySubsequences: true)
+				.map { $0.trimmingCharacters(in: .whitespaces) }
+				.joined(separator: " ")
+		}
+		return text.isEmpty ? nil : text
 	}
 
 	/// Splice a fresh empty row after the line containing `at` (a stamp from

@@ -49,11 +49,14 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
-	@Test func softLineBreakIsNotYetMapped() async throws {
+	@Test func listIndentIsNotYetMapped() async throws {
+		// Deliberately unmapped: indenting a list item correctly needs a rule
+		// for the parent marker's width (bullets and ordered items differ), so
+		// the command is dropped rather than guessed at.
 		let harness = try await CoordinatorBridgeHarness(source: Self.source)
 		try await expectNoOp([
-			"window.__mdPlaceCaret(5)",
-			"document.execCommand('insertLineBreak')",
+			"window.__mdPlaceCaret(16)",   // inside "one"
+			"document.execCommand('indent')",
 		], harness: harness)
 	}
 
@@ -71,40 +74,6 @@ import Testing
 		#expect(harness.source == "alphapasted beta\n\n- one\n- two\n")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.hardRejections == 0)
-	}
-
-	@Test func realPasteThroughWebKitIsNotYetMapped() async throws {
-		// A genuine ⌘V: WebKit's own paste: action, driven from the pasteboard,
-		// which arrives as inputType insertFromPaste. The bridge doesn't map
-		// that, so the keystroke is dropped — pasting into the styled view does
-		// nothing. Documented here (and asserted non-destructive) so that
-		// implementing paste has a test to flip.
-		let pasteboard = NSPasteboard.general
-		let saved = pasteboard.string(forType: .string)
-		defer {
-			pasteboard.clearContents()
-			if let saved { pasteboard.setString(saved, forType: .string) }
-		}
-		pasteboard.clearContents()
-		pasteboard.setString("PASTED", forType: .string)
-
-		let harness = try await CoordinatorBridgeHarness(source: Self.source)
-		try await harness.placeCaret(5)
-		harness.webView.window?.makeFirstResponder(harness.webView)
-		harness.webView.perform(NSSelectorFromString("paste:"), with: nil)
-		try await Task.sleep(for: .milliseconds(400))
-		#expect(!harness.source.contains("PASTED"), "paste reached the source unexpectedly — map it and update this test")
-		#expect(harness.source == Self.source)
-		#expect(harness.coordinator.hardRejections == 0)
-		#expect(try await harness.stampMismatches() == [])
-	}
-
-	@Test func listIndentCommandIsNotYetMapped() async throws {
-		let harness = try await CoordinatorBridgeHarness(source: Self.source)
-		try await expectNoOp([
-			"window.__mdPlaceCaret(16)",   // inside "one"
-			"document.execCommand('indent')",
-		], harness: harness)
 	}
 
 	@Test func typingInsideAFencedCodeBlockIsRefusedByTheReadOnlyIsland() async throws {
