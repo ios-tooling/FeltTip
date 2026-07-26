@@ -167,7 +167,8 @@ import Testing
 				+ "document.body.dispatchEvent(new InputEvent('input', { inputType: 'deleteByCut', bubbles: true })) }",
 		])
 		try await harness.waitForSourceEdits(1)
-		#expect(harness.source == "- `` that extends `LeafRenderObjectWidget`\n")
+		#expect(harness.source == "-  that extends `LeafRenderObjectWidget`\n")
+		try await harness.waitQuiescent()
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

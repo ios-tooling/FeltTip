@@ -50,5 +50,34 @@ import Testing
 	@Test func strikethroughAcrossMixedRunsWithBackwardSelection() async throws {
 		try await assertBackwardToggle(command: "strikeThrough")
 	}
+
+	@Test func everyMenuInlineCommandSafelyVetoesMixedRunSelections() async throws {
+		let commands: [MarkdownFormattingCommand] = [
+			.bold, .italic, .underline, .strikethrough, .inlineCode,
+			.highlight, .superscript, .subscriptText, .link,
+		]
+		for command in commands {
+			let source = "Alpha **Beta** Gamma"
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.batch([
+				"window.__mdPlaceCaret(12)",
+				"var selection = window.getSelection()",
+				"for (var index = 0; index < 10; index++) selection.modify('extend', 'backward', 'character')",
+				"window.__mdApplyFormat('\(command.rawValue)')",
+			])
+			try await harness.waitUntil("mixed \(command) veto") {
+				harness.coordinator.vetoedEdits == 1
+			}
+			#expect(harness.source == source, "mixed selection changed source for \(command)")
+			#expect(harness.sourceEditCount == 0)
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+
+			try await harness.type("Q", at: 0)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == "Q" + source)
+		}
+	}
 }
 #endif

@@ -17,10 +17,13 @@ import Testing
 	private func edit(_ start: Int, _ end: Int, text: String?, expected: String = "",
 					  before: String = "", after: String = "", caret: Int? = nil,
 					  crossRun: Bool = false, selected: Bool = false,
-					  marker: String? = nil, listBreak: Bool = false) -> MarkdownEditSplicer.Edit {
+					  marker: String? = nil, listBreak: Bool = false,
+					  syntaxStart: [String] = [], syntaxEnd: [String] = []) -> MarkdownEditSplicer.Edit {
 		MarkdownEditSplicer.Edit(start: start, end: end, replacement: text, wrapMarker: marker,
 								 expected: expected, crossRun: crossRun, selected: selected,
-								 before: before, after: after, caret: caret, listBreak: listBreak)
+								 before: before, after: after,
+								 syntaxStart: syntaxStart, syntaxEnd: syntaxEnd,
+								 caret: caret, listBreak: listBreak)
 	}
 
 	private func applied(_ outcome: MarkdownEditSplicer.Outcome) -> (String, NSRange?)? {
@@ -115,6 +118,36 @@ import Testing
 		let outcome = MarkdownEditSplicer.apply(
 			edit(1, 3, text: "", expected: "", crossRun: true, selected: false), to: "a\n\nb")
 		#expect(applied(outcome)?.0 == "ab")
+	}
+
+	@Test func cutConsumesNestedInlineAndLinkSyntax() {
+		let source = "[**Alpha**](https://example.com) Tail"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(
+				3, 8, text: "", expected: "Alpha", caret: 3, selected: true,
+				syntaxStart: ["strong", "a"], syntaxEnd: ["strong", "a"]),
+			to: source)
+		#expect(applied(outcome)?.0 == " Tail")
+		#expect(applied(outcome)?.1 == NSRange(location: 0, length: 0))
+	}
+
+	@Test func cutConsumesPaddedVariableLengthCodeDelimiters() {
+		let source = "`` `Alpha` `` Tail"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(
+				3, 10, text: "", expected: "`Alpha`", caret: 3, selected: true,
+				syntaxStart: ["code"], syntaxEnd: ["code"]),
+			to: source)
+		#expect(applied(outcome)?.0 == " Tail")
+	}
+
+	@Test func mismatchedCutBoundaryMetadataIsRejectedWithoutGuessing() {
+		let outcome = MarkdownEditSplicer.apply(
+			edit(
+				2, 7, text: "", expected: "Alpha", caret: 2, selected: true,
+				syntaxStart: ["strong"], syntaxEnd: ["strong"]),
+			to: "**Alpha_ Tail")
+		#expect(rejection(outcome)?.contains("syntax boundaries") == true)
 	}
 
 	// MARK: Wrap toggling
@@ -213,6 +246,9 @@ import Testing
 		#expect(minimal?.expected == "")
 		#expect(minimal?.crossRun == false)
 		#expect(minimal?.selected == false)
+		#expect(minimal?.syntaxStart == [])
+		#expect(minimal?.syntaxEnd == [])
+		#expect(minimal?.blockPrefixes == [])
 		#expect(minimal?.caret == nil)
 		#expect(minimal?.listBreak == false)
 	}
@@ -221,6 +257,18 @@ import Testing
 		let parsed = MarkdownEditSplicer.Edit(body: ["start": 3, "end": 3, "text": "\n- ", "caret": 6, "listBreak": true])
 		#expect(parsed?.listBreak == true)
 		#expect(parsed?.caret == 6)
+	}
+
+	@Test func bodyParsingReadsCutSyntaxBoundaries() {
+		let parsed = MarkdownEditSplicer.Edit(body: [
+			"start": 3, "end": 8,
+			"syntaxStart": ["strong", "a"],
+			"syntaxEnd": ["strong", "a"],
+			"blockPrefixes": ["list", "blockquote"],
+		])
+		#expect(parsed?.syntaxStart == ["strong", "a"])
+		#expect(parsed?.syntaxEnd == ["strong", "a"])
+		#expect(parsed?.blockPrefixes == ["list", "blockquote"])
 	}
 
 	@Test func nonEditMessagesDoNotParse() {

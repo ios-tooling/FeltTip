@@ -23,6 +23,8 @@ enum MarkdownEditSplicer {
 		var wrapMarker: String?
 		/// Toggle the range as inline code, choosing a safe backtick delimiter.
 		var inlineCode = false
+		/// Shared source-level formatting command used by menu actions.
+		var formatCommand: MarkdownFormattingCommand?
 		/// The text the DOM shows inside the range. Not checked for cross-run
 		/// edits: there the DOM omits the markdown syntax between runs.
 		var expected: String
@@ -35,6 +37,13 @@ enum MarkdownEditSplicer {
 		/// DOM text immediately before/after the range, within its runs.
 		var before: String
 		var after: String
+		/// Inline DOM elements whose complete visible start/end boundary was
+		/// selected by Cut. Their Markdown syntax is hidden from the range and
+		/// must be consumed with the visible text to avoid orphan delimiters.
+		var syntaxStart: [String] = []
+		var syntaxEnd: [String] = []
+		/// Block markers whose complete visible block was selected by Cut.
+		var blockPrefixes: [String] = []
 		/// Source offset to restore the caret to after a structural re-render;
 		/// nil for in-place edits, which keep the browser's own caret.
 		var caret: Int?
@@ -74,6 +83,20 @@ enum MarkdownEditSplicer {
 		}
 		if let reason = contextMismatch(edit, in: text) {
 			return .rejected(reason)
+		}
+		if let command = edit.formatCommand {
+			guard !edit.crossRun || command.supportsCrossRunSelection else {
+				return .rejected("format command \(command.rawValue) crosses rendered runs")
+			}
+			guard let change = MarkdownSourceFormatter.change(
+				in: source,
+				selection: range,
+				command: command) else {
+				return .rejected("format command \(command.rawValue) made no change")
+			}
+			return .applied(
+				text.replacingCharacters(in: change.range, with: change.replacement),
+				selection: change.selection)
 		}
 		if edit.inlineCode {
 			guard !edit.crossRun else {
@@ -135,6 +158,14 @@ enum MarkdownEditSplicer {
 		// renderer strips that whitespace, and a stamped run whose text has lost
 		// characters the source still has no longer addresses its own offset.
 		var spliceRange = range
+		if replacement.isEmpty, edit.selected,
+		   !edit.syntaxStart.isEmpty || !edit.syntaxEnd.isEmpty || !edit.blockPrefixes.isEmpty {
+			guard let expanded = syntaxExpandedDeletionRange(edit, range: range, in: text) else {
+				return .rejected("cut syntax boundaries do not match source")
+			}
+			spliceRange = expanded
+			caret = expanded.location
+		}
 		if edit.hardBreak, replacement.hasSuffix("\n") {
 			var cursor = edit.end
 			while cursor < text.length, text.character(at: cursor) == 0x20 || text.character(at: cursor) == 0x09 {
@@ -153,6 +184,188 @@ enum MarkdownEditSplicer {
 		var end = lineStart
 		while end < text.length, text.character(at: end) == 0x20 || text.character(at: end) == 0x09 { end += 1 }
 		return text.substring(with: NSRange(location: lineStart, length: end - lineStart))
+	}
+
+	private static func syntaxExpandedDeletionRange(
+		_ edit: Edit,
+		range: NSRange,
+		in text: NSString
+	) -> NSRange? {
+		var start = range.location
+		var end = range.upperBound
+		for tag in edit.syntaxStart {
+			switch tag {
+			case "strong":
+				guard consumeBefore(["**", "__"], cursor: &start, in: text) else { return nil }
+			case "em":
+				guard consumeBefore(["*", "_"], cursor: &start, in: text) else { return nil }
+			case "u":
+				guard consumeBefore(["<u>"], cursor: &start, in: text) else { return nil }
+			case "del":
+				guard consumeBefore(["~~"], cursor: &start, in: text) else { return nil }
+			case "mark":
+				guard consumeBefore(["=="], cursor: &start, in: text) else { return nil }
+			case "sup":
+				guard consumeBefore(["^"], cursor: &start, in: text) else { return nil }
+			case "sub":
+				guard consumeBefore(["~"], cursor: &start, in: text) else { return nil }
+			case "code":
+				guard consumeCodeDelimiterBefore(cursor: &start, in: text) else { return nil }
+			case "a":
+				guard consumeBefore(["["], cursor: &start, in: text) else { return nil }
+			default:
+				return nil
+			}
+		}
+		for prefix in edit.blockPrefixes {
+			switch prefix {
+			case "heading":
+				guard consumeHeadingPrefixBefore(cursor: &start, in: text) else { return nil }
+			case "list":
+				guard consumeListPrefixBefore(cursor: &start, in: text) else { return nil }
+			case "blockquote":
+				guard consumeBefore(["> ", ">"], cursor: &start, in: text) else { return nil }
+			default:
+				return nil
+			}
+		}
+		for tag in edit.syntaxEnd {
+			switch tag {
+			case "strong":
+				guard consumeAfter(["**", "__"], cursor: &end, in: text) else { return nil }
+			case "em":
+				guard consumeAfter(["*", "_"], cursor: &end, in: text) else { return nil }
+			case "u":
+				guard consumeAfter(["</u>"], cursor: &end, in: text) else { return nil }
+			case "del":
+				guard consumeAfter(["~~"], cursor: &end, in: text) else { return nil }
+			case "mark":
+				guard consumeAfter(["=="], cursor: &end, in: text) else { return nil }
+			case "sup":
+				guard consumeAfter(["^"], cursor: &end, in: text) else { return nil }
+			case "sub":
+				guard consumeAfter(["~"], cursor: &end, in: text) else { return nil }
+			case "code":
+				guard consumeCodeDelimiterAfter(cursor: &end, in: text) else { return nil }
+			case "a":
+				guard consumeLinkSuffix(cursor: &end, in: text) else { return nil }
+			default:
+				return nil
+			}
+		}
+		return NSRange(location: start, length: end - start)
+	}
+
+	private static func consumeBefore(
+		_ candidates: [String],
+		cursor: inout Int,
+		in text: NSString
+	) -> Bool {
+		for candidate in candidates {
+			let length = (candidate as NSString).length
+			guard cursor >= length else { continue }
+			if text.substring(with: NSRange(location: cursor - length, length: length)) == candidate {
+				cursor -= length
+				return true
+			}
+		}
+		return false
+	}
+
+	private static func consumeAfter(
+		_ candidates: [String],
+		cursor: inout Int,
+		in text: NSString
+	) -> Bool {
+		for candidate in candidates {
+			let length = (candidate as NSString).length
+			guard cursor + length <= text.length else { continue }
+			if text.substring(with: NSRange(location: cursor, length: length)) == candidate {
+				cursor += length
+				return true
+			}
+		}
+		return false
+	}
+
+	private static func consumeCodeDelimiterBefore(cursor: inout Int, in text: NSString) -> Bool {
+		var scan = cursor
+		if scan > 0, text.character(at: scan - 1) == 0x20 { scan -= 1 }
+		let contentEnd = scan
+		while scan > 0, text.character(at: scan - 1) == 0x60 { scan -= 1 }
+		guard scan < contentEnd else { return false }
+		cursor = scan
+		return true
+	}
+
+	private static func consumeCodeDelimiterAfter(cursor: inout Int, in text: NSString) -> Bool {
+		var scan = cursor
+		if scan < text.length, text.character(at: scan) == 0x20 { scan += 1 }
+		let contentStart = scan
+		while scan < text.length, text.character(at: scan) == 0x60 { scan += 1 }
+		guard scan > contentStart else { return false }
+		cursor = scan
+		return true
+	}
+
+	private static func consumeHeadingPrefixBefore(cursor: inout Int, in text: NSString) -> Bool {
+		var scan = cursor
+		guard scan > 0, isHorizontalSpace(text.character(at: scan - 1)) else { return false }
+		while scan > 0, isHorizontalSpace(text.character(at: scan - 1)) { scan -= 1 }
+		let hashesEnd = scan
+		while scan > 0, text.character(at: scan - 1) == 0x23, hashesEnd - scan < 6 { scan -= 1 }
+		guard scan < hashesEnd else { return false }
+		cursor = scan
+		return true
+	}
+
+	private static func consumeListPrefixBefore(cursor: inout Int, in text: NSString) -> Bool {
+		var lineStart = cursor
+		while lineStart > 0 {
+			let character = text.character(at: lineStart - 1)
+			if character == 0x0A || character == 0x0D { break }
+			lineStart -= 1
+		}
+		let prefix = text.substring(with: NSRange(location: lineStart, length: cursor - lineStart))
+		let expression = try! NSRegularExpression(
+			pattern: #"(?:[-+*][ \t]+(?:\[[ xX]\][ \t]+)?|[0-9]+[.)][ \t]+)$"#)
+		let full = NSRange(location: 0, length: (prefix as NSString).length)
+		guard let match = expression.firstMatch(in: prefix, range: full) else { return false }
+		cursor = lineStart + match.range.location
+		return true
+	}
+
+	private static func isHorizontalSpace(_ character: unichar) -> Bool {
+		character == 0x20 || character == 0x09
+	}
+
+	private static func consumeLinkSuffix(cursor: inout Int, in text: NSString) -> Bool {
+		guard cursor + 2 <= text.length,
+			  text.character(at: cursor) == 0x5D,
+			  text.character(at: cursor + 1) == 0x28 else { return false }
+		var scan = cursor + 2
+		var nested = 0
+		var escaped = false
+		while scan < text.length {
+			let character = text.character(at: scan)
+			if escaped {
+				escaped = false
+			} else if character == 0x5C {
+				escaped = true
+			} else if character == 0x28 {
+				nested += 1
+			} else if character == 0x29 {
+				if nested == 0 {
+					cursor = scan + 1
+					return true
+				}
+				nested -= 1
+			} else if character == 0x0A || character == 0x0D {
+				return false
+			}
+			scan += 1
+		}
+		return false
 	}
 
 	private static func contextMismatch(_ edit: Edit, in text: NSString) -> String? {
@@ -194,12 +407,18 @@ extension MarkdownEditSplicer.Edit {
 		self.end = end
 		self.wrapMarker = body["op"] as? String == "wrap" ? body["marker"] as? String : nil
 		self.inlineCode = body["op"] as? String == "inlineCode"
+		self.formatCommand = (body["op"] as? String == "format")
+			? (body["command"] as? String).flatMap(MarkdownFormattingCommand.init(rawValue:))
+			: nil
 		self.replacement = body["text"] as? String
 		self.expected = body["expected"] as? String ?? ""
 		self.crossRun = body["crossRun"] as? Bool ?? false
 		self.selected = body["selected"] as? Bool ?? false
 		self.before = body["before"] as? String ?? ""
 		self.after = body["after"] as? String ?? ""
+		self.syntaxStart = body["syntaxStart"] as? [String] ?? []
+		self.syntaxEnd = body["syntaxEnd"] as? [String] ?? []
+		self.blockPrefixes = body["blockPrefixes"] as? [String] ?? []
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
 		self.hardBreak = body["hardBreak"] as? Bool ?? false

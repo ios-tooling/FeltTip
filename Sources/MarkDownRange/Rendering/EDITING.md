@@ -64,11 +64,12 @@ pre-restore source — typing the undo straight back out.
 | Input | Route | Notes |
 | --- | --- | --- |
 | Typing, delete, forward/word delete | in-place | cross-run variants go structural |
-| ⌘X | in-place | cross-run variants go structural; falls back to the DOM selection when WebKit omits target ranges |
+| ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
 | Enter | structural | list items keep their **source** indentation (`listBreak`) |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
-| Format → As Code | structural | toggles inline-code delimiters; cross-run styled selections are blocked |
+| Format → inline styles / Link | structural | shared source formatter; inline cross-run selections are blocked |
+| Format → headings / quote / lists / rule | structural | expands to source line boundaries and supports multi-block selections |
 | ⇧Enter | structural | writes a `\` break, and swallows the next line's leading whitespace |
 | ⌘V | structural | host reads `NSPasteboard`; see below |
 | IME / dead keys / predictive text | reconciled | whole run diffed at `compositionend` |
@@ -121,3 +122,10 @@ markdown *is* the rich form. Inside a table cell newlines fold to spaces.
 A healthy session records **zero** resyncs, dropped edits and hard rejections;
 the suites assert those counters, so a regression that still "works" but churns
 shows up as a failure.
+
+Cut carries `syntaxStart`, `syntaxEnd`, and `blockPrefixes` only when the DOM
+selection owns the complete visible boundary of those elements. The splicer
+then verifies and consumes the adjacent source delimiters. This keeps cutting
+`**text**`, `[text](url)`, a heading, or a list item from leaving empty or
+unbalanced syntax. Boundary metadata that does not match the source is vetoed;
+it is never used as permission to guess.

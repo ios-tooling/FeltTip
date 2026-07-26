@@ -18,7 +18,8 @@ extension MarkdownHTMLRenderer {
 		// Append tags directly instead of rewrapping each run's string per
 		// formatting layer — the latter reallocates the growing run string once
 		// per trait/link/span, which dominated HTML generation on inline-heavy
-		// documents. Nesting (outer→inner): span > a > strong > em > code.
+		// documents. Nesting (outer→inner):
+		// span > a > strong > em > u > del > mark > sup/sub > code.
 		for run in attributed.runs {
 			// A hard line break arrives as a newline in the run text (which the
 			// NSTextView path renders literally). HTML collapses that to a
@@ -35,13 +36,24 @@ extension MarkdownHTMLRenderer {
 				result += "<a href=\"\(attributeValue(url.absoluteString, allowedSchemes: linkSchemes))\">"
 			}
 			let struck = run.strikethroughStyle != nil
+			let underlined = run.underlineStyle != nil
+			let highlighted = run.backgroundColor != nil && !traits.contains(.monospaced)
+			let baseline = run.baselineOffset ?? 0
 			if traits.contains(.bold) { result += "<strong>" }
 			if traits.contains(.italic) { result += "<em>" }
+			if underlined { result += "<u>" }
 			if struck { result += "<del>" }
+			if highlighted { result += "<mark>" }
+			if baseline > 0 { result += "<sup>" }
+			if baseline < 0 { result += "<sub>" }
 			if traits.contains(.monospaced) { result += "<code>" }
 			result += text
 			if traits.contains(.monospaced) { result += "</code>" }
+			if baseline < 0 { result += "</sub>" }
+			if baseline > 0 { result += "</sup>" }
+			if highlighted { result += "</mark>" }
 			if struck { result += "</del>" }
+			if underlined { result += "</u>" }
 			if traits.contains(.italic) { result += "</em>" }
 			if traits.contains(.bold) { result += "</strong>" }
 			if run.link != nil { result += "</a>" }

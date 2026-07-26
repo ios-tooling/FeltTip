@@ -77,7 +77,13 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	}
 
 	public func toggleCode() {
-		webView.evaluateJavaScript("window.__mdToggleInlineCode && window.__mdToggleInlineCode()", completionHandler: nil)
+		applyFormatting(.inlineCode)
+	}
+
+	public func applyFormatting(_ command: MarkdownFormattingCommand) {
+		webView.evaluateJavaScript(
+			"window.__mdApplyFormat && window.__mdApplyFormat('\(command.rawValue)')",
+			completionHandler: nil)
 	}
 
 	private var webViewIsFocused: Bool {

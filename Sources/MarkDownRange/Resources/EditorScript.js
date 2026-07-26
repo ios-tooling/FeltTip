@@ -528,8 +528,61 @@
       return live.toString();
     } catch (e) { return ''; }
   }
+  // Hidden Markdown delimiters are outside stamped text runs. When Cut owns
+  // the whole visible contents of an inline element, report which syntax
+  // boundaries were selected so the source splice can remove the delimiters
+  // too. Otherwise a successful Cut leaves `****`, `[](url)`, or one
+  // unbalanced half of a marker in the document.
+  function selectedSyntaxBoundaries(range, atStart) {
+    var node = atStart ? range.startContainer : range.endContainer;
+    var offset = atStart ? range.startOffset : range.endOffset;
+    var element = node.nodeType === 1 ? node : node.parentElement;
+    var tags = [];
+    while (element && element !== document.body) {
+      var tag = element.tagName ? element.tagName.toLowerCase() : '';
+      if (tag === 'strong' || tag === 'em' || tag === 'u' || tag === 'del' ||
+          tag === 'mark' || tag === 'sup' || tag === 'sub' ||
+          tag === 'code' || tag === 'a') {
+        var relative = textOffsetWithin(element, node, offset);
+        if (relative != null &&
+            (atStart ? relative === 0 : relative === textLength(element))) {
+          tags.push(tag);
+        }
+      }
+      element = element.parentElement;
+    }
+    return tags;
+  }
+  function selectedBlockPrefixes(range) {
+    var node = range.startContainer;
+    var element = node.nodeType === 1 ? node : node.parentElement;
+    var tags = [], foundListItem = false;
+    while (element && element !== document.body) {
+      var ownsVisibleText = false;
+      try {
+        var before = document.createRange();
+        before.selectNodeContents(element);
+        before.setEnd(range.startContainer, range.startOffset);
+        var after = document.createRange();
+        after.selectNodeContents(element);
+        after.setStart(range.endContainer, range.endOffset);
+        ownsVisibleText = before.toString().trim() === '' && after.toString().trim() === '';
+      } catch (e) {}
+      if (ownsVisibleText) {
+        var tag = element.tagName ? element.tagName.toLowerCase() : '';
+        if (/^h[1-6]$/.test(tag)) tags.push('heading');
+        else if (tag === 'li') { tags.push('list'); foundListItem = true; }
+        else if ((tag === 'ul' || tag === 'ol') && !foundListItem) {
+          tags.push('list');
+          foundListItem = true;
+        } else if (tag === 'blockquote') tags.push('blockquote');
+      }
+      element = element.parentElement;
+    }
+    return tags;
+  }
 
-  window.__mdToggleInlineCode = function () {
+  window.__mdApplyFormat = function (command) {
     if (frozen) { return false; }
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount) { return false; }
@@ -543,7 +596,8 @@
     var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);
     freeze();
     post({
-      op: 'inlineCode',
+      op: 'format',
+      command: command,
       start: start,
       end: end,
       expected: plain(range.toString()),
@@ -556,6 +610,9 @@
       seq: seq++
     });
     return true;
+  };
+  window.__mdToggleInlineCode = function () {
+    return window.__mdApplyFormat('inlineCode');
   };
 
   document.body.addEventListener('beforeinput', function (e) {
@@ -622,10 +679,20 @@
     }
     if (type === 'deleteContentBackward' || type === 'deleteContentForward' ||
         type === 'deleteWordBackward' || type === 'deleteWordForward' || type === 'deleteByCut') {
-      if (crossRun) {
+      var syntaxStart = type === 'deleteByCut' && selected
+        ? selectedSyntaxBoundaries(range, true) : [];
+      var syntaxEnd = type === 'deleteByCut' && selected
+        ? selectedSyntaxBoundaries(range, false) : [];
+      var blockPrefixes = type === 'deleteByCut' && selected
+        ? selectedBlockPrefixes(range) : [];
+      if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length) {
         e.preventDefault();
         freeze();
-        post({ start: start, end: end, text: '', expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start, rev: stampRev, seq: seq++ });
+        post({ start: start, end: end, text: '', expected: expected,
+               crossRun: crossRun, selected: selected, before: before, after: after,
+               syntaxStart: syntaxStart, syntaxEnd: syntaxEnd,
+               blockPrefixes: blockPrefixes,
+               caret: start, rev: stampRev, seq: seq++ });
         return;
       }
       queueFastEdit({ start: start, end: end, text: '', expected: expected, before: before, after: after },

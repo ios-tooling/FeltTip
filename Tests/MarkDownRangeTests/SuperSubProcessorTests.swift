@@ -55,4 +55,12 @@ import Testing
 		// `~ text~` shouldn't match — looks like a stray tilde, not subscript.
 		#expect(SuperSubProcessor.process("~ text~") == "~ text~")
 	}
+
+	@Test func superAndSubscriptSurviveHTMLRenderingForTheStyledPane() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "Use ^Big^ and ~Hello~",
+			includeSourceOffsets: true)
+		#expect(html.contains("<sup>Big</sup>"))
+		#expect(html.contains("<sub>Hello</sub>"))
+	}
 }

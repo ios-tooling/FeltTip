@@ -62,6 +62,13 @@ import Foundation
 		#expect(foundUnderline, "Underline should be applied")
 	}
 
+	@Test func underlineSurvivesHTMLRenderingForTheStyledPane() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "Some <u>underlined</u> text",
+			includeSourceOffsets: true)
+		#expect(html.contains("<u>underlined</u>"))
+	}
+
 	@Test func unknownTagIgnored() {
 		let attr = parseParagraph("Hello <unknown>world</unknown>")
 		let text = attr.map { String($0.characters) } ?? ""

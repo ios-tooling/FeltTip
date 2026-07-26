@@ -36,4 +36,11 @@ import Foundation
 		}
 		#expect(foundHighlight, "Highlighted text should have background color")
 	}
+
+	@Test func highlightSurvivesHTMLRenderingForTheStyledPane() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "Hello ==world==",
+			includeSourceOffsets: true)
+		#expect(html.contains("<span data-s=\"8\"><mark>world</mark></span>"))
+	}
 }
