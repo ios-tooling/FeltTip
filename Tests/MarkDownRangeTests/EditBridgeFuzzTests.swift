@@ -10,6 +10,7 @@
 //
 
 #if os(macOS)
+import Foundation
 import Testing
 @testable import MarkDownRange
 
@@ -75,6 +76,55 @@ struct SeededRNG: RandomNumberGenerator {
 		#expect(live == rendered, "source and DOM diverged after \(script)\nlive:     \(live)\nrendered: \(rendered)")
 	}
 
+	@Test(arguments: [UInt64(101), 202, 303, 404, 505])
+	func randomForwardAndBackwardSelectionReplacementsConverge(seed: UInt64) async throws {
+		var rng = SeededRNG(seed: seed)
+		let initial = Self.generateDocument(&rng)
+		let harness = try await CoordinatorBridgeHarness(source: initial)
+		var expected = initial
+		var edits = 0
+		var opLog: [String] = []
+
+		for _ in 0..<30 {
+			guard let run = try await Self.randomNonEmptyStampedRun(harness, &rng) else { break }
+			let lower = Int.random(in: 0..<run.length, using: &rng)
+			let selectedLength = Int.random(in: 1...(run.length - lower), using: &rng)
+			let start = run.base + lower
+			// Keep later random UTF-16 endpoints scalar-safe. Whole astral
+			// selections are covered explicitly by the selection matrix; a
+			// random offset between an emoji's surrogate halves is not a DOM
+			// character boundary and makes the expected NSString splice invalid.
+			let replacement = ["", "x", "YZ", "é"].randomElement(using: &rng)!
+			let backward = Bool.random(using: &rng)
+			opLog.append("\(backward ? "backward" : "forward") \(start)..<\(start + selectedLength) → \(replacement)")
+
+			var commands = ["window.__mdPlaceCaret(\(start), \(selectedLength))"]
+			if backward {
+				commands += [
+					"var selectedRange = window.getSelection().getRangeAt(0).cloneRange()",
+					"window.getSelection().setBaseAndExtent(selectedRange.endContainer, selectedRange.endOffset, selectedRange.startContainer, selectedRange.startOffset)",
+				]
+			}
+			let encoded = String(data: try! JSONEncoder().encode(replacement), encoding: .utf8)!
+			commands.append("document.execCommand('insertText', false, \(encoded))")
+			try await harness.batch(commands)
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			expected = (expected as NSString).replacingCharacters(
+				in: NSRange(location: start, length: selectedLength),
+				with: replacement)
+			#expect(harness.source == expected, "seed \(seed):\n\(opLog.joined(separator: "\n"))")
+		}
+
+		try await harness.waitQuiescent()
+		let script = "seed \(seed):\n" + opLog.joined(separator: "\n")
+		#expect(try await harness.stampMismatches() == [], "selection fuzz: \(script)")
+		#expect(harness.coordinator.hardRejections == 0, "selection fuzz: \(script)")
+		#expect(harness.coordinator.resyncCount == 0, "selection fuzz: \(script)")
+		#expect(harness.coordinator.vetoedEdits == 0, "selection fuzz: \(script)")
+		#expect(harness.coordinator.bridgeIncidents == [], "selection fuzz: \(script)")
+	}
+
 	static func generateDocument(_ rng: inout SeededRNG) -> String {
 		let words = ["alpha", "beta", "gamma", "delta", "words", "text", "sample"]
 		var blocks: [String] = []
@@ -107,6 +157,23 @@ struct SeededRNG: RandomNumberGenerator {
 		}
 		guard let run = runs.randomElement(using: &rng) else { return nil }
 		return run.0 + Int.random(in: 0...run.1, using: &rng)
+	}
+
+	static func randomNonEmptyStampedRun(
+		_ harness: CoordinatorBridgeHarness,
+		_ rng: inout SeededRNG
+	) async throws -> (base: Int, length: Int)? {
+		guard let raw = try await harness.evaluate("""
+			Array.from(document.querySelectorAll('[data-s]'))
+				.map(e => e.getAttribute('data-s') + ':' + e.textContent.length).join(',')
+			"""), !raw.isEmpty else { return nil }
+		let runs: [(Int, Int)] = raw.split(separator: ",").compactMap {
+			let parts = $0.split(separator: ":")
+			guard parts.count == 2, let base = Int(parts[0]), let length = Int(parts[1]),
+				  length > 0 else { return nil }
+			return (base, length)
+		}
+		return runs.randomElement(using: &rng)
 	}
 
 	static func plain(_ s: String) -> String {

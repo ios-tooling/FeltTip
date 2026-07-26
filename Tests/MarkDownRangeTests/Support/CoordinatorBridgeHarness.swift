@@ -22,6 +22,10 @@ final class CoordinatorBridgeHarness {
 	private(set) var sourceEditCount = 0
 	/// The post-edit caret hint delivered with the most recent onSourceEdit.
 	private(set) var lastCaretHint: Int?
+	/// Most recent selection report from the page, plus a count tests can wait
+	/// on across the selectionchange debounce.
+	private(set) var lastReportedSelection: NSRange?
+	private(set) var selectionReportCount = 0
 	let coordinator: MarkdownWebView.Coordinator
 	let webView: WKWebView
 	private let window: NSWindow
@@ -68,6 +72,10 @@ final class CoordinatorBridgeHarness {
 					self.wireRoundTrip(text: newText)
 					self.coordinator.load(into: self.webView)
 				}
+			}
+			.onSelectionChanged { [weak self] range in
+				self?.lastReportedSelection = range
+				self?.selectionReportCount += 1
 			}
 		if let checkboxToggle { view = view.onCheckboxToggle(checkboxToggle) }
 		coordinator.parent = view

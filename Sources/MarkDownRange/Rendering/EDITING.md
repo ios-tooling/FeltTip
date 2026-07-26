@@ -84,6 +84,8 @@ pre-restore source — typing the undo straight back out.
 
 **Not mapped** (blocked, no-ops): drag-and-drop text, list indent/outdent,
 formatting a cross-run selection that intersects hidden inline Markdown syntax,
+selections spanning table cells (their source interval owns pipe delimiters),
+selections whose endpoint touches a declared read-only island,
 non-verbatim inline code (for example a code span whose newlines were folded),
 anything else. A blocked input must leave the source untouched and the page
 usable — `EditBridgeUnmappedInputTests` and `EditBridgeMixedSelectionTests`

@@ -433,6 +433,25 @@
     if (!li) return null;
     return li.parentElement && li.parentElement.tagName === 'OL' ? '\n1. ' : '\n- ';
   }
+  function tableCellOf(node) {
+    var el = node && node.nodeType === 3 ? node.parentNode : node;
+    return el && el.closest ? el.closest('td, th') : null;
+  }
+  function readOnlyIslandOf(node) {
+    var el = node && node.nodeType === 3 ? node.parentNode : node;
+    return el && el.closest
+      ? el.closest('pre, .alert, details, .frontmatter, img, hr') : null;
+  }
+  function selectionTouchesReadOnlyIsland() {
+    var selection = window.getSelection();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return false;
+    var range = selection.getRangeAt(0);
+    var islands = document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr');
+    for (var i = 0; i < islands.length; i++) {
+      try { if (range.intersectsNode(islands[i])) return true; } catch (e) {}
+    }
+    return false;
+  }
   function post(msg) { window.webkit.messageHandlers.mdedit.postMessage(msg); }
   function installLinkOpenButtons() {
     if (!document.getElementById('md-link-open-button-style')) {
@@ -600,11 +619,20 @@
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount) { return false; }
     var range = sel.getRangeAt(0);
+    if (selectionTouchesReadOnlyIsland()) { return false; }
     var startPos = normalizePosition(range.startContainer, range.startOffset, true);
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     if (start == null || end == null || end < start) { return false; }
+    var startCell = tableCellOf(startPos.node);
+    var endCell = tableCellOf(endPos.node);
+    var startIsland = readOnlyIslandOf(startPos.node);
+    var endIsland = readOnlyIslandOf(endPos.node);
+    if (startIsland || endIsland ||
+        (!range.collapsed && startCell !== endCell && (startCell || endCell))) {
+      return false;
+    }
     var startSpan = spanOf(startPos.node, startPos.offset);
     var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);
     freeze();
@@ -654,11 +682,32 @@
       if (commandSel && commandSel.rangeCount) { range = commandSel.getRangeAt(0); }
     }
     if (!range) { e.preventDefault(); return; }
+    // WebKit truncates a beforeinput target range at contentEditable=false
+    // even when the actual selection continues into that island. Inspect the
+    // live selection before trusting the shortened target range.
+    if (selectionTouchesReadOnlyIsland()) { e.preventDefault(); return; }
     var startPos = normalizePosition(range.startContainer, range.startOffset, true);
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     if (start == null || end == null || end < start) { e.preventDefault(); return; }
+    var startCell = tableCellOf(startPos.node);
+    var endCell = tableCellOf(endPos.node);
+    var startIsland = readOnlyIslandOf(startPos.node);
+    var endIsland = readOnlyIslandOf(endPos.node);
+    if (startIsland || endIsland) {
+      e.preventDefault();
+      return;
+    }
+    // A DOM range can span cells, but its source interval necessarily owns
+    // the pipes between them. Letting typing, Cut, paste, or formatting use
+    // that interval silently turns a row into malformed Markdown. A selection
+    // touching two cells (or a cell and outside content) is an unmapped route:
+    // block it before WebKit mutates the DOM and keep the page live.
+    if (!range.collapsed && startCell !== endCell && (startCell || endCell)) {
+      e.preventDefault();
+      return;
+    }
     var type = e.inputType, expected = plain(rangeText(range));
     var startSpan = spanOf(startPos.node, startPos.offset);
     var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);

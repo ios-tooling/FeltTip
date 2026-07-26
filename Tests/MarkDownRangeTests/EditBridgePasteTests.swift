@@ -28,6 +28,32 @@ import Testing
 		try await body()
 	}
 
+	private func withClearedPasteboard(_ body: () async throws -> Void) async throws {
+		let pasteboard = NSPasteboard.general
+		let saved = pasteboard.string(forType: .string)
+		defer {
+			pasteboard.clearContents()
+			if let saved { pasteboard.setString(saved, forType: .string) }
+		}
+		pasteboard.clearContents()
+		try await body()
+	}
+
+	private func select(
+		_ harness: CoordinatorBridgeHarness,
+		start: Int,
+		length: Int,
+		backward: Bool = false
+	) async throws {
+		try await harness.run("""
+			window.__mdPlaceCaret(\(start), \(length))
+			\(backward ? """
+			var selectedRange = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().setBaseAndExtent(selectedRange.endContainer, selectedRange.endOffset, selectedRange.startContainer, selectedRange.startOffset)
+			""" : "")
+			""")
+	}
+
 	private func paste(into harness: CoordinatorBridgeHarness, at offset: Int) async throws {
 		try await harness.placeCaret(offset)
 		harness.webView.window?.makeFirstResponder(harness.webView)
@@ -144,6 +170,65 @@ import Testing
 		try await harness.type("Q", at: 5)
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "alphaQ beta\n")
+	}
+
+	@Test func appKitResponderChainCutDeletesAForwardOrBackwardSelectionAndCopiesIt() async throws {
+		let source = "Before [linked](https://example.com/a_(b)) and **bold** after Tail"
+		let selectedSource = "Before [linked](https://example.com/a_(b)) and **bold** after"
+		let range = (source as NSString).range(of: selectedSource)
+		let expected = (source as NSString).replacingCharacters(in: range, with: "")
+		for backward in [false, true] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(harness, start: range.location, length: range.length, backward: backward)
+			try await withClearedPasteboard {
+				harness.webView.window?.makeFirstResponder(harness.webView)
+				harness.webView.perform(NSSelectorFromString("cut:"), with: nil)
+				try await harness.waitForSourceEdits(1)
+				let copied = NSPasteboard.general.string(forType: .string) ?? ""
+				#expect(copied.contains("Before linked and bold after"))
+			}
+			#expect(harness.source == expected, "backward=\(backward)")
+			#expect(harness.lastCaretHint == 0)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+			try await harness.type("Q")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "Q Tail")
+		}
+	}
+
+	@Test func appKitCutAcrossLazyContinuationAndHTMLBreakUsesTheRealPasteboardRoute() async throws {
+		let source = """
+		2. **Timeline** - route<br />
+		This view is displayed when an item is selected. <br/>
+		When an event is visible, the user can access the ArticlePage.
+
+		Tail
+		"""
+		let selectedSource = """
+		This view is displayed when an item is selected. <br/>
+		When an event is visible, the user can access the
+		"""
+		let range = (source as NSString).range(of: selectedSource)
+		let expected = (source as NSString).replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length)
+		try await withClearedPasteboard {
+			harness.webView.window?.makeFirstResponder(harness.webView)
+			harness.webView.perform(NSSelectorFromString("cut:"), with: nil)
+			try await harness.waitForSourceEdits(1)
+			let copied = NSPasteboard.general.string(forType: .string) ?? ""
+			#expect(copied.contains("This view is displayed"))
+			#expect(copied.contains("the user can access the"))
+		}
+		#expect(harness.source == expected)
+		#expect(harness.lastCaretHint == range.location)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
 	}
 }
 #endif
