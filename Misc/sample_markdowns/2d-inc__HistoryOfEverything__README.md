@@ -77,6 +77,8 @@ As specified in the [docs](https://docs.flutter.io/flutter/rendering/RenderObjec
 
 The key override here is `paint()`:<br />
 &nbsp;&nbsp;&nbsp;&nbsp;the current `PaintingContext` exposes the `canvas`, and this class can draw, taking full advantage of the exposed API. <br />
+
+
 The [Flare library](https://pub.dartlang.org/packages/flare_flutter), granted access to the `canvas`, draws the animation.<br/>
 To have the animation reproduce correctly, it's also necessary to call `advance(elapsed)` on the current `FlutterActor` each frame. Moreover, the current `ActorAnimation` requires that the function `apply(time)` is called on it to display it's correct interpolated values.<br/>
 This is all made possible by relying on Flutter's `SchedulerBinding.scheduleFrameCallback()`.
