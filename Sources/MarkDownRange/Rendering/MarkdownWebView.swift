@@ -66,9 +66,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// Reports the selected source range when this (focused) page's selection
 	/// changes; nil for a collapsed selection. Feeds cross-pane mirroring.
 	var onSelectionChanged: ((NSRange?) -> Void)?
+	/// Reports the exact focused source range, including zero-length insertion
+	/// points, for transferring selection between editor modes.
+	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	/// A selection made in the OTHER pane, shown here as a highlight overlay
 	/// (CSS custom highlight — the page's real selection is untouched).
 	var mirroredSelection: NSRange?
+	/// Token-gated source selection installed when this view takes over from
+	/// another editor mode.
+	var selectionTarget: MarkdownSelectionTarget?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -181,10 +187,25 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Reports the mapped source selection, preserving collapsed insertion
+	/// points as zero-length ranges. Nil means the DOM position is unmappable.
+	public func onSourceSelectionChanged(_ callback: @escaping (NSRange?) -> Void) -> Self {
+		var copy = self
+		copy.onSourceSelectionChanged = callback
+		return copy
+	}
+
 	/// Show the other pane's selection as a non-invasive highlight overlay.
 	public func mirroredSelection(_ range: NSRange?) -> Self {
 		var copy = self
 		copy.mirroredSelection = range
+		return copy
+	}
+
+	/// Install a token-gated source selection when this editor is mounted.
+	public func selectionTarget(_ target: MarkdownSelectionTarget?) -> Self {
+		var copy = self
+		copy.selectionTarget = target
 		return copy
 	}
 
@@ -210,9 +231,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func updateNSView(_ host: MarkdownWebViewFindHost, context: Context) {
 		let webView = host.webView
 		context.coordinator.parent = self
-		// Pick up a pending caret restore (undo/redo) before the text-driven
-		// reload runs, so `didFinish` places the caret on the freshly stamped DOM.
+		// Pick up pending restores before the text-driven reload runs, so
+		// `didFinish` places them on the freshly stamped DOM.
 		context.coordinator.applyCaretTarget()
+		context.coordinator.applySelectionTarget(to: webView)
 		context.coordinator.load(into: webView)
 		context.coordinator.applyScrollControls(to: webView)
 		context.coordinator.applyMirroredSelection(to: webView)

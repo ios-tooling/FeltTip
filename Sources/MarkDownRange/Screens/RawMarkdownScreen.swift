@@ -17,9 +17,11 @@ public struct RawMarkdownScreen: View {
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	var onSourceEdit: ((String, Int) -> Void)?
 	var onSelectionChanged: ((NSRange?) -> Void)?
+	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	var mirroredSelection: NSRange?
 	var scrollToCharacterOffset: Int?
 	var caretTarget: MarkdownCaretTarget?
+	var selectionTarget: MarkdownSelectionTarget?
 
 	public init(
 		text: Binding<String>,
@@ -33,9 +35,11 @@ public struct RawMarkdownScreen: View {
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
 		onSourceEdit: ((String, Int) -> Void)? = nil,
 		onSelectionChanged: ((NSRange?) -> Void)? = nil,
+		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		mirroredSelection: NSRange? = nil,
 		scrollToCharacterOffset: Int? = nil,
-		caretTarget: MarkdownCaretTarget? = nil
+		caretTarget: MarkdownCaretTarget? = nil,
+		selectionTarget: MarkdownSelectionTarget? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -48,9 +52,11 @@ public struct RawMarkdownScreen: View {
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.onSourceEdit = onSourceEdit
 		self.onSelectionChanged = onSelectionChanged
+		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.mirroredSelection = mirroredSelection
 		self.scrollToCharacterOffset = scrollToCharacterOffset
 		self.caretTarget = caretTarget
+		self.selectionTarget = selectionTarget
 	}
 
 	public var body: some View {
@@ -67,9 +73,11 @@ public struct RawMarkdownScreen: View {
 			onCursorPositionChanged: onCursorPositionChanged,
 			onSourceEdit: onSourceEdit,
 			onSelectionChanged: onSelectionChanged,
+			onSourceSelectionChanged: onSourceSelectionChanged,
 			mirroredSelection: mirroredSelection,
 			scrollToCharacterOffset: scrollToCharacterOffset,
-			caretTarget: caretTarget
+			caretTarget: caretTarget,
+			selectionTarget: selectionTarget
 		)
 		#else
 		TextEditor(text: $text)

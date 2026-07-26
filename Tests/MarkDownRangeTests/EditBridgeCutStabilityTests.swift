@@ -99,6 +99,36 @@ import Testing
 		}
 	}
 
+	@Test func ordinarySelectionDeleteRemovesOwnedInlineAndBlockSyntax() async throws {
+		let cases: [(source: String, selected: String, expected: String)] = [
+			("**Alpha** Tail", "Alpha", " Tail"),
+			("~~Alpha~~ Tail", "Alpha", " Tail"),
+			("`Alpha` Tail", "Alpha", " Tail"),
+			("[Alpha](https://example.com) Tail", "Alpha", " Tail"),
+			("# Alpha\n\nTail", "Alpha", "\n\nTail"),
+			("> Alpha\n\nTail", "Alpha", "\n\nTail"),
+			("- Alpha\n\nTail", "Alpha", "\n\nTail"),
+		]
+		for command in ["delete", "forwardDelete"] {
+			for item in cases {
+				let range = (item.source as NSString).range(of: item.selected)
+				let harness = try await CoordinatorBridgeHarness(source: item.source)
+				try await harness.batch([
+					"window.__mdPlaceCaret(\(range.location), \(range.length))",
+					"document.execCommand('\(command)')",
+				])
+				try await harness.waitForSourceEdits(1)
+				try await harness.waitQuiescent()
+				#expect(harness.source == item.expected,
+					"command=\(command), source=\(item.source)")
+				#expect(try await harness.stampMismatches() == [],
+					"command=\(command), source=\(item.source)")
+				#expect(harness.coordinator.resyncCount == 0)
+				#expect(harness.coordinator.hardRejections == 0)
+			}
+		}
+	}
+
 	@Test func backwardCutAcrossAStyledBoundaryKeepsMarkersBalanced() async throws {
 		try await assertCut(
 			source: "Alpha **Beta** Gamma Tail",

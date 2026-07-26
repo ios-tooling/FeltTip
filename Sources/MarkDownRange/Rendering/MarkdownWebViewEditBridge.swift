@@ -35,10 +35,13 @@ extension MarkdownWebView.Coordinator {
 			return
 		}
 		if body["type"] as? String == "selection" {
-			log("selection message start=\(body["start"] ?? "nil") length=\(body["length"] ?? "nil") handler=\(parent.onSelectionChanged != nil)")
-			if let start = body["start"] as? Int, let length = body["length"] as? Int, length > 0 {
-				parent.onSelectionChanged?(NSRange(location: start, length: length))
+			log("selection message start=\(body["start"] ?? "nil") length=\(body["length"] ?? "nil") handler=\(parent.onSelectionChanged != nil || parent.onSourceSelectionChanged != nil)")
+			if let start = body["start"] as? Int, let length = body["length"] as? Int {
+				let range = NSRange(location: start, length: length)
+				parent.onSourceSelectionChanged?(range)
+				parent.onSelectionChanged?(length > 0 ? range : nil)
 			} else {
+				parent.onSourceSelectionChanged?(nil)
 				parent.onSelectionChanged?(nil)
 			}
 			return

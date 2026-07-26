@@ -24,6 +24,7 @@
   // insertReplacementText — and a single slot dropped all but the last
   // edit, desyncing the source and getting the batch rejected.
   var pendingEdits = [];
+  var pendingEditWatchdog = null;
   // A structural edit or desync was posted; swallow input until the host's
   // re-render (which reinjects this script) so nothing maps from a source
   // that's about to change shape. Holds { token } while frozen; if the
@@ -307,16 +308,16 @@
   // Report selection changes as source offsets for cross-pane mirroring;
   // only while this page is focused, so the mirror always reflects the
   // pane the user is actually working in.
-  function reportSelection() {
-    if (!document.hasFocus()) { return; }
+  function reportSelection(force) {
+    if (!force && !document.hasFocus()) { return; }
     var sel = window.getSelection();
-    if (!sel || !sel.rangeCount || sel.isCollapsed) { post({ type: 'selection' }); return; }
+    if (!sel || !sel.rangeCount) { post({ type: 'selection' }); return; }
     var r = sel.getRangeAt(0);
     var startPos = normalizePosition(r.startContainer, r.startOffset, true);
     var endPos = normalizePosition(r.endContainer, r.endOffset, r.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
-    if (start == null || end == null || end <= start) { post({ type: 'selection' }); return; }
+    if (start == null || end == null || end < start) { post({ type: 'selection' }); return; }
     post({ type: 'selection', start: start, length: end - start });
   }
   var selectionReportTimer = null;
@@ -344,6 +345,16 @@
     // Deferred: during the focus event document.hasFocus() can still be
     // false, which would swallow the report inside reportSelection().
     setTimeout(reportSelection, 0);
+  });
+  // A mode-picker click can move focus before the debounced selectionchange
+  // report fires. Publish the final live range during blur while WebKit still
+  // owns it, so the incoming raw/styled editor receives the exact handoff.
+  window.addEventListener('blur', function () {
+    if (selectionReportTimer) {
+      clearTimeout(selectionReportTimer);
+      selectionReportTimer = null;
+    }
+    reportSelection(true);
   });
   // Restore the caret — or, with a length, the full selection (style
   // toggles keep their selection alive) — after a structural re-render.
@@ -741,11 +752,15 @@
     }
     if (type === 'deleteContentBackward' || type === 'deleteContentForward' ||
         type === 'deleteWordBackward' || type === 'deleteWordForward' || type === 'deleteByCut') {
-      var syntaxStart = type === 'deleteByCut' && selected
+      // Any selected deletion owns the same complete visible boundaries as
+      // Cut. Without this metadata Delete/Backspace on a whole styled block
+      // removes its text but leaves hidden Markdown markers such as "# " or
+      // "** **" behind.
+      var syntaxStart = selected
         ? selectedSyntaxBoundaries(range, true) : [];
-      var syntaxEnd = type === 'deleteByCut' && selected
+      var syntaxEnd = selected
         ? selectedSyntaxBoundaries(range, false) : [];
-      var blockPrefixes = type === 'deleteByCut' && selected
+      var blockPrefixes = selected
         ? selectedBlockPrefixes(range) : [];
       if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length) {
         e.preventDefault();
@@ -857,8 +872,26 @@
     pendingEdits.push(msg);
     shiftStamps(start, delta, span);
     stampRev += 1;
+    // A permitted beforeinput should always be followed by input after WebKit
+    // mutates the DOM. Alternate responder/script routes can violate that
+    // pairing. Never let their abandoned edit and eagerly shifted stamps leak
+    // into the next real keystroke: give the current turn a chance to deliver
+    // input, then force a clean source render if it did not.
+    if (!pendingEditWatchdog) {
+      pendingEditWatchdog = setTimeout(function () {
+        pendingEditWatchdog = null;
+        if (!pendingEdits.length) return;
+        pendingEdits = [];
+        freeze();
+        post({ type: 'desync' });
+      }, 0);
+    }
   }
   document.body.addEventListener('input', function () {
+    if (pendingEditWatchdog) {
+      clearTimeout(pendingEditWatchdog);
+      pendingEditWatchdog = null;
+    }
     while (pendingEdits.length) {
       post(pendingEdits.shift());
     }

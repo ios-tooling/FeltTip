@@ -60,6 +60,14 @@ import Testing
 		harness.webView.perform(NSSelectorFromString("paste:"), with: nil)
 	}
 
+	private func performResponderCommand(
+		_ command: String,
+		in harness: CoordinatorBridgeHarness
+	) {
+		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
+	}
+
 	@Test func pastingPlainTextSplicesItAtTheCaret() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
 		try await withPasteboard("PASTED") {
@@ -225,6 +233,224 @@ import Testing
 		}
 		#expect(harness.source == expected)
 		#expect(harness.lastCaretHint == range.location)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func responderCopyThenPasteDuplicatesAStyledSelectionWithoutCopyMutatingSource() async throws {
+		let source = "Intro alpha **bold** and [link](https://example.com) tail"
+		let selectedSource = "alpha **bold** and [link](https://example.com)"
+		let range = (source as NSString).range(of: selectedSource)
+		let destination = (source as NSString).range(of: "tail").location
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length)
+
+		try await withClearedPasteboard {
+			performResponderCommand("copy", in: harness)
+			try await Task.sleep(for: .milliseconds(80))
+			#expect(harness.source == source)
+			#expect(harness.sourceEditCount == 0)
+			let copied = try #require(NSPasteboard.general.string(forType: .string))
+			#expect(copied == "alpha bold and link")
+
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(1)
+			let expected = (source as NSString).replacingCharacters(
+				in: NSRange(location: destination, length: 0), with: copied)
+			#expect(harness.source == expected)
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesAChunkToANewPositionInTheSameRun() async throws {
+		let source = "zero alpha beta gamma omega"
+		let moved = "alpha beta "
+		let range = (source as NSString).range(of: moved)
+		let afterCut = (source as NSString).replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length, backward: true)
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			#expect(NSPasteboard.general.string(forType: .string) == moved)
+			try await harness.waitQuiescent()
+
+			let destination = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "zero gamma alpha beta omega")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesTextBetweenTableCellsWithoutDamagingPipes() async throws {
+		let source = """
+			| Name | Age |
+			| --- | --- |
+			| Alice | 30 |
+			| Bob | 41 |
+			"""
+		let alice = (source as NSString).range(of: "Alice")
+		let afterCut = (source as NSString).replacingCharacters(in: alice, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: alice.location, length: alice.length)
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			#expect(NSPasteboard.general.string(forType: .string) == "Alice")
+			try await harness.waitQuiescent()
+
+			let bob = (afterCut as NSString).range(of: "Bob")
+			try await paste(into: harness, at: bob.location)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == """
+				| Name | Age |
+				| --- | --- |
+				|  | 30 |
+				| AliceBob | 41 |
+				""")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("String(document.querySelectorAll('table').length)") == "1")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.source.split(separator: "\n").allSatisfy {
+			$0.filter { $0 == "|" }.count == 3
+		})
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesAMultiBlockChunkAndLeavesTheNextEditUsable() async throws {
+		let source = "First paragraph\n\nSecond paragraph\n\nThird paragraph\n\nTail"
+		let movedSource = "Second paragraph\n\nThird paragraph"
+		let range = (source as NSString).range(of: movedSource)
+		let afterCut = (source as NSString).replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		var pasted = ""
+		try await select(harness, start: range.location, length: range.length)
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			let copied = try #require(NSPasteboard.general.string(forType: .string))
+			pasted = copied
+			#expect(copied.contains("Second paragraph"))
+			#expect(copied.contains("Third paragraph"))
+			try await harness.waitQuiescent()
+
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == copied + afterCut)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == pasted + "Q" + afterCut)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllResponderCutRemovesHiddenBlockSyntaxAndPasteRebuildsPlainText() async throws {
+		let source = "# Heading\n\nAlpha **bold** text.\n\n> Quote\n\n- one\n- two"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("document.execCommand('selectAll')")
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source.isEmpty)
+			let copied = try #require(NSPasteboard.general.string(forType: .string))
+			#expect(copied.contains("Heading"))
+			#expect(copied.contains("Alpha bold text."))
+			#expect(copied.contains("one"))
+			try await harness.waitQuiescent()
+
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == copied)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source.hasSuffix("Q"))
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func pasteIssuedBeforeACutPatchSettlesIsIgnoredRatherThanAppliedAtStaleOffsets() async throws {
+		let source = "zero **move-this** chunk omega"
+		let moved = (source as NSString).range(of: "move-this")
+		let afterCut = "zero  chunk omega"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: moved.location, length: moved.length)
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			// The cut freezes the old DOM synchronously. A nearly simultaneous
+			// paste must not address that old selection.
+			performResponderCommand("paste", in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await Task.sleep(for: .milliseconds(150))
+			#expect(harness.source == afterCut)
+			#expect(harness.sourceEditCount == 1)
+			#expect(NSPasteboard.general.string(forType: .string) == "move-this")
+			try await harness.waitQuiescent()
+
+			let omega = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: omega)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "zero  chunk move-thisomega")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func immediatePasteAfterAPlainFastPathCutRoundTripsWithoutDivergence() async throws {
+		let source = "zero move-this chunk omega"
+		let moved = (source as NSString).range(of: "move-this ")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: moved.location, length: moved.length)
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			performResponderCommand("paste", in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+			#expect(NSPasteboard.general.string(forType: .string) == "move-this ")
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == "zero move-this Qchunk omega")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func pasteNormalizesMixedLineEndingsAndPreservesTabsAndUnicode() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Start\n")
+		try await withPasteboard("\tTabbed\r\nLine 😀\rCombining e\u{301}") {
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "Start\tTabbed\nLine 😀\nCombining e\u{301}\n")
 		try await harness.waitQuiescent()
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)

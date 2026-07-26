@@ -30,12 +30,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	/// selection changes; nil for a collapsed selection. Feeds the split
 	/// view's cross-pane selection mirroring.
 	var onSelectionChanged: ((NSRange?) -> Void)?
+	/// Reports the exact focused source range, including zero-length insertion
+	/// points. Unlike `onSelectionChanged`, this is for editor handoff rather
+	/// than cross-pane highlighting.
+	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	/// A selection made in the OTHER pane, shown here as an inactive-selection
 	/// highlight (temporary layout attributes — the real selection, text
 	/// storage, and undo state are untouched).
 	var mirroredSelection: NSRange?
 	var scrollToCharacterOffset: Int?
 	var caretTarget: MarkdownCaretTarget?
+	/// Token-gated source selection installed when this editor takes over from
+	/// another mode. Applied even before first-responder handoff completes.
+	var selectionTarget: MarkdownSelectionTarget?
 
 	public init(
 		text: Binding<String>,
@@ -49,9 +56,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
 		onSourceEdit: ((String, Int) -> Void)? = nil,
 		onSelectionChanged: ((NSRange?) -> Void)? = nil,
+		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		mirroredSelection: NSRange? = nil,
 		scrollToCharacterOffset: Int? = nil,
-		caretTarget: MarkdownCaretTarget? = nil
+		caretTarget: MarkdownCaretTarget? = nil,
+		selectionTarget: MarkdownSelectionTarget? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -64,9 +73,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.onSourceEdit = onSourceEdit
 		self.onSelectionChanged = onSelectionChanged
+		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.mirroredSelection = mirroredSelection
 		self.scrollToCharacterOffset = scrollToCharacterOffset
 		self.caretTarget = caretTarget
+		self.selectionTarget = selectionTarget
 	}
 
 	public func makeNSView(context: Context) -> NSScrollView {
@@ -217,6 +228,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				textView.setSelectedRange(NSRange(location: clamped, length: 0))
 				textView.scrollRangeToVisible(NSRange(location: clamped, length: 0))
 			}
+		}
+
+		if let target = selectionTarget,
+		   target.token != context.coordinator.lastSelectionTargetToken {
+			context.coordinator.lastSelectionTargetToken = target.token
+			let length = (textView.string as NSString).length
+			let location = min(max(0, target.range.location), length)
+			let selectedLength = min(max(0, target.range.length), length - location)
+			let range = NSRange(location: location, length: selectedLength)
+			textView.setSelectedRange(range)
+			textView.scrollRangeToVisible(range)
 		}
 
 		applyMirroredSelection(to: textView, coordinator: context.coordinator)
@@ -405,6 +427,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastAppliedFraction: Double = -1
 		var lastScrolledOffset: Int = -1
 		var lastCaretToken: Int?
+		var lastSelectionTargetToken: Int?
 		var isSyncScroll = false
 		/// Last bounds origin reported as a scroll. `boundsDidChange` also
 		/// fires when TextKit's document-height estimate flaps during layout
@@ -552,8 +575,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			   stale.location + stale.length <= (textView.string as NSString).length {
 				textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
 			}
-			guard parent.onSelectionChanged != nil else { return }
 			let range = textView.selectedRange()
+			parent.onSourceSelectionChanged?(range)
 			parent.onSelectionChanged?(range.length > 0 ? range : nil)
 		}
 
@@ -561,8 +584,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard !isUpdatingFromSwiftUI, let tv = notification.object as? NSTextView else { return }
 			if parent.typewriterMode { centerCursor(in: tv) }
 			reportCursorPosition(in: tv)
-			if parent.onSelectionChanged != nil, tv.window?.firstResponder === tv {
+			if tv.window?.firstResponder === tv {
 				let range = tv.selectedRange()
+				parent.onSourceSelectionChanged?(range)
 				parent.onSelectionChanged?(range.length > 0 ? range : nil)
 			}
 		}

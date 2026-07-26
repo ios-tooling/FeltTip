@@ -125,6 +125,108 @@ struct SeededRNG: RandomNumberGenerator {
 		#expect(harness.coordinator.bridgeIncidents == [], "selection fuzz: \(script)")
 	}
 
+	@Test(arguments: [UInt64(7001), 7002, 7003])
+	func randomCrossBlockChunkEditsStaySynchronized(seed: UInt64) async throws {
+		var rng = SeededRNG(seed: seed)
+		var expected = (0..<10)
+			.map { "paragraph \($0) alpha beta gamma delta" }
+			.joined(separator: "\n\n")
+		let harness = try await CoordinatorBridgeHarness(source: expected)
+		var edits = 0
+		var log: [String] = []
+
+		for _ in 0..<8 {
+			let runs = try await Self.nonEmptyStampedRuns(harness)
+			guard runs.count >= 2 else { break }
+			let firstIndex = Int.random(in: 0..<(runs.count - 1), using: &rng)
+			let lastIndex = Int.random(in: (firstIndex + 1)..<runs.count, using: &rng)
+			let first = runs[firstIndex], last = runs[lastIndex]
+			let start = first.base + Int.random(in: 0..<first.length, using: &rng)
+			let end = last.base + Int.random(in: 1...last.length, using: &rng)
+			guard end > start else { continue }
+			let replacement = ["X", "moved chunk", "inserted text"]
+				.randomElement(using: &rng)!
+			let backward = Bool.random(using: &rng)
+			log.append("\(backward ? "backward" : "forward") \(start)..<\(end) → \(replacement)")
+
+			var commands = ["window.__mdPlaceCaret(\(start), \(end - start))"]
+			if backward {
+				commands += [
+					"var r = window.getSelection().getRangeAt(0).cloneRange()",
+					"window.getSelection().setBaseAndExtent(r.endContainer, r.endOffset, r.startContainer, r.startOffset)",
+				]
+			}
+			let encoded = String(data: try! JSONEncoder().encode(replacement), encoding: .utf8)!
+			commands.append("document.execCommand('insertText', false, \(encoded))")
+			try await harness.batch(commands)
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			expected = (expected as NSString).replacingCharacters(
+				in: NSRange(location: start, length: end - start),
+				with: replacement)
+			#expect(harness.source == expected,
+				"seed \(seed):\n\(log.joined(separator: "\n"))")
+			try await harness.waitQuiescent()
+		}
+
+		let script = "seed \(seed):\n" + log.joined(separator: "\n")
+		#expect(try await harness.stampMismatches() == [], "cross-block fuzz: \(script)")
+		#expect(harness.coordinator.resyncCount == 0, "cross-block fuzz: \(script)")
+		#expect(harness.coordinator.hardRejections == 0, "cross-block fuzz: \(script)")
+		#expect(harness.coordinator.bridgeIncidents == [], "cross-block fuzz: \(script)")
+	}
+
+	@Test(arguments: [UInt64(8101), 8102, 8103])
+	func randomTableCellEditSessionsNeverDamageStructure(seed: UInt64) async throws {
+		var rng = SeededRNG(seed: seed)
+		var expected = """
+			| Name | Role | Score |
+			| --- | --- | --- |
+			| Alice | Writer | 30 |
+			| Bob | Editor | 41 |
+			| Carol | Tester | 52 |
+			"""
+		let harness = try await CoordinatorBridgeHarness(source: expected)
+		var edits = 0
+		var log: [String] = []
+
+		for _ in 0..<15 {
+			let runs = try await Self.tableCellStampedRuns(harness)
+			guard let run = runs.randomElement(using: &rng) else { break }
+			let lower = Int.random(in: 0..<run.length, using: &rng)
+			let selectedLength = Int.random(in: 0...(run.length - lower), using: &rng)
+			let start = run.base + lower
+			let replacement = ["", "X", "cell", "42"].randomElement(using: &rng)!
+			if selectedLength == 0 && replacement.isEmpty { continue }
+			log.append("\(start)..<\(start + selectedLength) → \(replacement)")
+
+			let encoded = String(data: try! JSONEncoder().encode(replacement), encoding: .utf8)!
+			try await harness.batch([
+				"window.__mdPlaceCaret(\(start), \(selectedLength))",
+				"document.execCommand('insertText', false, \(encoded))",
+			])
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			expected = (expected as NSString).replacingCharacters(
+				in: NSRange(location: start, length: selectedLength),
+				with: replacement)
+			#expect(harness.source == expected,
+				"seed \(seed):\n\(log.joined(separator: "\n"))")
+			#expect(expected.split(separator: "\n").allSatisfy {
+				$0.filter { $0 == "|" }.count == 4
+			})
+			try await harness.waitQuiescent()
+		}
+
+		let script = "seed \(seed):\n" + log.joined(separator: "\n")
+		#expect(try await harness.evaluate("String(document.querySelectorAll('table').length)") == "1",
+			"table fuzz: \(script)")
+		#expect(try await harness.stampMismatches() == [], "table fuzz: \(script)")
+		#expect(harness.coordinator.resyncCount == 0, "table fuzz: \(script)")
+		#expect(harness.coordinator.hardRejections == 0, "table fuzz: \(script)")
+		#expect(harness.coordinator.bridgeIncidents == [], "table fuzz: \(script)")
+	}
+
 	static func generateDocument(_ rng: inout SeededRNG) -> String {
 		let words = ["alpha", "beta", "gamma", "delta", "words", "text", "sample"]
 		var blocks: [String] = []
@@ -174,6 +276,36 @@ struct SeededRNG: RandomNumberGenerator {
 			return (base, length)
 		}
 		return runs.randomElement(using: &rng)
+	}
+
+	static func nonEmptyStampedRuns(
+		_ harness: CoordinatorBridgeHarness
+	) async throws -> [(base: Int, length: Int)] {
+		let raw = try await harness.evaluate("""
+			Array.from(document.querySelectorAll('[data-s]'))
+			  .map(e => e.getAttribute('data-s') + ':' + e.textContent.length).join(',')
+			""") ?? ""
+		return raw.split(separator: ",").compactMap {
+			let parts = $0.split(separator: ":")
+			guard parts.count == 2, let base = Int(parts[0]), let length = Int(parts[1]),
+			      length > 0 else { return nil }
+			return (base, length)
+		}.sorted { $0.base < $1.base }
+	}
+
+	static func tableCellStampedRuns(
+		_ harness: CoordinatorBridgeHarness
+	) async throws -> [(base: Int, length: Int)] {
+		let raw = try await harness.evaluate("""
+			Array.from(document.querySelectorAll('th [data-s], td [data-s]'))
+			  .map(e => e.getAttribute('data-s') + ':' + e.textContent.length).join(',')
+			""") ?? ""
+		return raw.split(separator: ",").compactMap {
+			let parts = $0.split(separator: ":")
+			guard parts.count == 2, let base = Int(parts[0]), let length = Int(parts[1]),
+			      length > 0 else { return nil }
+			return (base, length)
+		}
 	}
 
 	static func plain(_ s: String) -> String {

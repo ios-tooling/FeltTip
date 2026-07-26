@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import Foundation
 
 /// A scroll request expressed as a fraction of the document's rendered height,
 /// paired with a token. The token is what makes the request distinct across
@@ -47,6 +48,21 @@ public struct MarkdownCaretTarget: Equatable, Sendable {
 
 	public init(offset: Int, token: Int) {
 		self.offset = offset
+		self.token = token
+	}
+}
+
+/// A request to install a source selection in an editor, paired with a token
+/// so switching views can restore the same range repeatedly. Unlike
+/// `MarkdownCaretTarget` (undo/redo, focused-editor only), this is intended for
+/// editor handoff: the incoming editor applies it even while it is mounting.
+/// A zero length represents an insertion point.
+public struct MarkdownSelectionTarget: Equatable, Sendable {
+	public let range: NSRange
+	public let token: Int
+
+	public init(range: NSRange, token: Int) {
+		self.range = range
 		self.token = token
 	}
 }

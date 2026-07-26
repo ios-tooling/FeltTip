@@ -38,11 +38,11 @@ enum MarkdownEditSplicer {
 		var before: String
 		var after: String
 		/// Inline DOM elements whose complete visible start/end boundary was
-		/// selected by Cut. Their Markdown syntax is hidden from the range and
+		/// selected by a deletion. Their Markdown syntax is hidden from the range and
 		/// must be consumed with the visible text to avoid orphan delimiters.
 		var syntaxStart: [String] = []
 		var syntaxEnd: [String] = []
-		/// Block markers whose complete visible block was selected by Cut.
+		/// Block markers whose complete visible block was selected for deletion.
 		var blockPrefixes: [String] = []
 		/// Source offset to restore the caret to after a structural re-render;
 		/// nil for in-place edits, which keep the browser's own caret.

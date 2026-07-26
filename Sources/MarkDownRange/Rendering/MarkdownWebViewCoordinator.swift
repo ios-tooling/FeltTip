@@ -72,6 +72,8 @@ extension MarkdownWebView {
 		/// Caret-restore token already applied, so a binding that survives
 		/// unrelated re-renders doesn't re-place the caret.
 		private var lastCaretToken: Int?
+		/// Selection-handoff token already applied.
+		private var lastSelectionTargetToken: Int?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
 		/// Renders happen off the main actor; each new render bumps this and a
@@ -443,6 +445,25 @@ extension MarkdownWebView {
 			guard isFirstResponder else { return }
 			lastCaretToken = target.token
 			pendingSelection = NSRange(location: target.offset, length: 0)
+			selfEdit = nil
+		}
+
+		/// Install a selection handed off by another editor mode. A newly
+		/// mounted web view keeps it pending until its first stamped render;
+		/// an already-rendered view can apply it immediately.
+		func applySelectionTarget(to webView: WKWebView) {
+			guard let target = parent.selectionTarget,
+			      target.token != lastSelectionTargetToken else { return }
+			lastSelectionTargetToken = target.token
+			let sourceLength = (parent.text as NSString).length
+			let location = min(max(0, target.range.location), sourceLength)
+			let length = min(max(0, target.range.length), sourceLength - location)
+			let selection = NSRange(location: location, length: length)
+			if currentSource == parent.text {
+				placeCaretAfterUpdate(selection, into: webView)
+			} else {
+				pendingSelection = selection
+			}
 			selfEdit = nil
 		}
 

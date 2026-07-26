@@ -102,6 +102,10 @@ import Testing
 			"insertFromDrop", "deleteByDrag", "insertTranspose",
 			"formatJustifyCenter", "insertOrderedList", "insertUnorderedList",
 			"formatIndent", "formatOutdent", "insertHorizontalRule",
+			"deleteSoftLineBackward", "deleteSoftLineForward",
+			"deleteEntireSoftLine", "insertFromYank", "insertLink",
+			"formatSetBlockTextDirection", "formatSetInlineTextDirection",
+			"historyUndo", "historyRedo",
 		]
 		for inputType in inputTypes {
 			let source = "Alpha beta\n\n- one\n- two"
@@ -124,6 +128,43 @@ import Testing
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == "AQlpha beta\n\n- one\n- two")
 			try await assertHealthy(harness)
+		}
+	}
+
+	@Test func staticTargetWordDeletionRoutesApplyExactlyAndRemainEditable() async throws {
+		for (inputType, caretAtEnd) in [
+			("deleteWordBackward", true),
+			("deleteWordForward", false),
+		] {
+			let source = "alpha one-two café omega"
+			let deleted = (source as NSString).range(of: "one-two ")
+			let expected = (source as NSString).replacingCharacters(in: deleted, with: "")
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.run("""
+				window.__mdPlaceCaret(\(deleted.location), \(deleted.length))
+				var target = window.getSelection().getRangeAt(0).cloneRange()
+				window.__mdPlaceCaret(\(caretAtEnd ? deleted.upperBound : deleted.location))
+				var deletion = new InputEvent('beforeinput', {
+				  inputType: \(json(inputType)), bubbles: true, cancelable: true
+				})
+				Object.defineProperty(deletion, 'getTargetRanges', {
+				  value: function () { return [target] }
+				})
+				var allowed = document.body.dispatchEvent(deletion)
+				if (allowed) {
+				  target.deleteContents()
+				  document.body.dispatchEvent(new InputEvent('input', {
+				    inputType: \(json(inputType)), bubbles: true
+				  }))
+				}
+				""")
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == expected, "inputType=\(inputType)")
+			#expect(harness.lastCaretHint == deleted.location, "inputType=\(inputType)")
+			try await assertHealthy(harness)
+			try await harness.type("Q")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "alpha Qcafé omega", "inputType=\(inputType)")
 		}
 	}
 

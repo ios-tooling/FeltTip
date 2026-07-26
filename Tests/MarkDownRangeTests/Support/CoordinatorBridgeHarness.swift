@@ -26,6 +26,8 @@ final class CoordinatorBridgeHarness {
 	/// on across the selectionchange debounce.
 	private(set) var lastReportedSelection: NSRange?
 	private(set) var selectionReportCount = 0
+	private(set) var lastReportedSourceSelection: NSRange?
+	private(set) var sourceSelectionReportCount = 0
 	let coordinator: MarkdownWebView.Coordinator
 	let webView: WKWebView
 	private let window: NSWindow
@@ -76,6 +78,10 @@ final class CoordinatorBridgeHarness {
 			.onSelectionChanged { [weak self] range in
 				self?.lastReportedSelection = range
 				self?.selectionReportCount += 1
+			}
+			.onSourceSelectionChanged { [weak self] range in
+				self?.lastReportedSourceSelection = range
+				self?.sourceSelectionReportCount += 1
 			}
 		if let checkboxToggle { view = view.onCheckboxToggle(checkboxToggle) }
 		coordinator.parent = view

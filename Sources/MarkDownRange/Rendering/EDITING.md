@@ -34,7 +34,9 @@ the following child, while its end maps to the preceding child.
 2. **In-place edits** (typing/deleting inside one stamped run) let the browser
    mutate the DOM, post the edit, and shift later `data-s` stamps by the length
    delta immediately — so a batched second command in the same turn already reads
-   post-edit coordinates. No re-render.
+   post-edit coordinates. No re-render. An end-of-turn watchdog requires every
+   allowed `beforeinput` to receive its matching `input`; an orphaned event
+   discards the queued edit and resyncs before another command can flush it.
 3. **Structural edits** (anything crossing runs, Enter, style toggles, paste)
    `preventDefault()`, freeze the page, and post. The host splices the source and
    re-renders; the freeze is what stops a keystroke from mapping against a DOM
@@ -91,6 +93,18 @@ anything else. A blocked input must leave the source untouched and the page
 usable — `EditBridgeUnmappedInputTests` and `EditBridgeMixedSelectionTests`
 enforce exactly that.
 
+### Selection handoff
+
+The styled and raw editors can report an exact UTF-16 source range, including a
+zero-length insertion point, through `onSourceSelectionChanged`. This is
+separate from `onSelectionChanged`, whose nil-for-caret contract exists for
+split-pane highlight mirroring. `MarkdownSelectionTarget` installs the captured
+range in a newly mounted editor and is token-gated so repeated switches to the
+same range still apply. The styled page publishes once more on blur, bypassing
+the normal selection debounce, so clicking the mode picker cannot lose the most
+recent caret or selection. Unmappable rendered positions report nil rather than
+carrying a stale or guessed range into raw mode.
+
 ### Paste
 
 The page posts `op: 'paste'` with its range only; the **host** fills in the text
@@ -132,9 +146,10 @@ A healthy session records **zero** resyncs, dropped edits and hard rejections;
 the suites assert those counters, so a regression that still "works" but churns
 shows up as a failure.
 
-Cut carries `syntaxStart`, `syntaxEnd`, and `blockPrefixes` only when the DOM
-selection owns the complete visible boundary of those elements. The splicer
-then verifies and consumes the adjacent source delimiters. This keeps cutting
-`**text**`, `[text](url)`, a heading, or a list item from leaving empty or
-unbalanced syntax. Boundary metadata that does not match the source is vetoed;
-it is never used as permission to guess.
+Selected deletion (Cut, Backspace, or Forward Delete) carries `syntaxStart`,
+`syntaxEnd`, and `blockPrefixes` only when the DOM selection owns the complete
+visible boundary of those elements. The splicer then verifies and consumes the
+adjacent source delimiters. This keeps deleting `**text**`, `[text](url)`, a
+heading, or a list item from leaving empty or unbalanced syntax. Boundary
+metadata that does not match the source is vetoed; it is never used as
+permission to guess.
