@@ -47,6 +47,10 @@ public class MarkdownFormattingTextView: NSTextView {
 	public func toggleBold() { toggleInlineFormat("**") }
 	public func toggleItalic() { toggleInlineFormat("_") }
 	public func toggleStrikethrough() { toggleInlineFormat("~~") }
+	public func toggleCode() {
+		guard let change = MarkdownInlineCodeToggle.change(in: string, selection: selectedRange()) else { return }
+		applyChange(in: change.range, with: change.replacement, cursor: change.selection)
+	}
 
 	private func toggleInlineFormat(_ marker: String) {
 		let sel = selectedRange()

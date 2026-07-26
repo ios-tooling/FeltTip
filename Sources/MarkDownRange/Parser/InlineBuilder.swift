@@ -131,6 +131,13 @@ struct InlineBuilder: MarkupWalker {
 		str.foregroundColor = theme.codeForeground
 		str.backgroundColor = theme.codeBackground
 		str.inlineFontTraits = .monospaced
+		if let converter = sourceConverter, let range = code.range,
+		   let offset = converter.verbatimInlineCodeUTF16Offset(
+			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
+			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
+			rendered: code.code) {
+			str.markdownSourceOffset = offset
+		}
 		result += str
 		charOffset += code.code.count
 	}

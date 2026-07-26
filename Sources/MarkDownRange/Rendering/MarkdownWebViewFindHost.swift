@@ -76,6 +76,10 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		webView.evaluateJavaScript("document.execCommand('strikeThrough')", completionHandler: nil)
 	}
 
+	public func toggleCode() {
+		webView.evaluateJavaScript("window.__mdToggleInlineCode && window.__mdToggleInlineCode()", completionHandler: nil)
+	}
+
 	private var webViewIsFocused: Bool {
 		guard let responder = window?.firstResponder as? NSView else { return false }
 		return responder === webView || responder.isDescendant(of: webView)

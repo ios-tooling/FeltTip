@@ -529,6 +529,35 @@
     } catch (e) { return ''; }
   }
 
+  window.__mdToggleInlineCode = function () {
+    if (frozen) { return false; }
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) { return false; }
+    var range = sel.getRangeAt(0);
+    var startPos = normalizePosition(range.startContainer, range.startOffset);
+    var endPos = normalizePosition(range.endContainer, range.endOffset);
+    var start = sourceOffsetOf(startPos.node, startPos.offset);
+    var end = sourceOffsetOf(endPos.node, endPos.offset);
+    if (start == null || end == null || end < start) { return false; }
+    var startSpan = spanOf(startPos.node, startPos.offset);
+    var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);
+    freeze();
+    post({
+      op: 'inlineCode',
+      start: start,
+      end: end,
+      expected: plain(range.toString()),
+      crossRun: crossRun,
+      selected: !sel.isCollapsed,
+      before: contextBefore(startPos.node, startPos.offset),
+      after: contextAfter(endPos.node, endPos.offset),
+      caret: end,
+      rev: stampRev,
+      seq: seq++
+    });
+    return true;
+  };
+
   document.body.addEventListener('beforeinput', function (e) {
     // Undo/redo are owned by the host (a unified, source-level stack reached
     // via the app's Undo menu command). Block WebKit's own DOM-level history
@@ -545,11 +574,14 @@
     if (frozen) { e.preventDefault(); return; }
     var ranges = e.getTargetRanges();
     var range = ranges && ranges.length ? ranges[0] : null;
-    if (!range && (e.inputType === 'formatBold' || e.inputType === 'formatItalic' || e.inputType === 'formatStrikeThrough')) {
-      // Formatting commands report no target ranges; they act on the
-      // selection, so read it directly.
-      var formatSel = window.getSelection();
-      if (formatSel && formatSel.rangeCount) { range = formatSel.getRangeAt(0); }
+    if (!range && (e.inputType === 'deleteByCut' || e.inputType === 'formatBold' ||
+                   e.inputType === 'formatItalic' || e.inputType === 'formatStrikeThrough')) {
+      // Cut and formatting commands can report no target ranges; they act on
+      // the selection, so read it directly. Without this fallback WebKit
+      // copies a selected run to the pasteboard but the source deletion is
+      // vetoed, making Cut appear to do nothing.
+      var commandSel = window.getSelection();
+      if (commandSel && commandSel.rangeCount) { range = commandSel.getRangeAt(0); }
     }
     if (!range) { e.preventDefault(); return; }
     var startPos = normalizePosition(range.startContainer, range.startOffset);

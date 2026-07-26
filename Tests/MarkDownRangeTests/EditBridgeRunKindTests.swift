@@ -155,6 +155,48 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func cuttingASelectedInlineCodeRun() async throws {
+		let source = "- `TimelineEntryWidget` that extends `LeafRenderObjectWidget`\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let start = Self.offset(of: "TimelineEntryWidget", in: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(start), 19)",
+			"var cut = new InputEvent('beforeinput', { inputType: 'deleteByCut', bubbles: true, cancelable: true })",
+			"document.body.dispatchEvent(cut)",
+			"if (!cut.defaultPrevented) { window.getSelection().deleteFromDocument();"
+				+ "document.body.dispatchEvent(new InputEvent('input', { inputType: 'deleteByCut', bubbles: true })) }",
+		])
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "- `` that extends `LeafRenderObjectWidget`\n")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func asCodeTogglesASelectionOnAndOff() async throws {
+		let source = "- TimelineEntryWidget that extends LeafRenderObjectWidget\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let start = Self.offset(of: "TimelineEntryWidget", in: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(start), 19)",
+			"window.__mdToggleInlineCode()",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "- `TimelineEntryWidget` that extends LeafRenderObjectWidget\n")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "TimelineEntryWidget")
+		#expect(try await harness.stampMismatches() == [])
+
+		try await harness.run("window.__mdToggleInlineCode()")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "TimelineEntryWidget")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func selectAllThenTypeLeavesPageAndSourceAgreeing() async throws {
 		// A whole-document replacement is the most violent edit the bridge can
 		// see. Whatever it decides (splice or resync), the page must end up

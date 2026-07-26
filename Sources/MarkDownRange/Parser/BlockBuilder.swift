@@ -30,7 +30,7 @@ struct BlockBuilder: MarkupWalker {
 		self.checkboxCounter = checkboxCounter
 	}
 
-	mutating func build(from document: Document, linkifyURLs: Bool = true) -> [MarkdownBlock] {
+	mutating func build(from document: Markdown.Document, linkifyURLs: Bool = true) -> [MarkdownBlock] {
 		self.linkifyURLs = linkifyURLs
 		for child in document.children { visit(child) }
 		return blocks

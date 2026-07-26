@@ -22,6 +22,7 @@ public enum MarkdownSourceOffsetAttribute: AttributedStringKey {
 struct SourceOffsetConverter {
 	private let lineStartBytes: [Int]   // UTF-8 byte offset of each line's start
 	private let byteToUTF16: [Int]      // UTF-8 byte offset → UTF-16 offset
+	private let processedUTF16: [UInt16]
 	/// Added to every returned offset. Lets the parsed string be a suffix of
 	/// the caller's source (e.g. the body after frontmatter was stripped) while
 	/// the offsets still address the full source.
@@ -34,6 +35,7 @@ struct SourceOffsetConverter {
 	init(_ source: String, baseOffset: Int = 0, map: [Int]? = nil) {
 		self.baseOffset = baseOffset
 		self.map = map
+		processedUTF16 = Array(source.utf16)
 		var lineStarts = [0]
 		var byteMap: [Int] = []
 		byteMap.reserveCapacity(source.utf8.count + 1)
@@ -65,12 +67,63 @@ struct SourceOffsetConverter {
 		guard let pLow = processedUTF16(line: lowerLine, column: lowerColumn),
 			  let pUp = processedUTF16(line: upperLine, column: upperColumn),
 			  pUp - pLow == renderedLength else { return nil }
-		if let map {
-			guard pLow + renderedLength <= map.count else { return nil }
-			let base = map[pLow]
-			for k in 0..<renderedLength where map[pLow + k] != base + k { return nil }
+		return verbatimSourceOffset(processedOffset: pLow, length: renderedLength)
+	}
+
+	/// Inline-code nodes have no child `Text` range: swift-markdown reports the
+	/// whole span, including its backtick delimiters. Stamp the rendered code
+	/// only when the text between those delimiters is an exact, contiguous
+	/// source substring. One symmetric padding space may be skipped because
+	/// CommonMark removes it; other normalization such as folded newlines
+	/// deliberately remains unstamped.
+	func verbatimInlineCodeUTF16Offset(
+		lowerLine: Int,
+		lowerColumn: Int,
+		upperLine: Int,
+		upperColumn: Int,
+		rendered: String
+	) -> Int? {
+		guard let pLow = processedUTF16(line: lowerLine, column: lowerColumn),
+			  let pUp = processedUTF16(line: upperLine, column: upperColumn),
+			  pLow >= 0, pUp <= processedUTF16.count, pUp > pLow else { return nil }
+
+		var delimiterLength = 0
+		while pLow + delimiterLength < pUp,
+			  processedUTF16[pLow + delimiterLength] == 0x60 {
+			delimiterLength += 1
 		}
-		return mapToSource(pLow) + baseOffset
+		guard delimiterLength > 0, pUp - pLow >= delimiterLength * 2 else { return nil }
+		for index in 0..<delimiterLength where processedUTF16[pUp - 1 - index] != 0x60 {
+			return nil
+		}
+
+		let contentStart = pLow + delimiterLength
+		let contentEnd = pUp - delimiterLength
+		let renderedUTF16 = Array(rendered.utf16)
+		if contentEnd - contentStart == renderedUTF16.count,
+		   processedUTF16[contentStart..<contentEnd].elementsEqual(renderedUTF16) {
+			return verbatimSourceOffset(processedOffset: contentStart, length: renderedUTF16.count)
+		}
+		// A code span padded to keep leading/trailing backticks unambiguous
+		// renders without one surrounding space. Its visible content is still
+		// a verbatim source slice one character farther in.
+		let paddedStart = contentStart + 1
+		let paddedEnd = contentEnd - 1
+		guard contentEnd - contentStart >= 2,
+			  processedUTF16[contentStart] == 0x20,
+			  processedUTF16[contentEnd - 1] == 0x20,
+			  paddedEnd - paddedStart == renderedUTF16.count,
+			  processedUTF16[paddedStart..<paddedEnd].elementsEqual(renderedUTF16) else { return nil }
+		return verbatimSourceOffset(processedOffset: paddedStart, length: renderedUTF16.count)
+	}
+
+	private func verbatimSourceOffset(processedOffset: Int, length: Int) -> Int? {
+		if let map {
+			guard processedOffset + length <= map.count else { return nil }
+			let base = map[processedOffset]
+			for k in 0..<length where map[processedOffset + k] != base + k { return nil }
+		}
+		return mapToSource(processedOffset) + baseOffset
 	}
 
 	private func processedUTF16(line: Int, column: Int) -> Int? {

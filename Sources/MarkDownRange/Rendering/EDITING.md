@@ -64,9 +64,11 @@ pre-restore source — typing the undo straight back out.
 | Input | Route | Notes |
 | --- | --- | --- |
 | Typing, delete, forward/word delete | in-place | cross-run variants go structural |
+| ⌘X | in-place | cross-run variants go structural; falls back to the DOM selection when WebKit omits target ranges |
 | Enter | structural | list items keep their **source** indentation (`listBreak`) |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
+| Format → As Code | structural | toggles inline-code delimiters; cross-run styled selections are blocked |
 | ⇧Enter | structural | writes a `\` break, and swallows the next line's leading whitespace |
 | ⌘V | structural | host reads `NSPasteboard`; see below |
 | IME / dead keys / predictive text | reconciled | whole run diffed at `compositionend` |
@@ -74,6 +76,7 @@ pre-restore source — typing the undo straight back out.
 
 **Not mapped** (blocked, no-ops): drag-and-drop text, list indent/outdent,
 formatting a cross-run selection that intersects hidden inline Markdown syntax,
+non-verbatim inline code (for example a code span whose newlines were folded),
 anything else. A blocked input must leave the source untouched and the page
 usable — `EditBridgeUnmappedInputTests` and `EditBridgeMixedSelectionTests`
 enforce exactly that.

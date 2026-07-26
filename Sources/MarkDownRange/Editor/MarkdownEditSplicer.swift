@@ -21,6 +21,8 @@ enum MarkdownEditSplicer {
 		var replacement: String?
 		/// Marker to wrap the range in (bold/italic); nil for a splice.
 		var wrapMarker: String?
+		/// Toggle the range as inline code, choosing a safe backtick delimiter.
+		var inlineCode = false
 		/// The text the DOM shows inside the range. Not checked for cross-run
 		/// edits: there the DOM omits the markdown syntax between runs.
 		var expected: String
@@ -72,6 +74,19 @@ enum MarkdownEditSplicer {
 		}
 		if let reason = contextMismatch(edit, in: text) {
 			return .rejected(reason)
+		}
+		if edit.inlineCode {
+			guard !edit.crossRun else {
+				return .rejected("inline-code toggle crosses rendered runs")
+			}
+			guard let change = MarkdownInlineCodeToggle.change(
+				in: source,
+				selection: NSRange(location: edit.start, length: edit.end - edit.start)) else {
+				return .rejected("invalid inline-code selection")
+			}
+			return .applied(
+				text.replacingCharacters(in: change.range, with: change.replacement),
+				selection: change.selection)
 		}
 		if let marker = edit.wrapMarker {
 			// A cross-run DOM selection can stop immediately before hidden
@@ -178,6 +193,7 @@ extension MarkdownEditSplicer.Edit {
 		self.start = start
 		self.end = end
 		self.wrapMarker = body["op"] as? String == "wrap" ? body["marker"] as? String : nil
+		self.inlineCode = body["op"] as? String == "inlineCode"
 		self.replacement = body["text"] as? String
 		self.expected = body["expected"] as? String ?? ""
 		self.crossRun = body["crossRun"] as? Bool ?? false

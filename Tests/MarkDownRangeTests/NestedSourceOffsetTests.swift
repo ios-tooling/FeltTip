@@ -33,6 +33,24 @@ import Testing
 		#expect(found.first(where: { $0.text == "beta" })?.offset == 10)
 	}
 
+	@Test func inlineCodeInAListItemCarriesItsContentOffset() throws {
+		let md = "- `TimelineEntryWidget` that extends `LeafRenderObjectWidget`"
+		let found = runs(MarkdownBlockParser.parse(md, preprocessed: true, trackSourceOffsets: true))
+		#expect(found.first(where: { $0.text == "TimelineEntryWidget" })?.offset
+			== (md as NSString).range(of: "TimelineEntryWidget").location)
+		#expect(found.first(where: { $0.text == "LeafRenderObjectWidget" })?.offset
+			== (md as NSString).range(of: "LeafRenderObjectWidget").location)
+	}
+
+	@Test func paddedInlineCodeMapsToItsVisibleContent() throws {
+		// CommonMark removes one surrounding space, but the visible content is
+		// still a contiguous source slice and can be edited safely.
+		let md = "- ` code `"
+		let found = runs(MarkdownBlockParser.parse(md, preprocessed: true, trackSourceOffsets: true))
+		#expect(found.first(where: { $0.text == "code" })?.offset
+			== (md as NSString).range(of: "code").location)
+	}
+
 	@Test func tabNestedListItemMapsToSource() throws {
 		// "- Frameworks:\n\t- Chronicle here" — the tab-nested "Chronicle here"
 		// run must point at the real 'C' (UTF-16 index 17), not be left nil.
