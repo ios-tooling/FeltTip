@@ -141,9 +141,22 @@
   // text inside (the <br>-only caret placeholder Enter creates) anchors
   // on the child element itself — the offset arithmetic handles element
   // positions inside a stamped run.
-  function normalizePosition(node, offset) {
+  function normalizePosition(node, offset, preferForward) {
     if (node.nodeType === 3 || !node.childNodes.length) return { node: node, offset: offset };
     var t;
+    // A DOM range boundary is the gap between child `offset - 1` and child
+    // `offset`. Its affinity depends on which side of a selection it is:
+    // starts own the following child, ends own the preceding child. WebKit
+    // commonly reports a mouse selection that begins at a lazy list
+    // continuation this way (LI, child index); always choosing the preceding
+    // child mapped Cut to the prior line, so verification vetoed the deletion
+    // even though WebKit had already copied the requested text.
+    if (preferForward && offset < node.childNodes.length) {
+      var next = node.childNodes[Math.max(0, offset)];
+      t = firstTextIn(next);
+      if (t) return { node: t, offset: 0 };
+      return { node: next, offset: 0 };
+    }
     if (offset > 0) {
       var last = node.childNodes[Math.min(offset, node.childNodes.length) - 1];
       t = lastTextIn(last);
@@ -299,8 +312,8 @@
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount || sel.isCollapsed) { post({ type: 'selection' }); return; }
     var r = sel.getRangeAt(0);
-    var startPos = normalizePosition(r.startContainer, r.startOffset);
-    var endPos = normalizePosition(r.endContainer, r.endOffset);
+    var startPos = normalizePosition(r.startContainer, r.startOffset, true);
+    var endPos = normalizePosition(r.endContainer, r.endOffset, r.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     if (start == null || end == null || end <= start) { post({ type: 'selection' }); return; }
@@ -587,8 +600,8 @@
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount) { return false; }
     var range = sel.getRangeAt(0);
-    var startPos = normalizePosition(range.startContainer, range.startOffset);
-    var endPos = normalizePosition(range.endContainer, range.endOffset);
+    var startPos = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     if (start == null || end == null || end < start) { return false; }
@@ -641,8 +654,8 @@
       if (commandSel && commandSel.rangeCount) { range = commandSel.getRangeAt(0); }
     }
     if (!range) { e.preventDefault(); return; }
-    var startPos = normalizePosition(range.startContainer, range.startOffset);
-    var endPos = normalizePosition(range.endContainer, range.endOffset);
+    var startPos = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     if (start == null || end == null || end < start) { e.preventDefault(); return; }
@@ -811,8 +824,8 @@
   document.body.addEventListener('compositionstart', function () {
     var sel = window.getSelection();
     var r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
-    var startPos = r ? normalizePosition(r.startContainer, r.startOffset) : null;
-    var endPos = r ? normalizePosition(r.endContainer, r.endOffset) : null;
+    var startPos = r ? normalizePosition(r.startContainer, r.startOffset, true) : null;
+    var endPos = r ? normalizePosition(r.endContainer, r.endOffset, r.collapsed) : null;
     var span = startPos ? spanOf(startPos.node, startPos.offset) : null;
     var endSpan = endPos ? spanOf(endPos.node, endPos.offset) : null;
     if (!r || frozen || !span || span !== endSpan) {

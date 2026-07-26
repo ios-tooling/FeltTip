@@ -70,6 +70,45 @@ struct SourceOffsetConverter {
 		return verbatimSourceOffset(processedOffset: pLow, length: renderedLength)
 	}
 
+	/// Text-node variant of `verbatimUTF16Offset`. In addition to checking the
+	/// reported range's length, verify that it contains the text being stamped.
+	/// swift-markdown reports lazy list-continuation lines at the list content's
+	/// virtual indentation (typically three columns right of their real source
+	/// location). If the reported position is wrong, recover only when the
+	/// rendered text occurs exactly once across the node's source lines.
+	func verbatimUTF16Offset(
+		lowerLine: Int,
+		lowerColumn: Int,
+		upperLine: Int,
+		upperColumn: Int,
+		rendered: String
+	) -> Int? {
+		let renderedUTF16 = rendered.utf16
+		let renderedLength = renderedUTF16.count
+		guard let pLow = processedUTF16(line: lowerLine, column: lowerColumn),
+			  let pUp = processedUTF16(line: upperLine, column: upperColumn) else { return nil }
+		if pUp - pLow == renderedLength,
+		   processedUTF16[pLow..<pUp].elementsEqual(renderedUTF16) {
+			return verbatimSourceOffset(processedOffset: pLow, length: renderedLength)
+		}
+
+		guard !renderedUTF16.isEmpty,
+			  let searchStart = processedLineStart(lowerLine),
+			  let searchEnd = processedLineEnd(upperLine),
+			  searchEnd - searchStart >= renderedLength else { return nil }
+		var match: Int?
+		for candidate in searchStart...(searchEnd - renderedLength) {
+			guard processedUTF16[candidate..<(candidate + renderedLength)]
+				.elementsEqual(renderedUTF16),
+				  verbatimSourceOffset(processedOffset: candidate, length: renderedLength) != nil else { continue }
+			if match != nil { return nil }
+			match = candidate
+		}
+		return match.flatMap {
+			verbatimSourceOffset(processedOffset: $0, length: renderedLength)
+		}
+	}
+
 	/// Inline-code nodes have no child `Text` range: swift-markdown reports the
 	/// whole span, including its backtick delimiters. Stamp the rendered code
 	/// only when the text between those delimiters is an exact, contiguous
@@ -131,6 +170,20 @@ struct SourceOffsetConverter {
 		let byte = lineStartBytes[line - 1] + (column - 1)
 		guard byte >= 0, byte < byteToUTF16.count else { return nil }
 		return byteToUTF16[byte]
+	}
+
+	private func processedLineStart(_ line: Int) -> Int? {
+		guard line >= 1, line <= lineStartBytes.count else { return nil }
+		return byteToUTF16[lineStartBytes[line - 1]]
+	}
+
+	private func processedLineEnd(_ line: Int) -> Int? {
+		guard line >= 1, line <= lineStartBytes.count else { return nil }
+		if line < lineStartBytes.count {
+			// Exclude the newline immediately before the next line.
+			return max(0, byteToUTF16[lineStartBytes[line]] - 1)
+		}
+		return processedUTF16.count
 	}
 
 	private func mapToSource(_ processedOffset: Int) -> Int {

@@ -136,5 +136,52 @@ import Testing
 			expected: "Alpha  Beta Tail",
 			backward: true)
 	}
+
+	@Test func cuttingFromALazyListContinuationAcrossAnHTMLBreakUsesTheForwardBoundary() async throws {
+		let source = """
+		2. **Timeline** - /app/lib/timeline<br />
+		This view is displayed when an item from the menu is selected: the user is presented with a vertical timeline. It can be scrolled up and down, zoomed in and out. <br/>
+		When an event is in view, a bubble will be shown on screen with a custom animated widget right next to it. By tapping on either, the user can access the ArticlePage.
+
+		Tail
+		"""
+		let selectedStart = "This view is displayed"
+		let selectedEnd = "the ArticlePage"
+		let ns = source as NSString
+		let start = ns.range(of: selectedStart).location
+		let endPhrase = ns.range(of: selectedEnd)
+		let end = endPhrase.location + ("the" as NSString).length
+		let expected = ns.replacingCharacters(
+			in: NSRange(location: start, length: end - start),
+			with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.run("""
+			var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+			var startNode = null, endNode = null
+			while (walker.nextNode()) {
+			  if (!startNode && walker.currentNode.nodeValue.indexOf('This view is displayed') >= 0) startNode = walker.currentNode
+			  if (!endNode && walker.currentNode.nodeValue.indexOf('the ArticlePage') >= 0) endNode = walker.currentNode
+			}
+			var startContainer = startNode.closest ? startNode.closest('li') : startNode.parentElement.closest('li')
+			var startChild = startNode
+			while (startChild.parentNode !== startContainer) startChild = startChild.parentNode
+			var range = document.createRange()
+			range.setStart(startContainer, Array.prototype.indexOf.call(startContainer.childNodes, startChild))
+			range.setEnd(endNode, endNode.nodeValue.indexOf('the ArticlePage') + 3)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			\(cutEventScript)
+			""")
+
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.vetoedEdits == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
 }
 #endif

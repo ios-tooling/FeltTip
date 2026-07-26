@@ -20,6 +20,13 @@ assert the invariant directly via `CoordinatorBridgeHarness.stampMismatches()` â
 add that assertion to any new editing test; it catches drift that happens to
 leave the visible text correct.
 
+Stamping verifies the rendered text itself, not only its length. For lazy list
+continuations swift-markdown can report a virtual indented column rather than
+the real source column; the converter accepts a same-line correction only when
+the rendered text has one unique, contiguous source match. DOM range boundaries
+also have directional affinity: a selection start between child nodes maps to
+the following child, while its end maps to the preceding child.
+
 ## Flow of one keystroke
 
 1. `beforeinput` in the page maps the target range to source offsets and reads

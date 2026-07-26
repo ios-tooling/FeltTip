@@ -79,7 +79,9 @@ import Testing
 		#expect(script.contains("function contextBefore(node, offset)"))
 		#expect(script.contains("function contextAfter(node, offset)"))
 		#expect(script.contains("var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);"))
-		#expect(script.contains("function normalizePosition(node, offset)"))
+		#expect(script.contains("function normalizePosition(node, offset, preferForward)"))
+		#expect(script.contains("normalizePosition(range.startContainer, range.startOffset, true)"))
+		#expect(script.contains("normalizePosition(range.endContainer, range.endOffset, range.collapsed)"))
 		#expect(script.contains("crossRun: true"))
 	}
 

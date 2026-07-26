@@ -64,6 +64,16 @@ import Testing
 		expectStampsVerbatim(in: "# Title\n\nFirst paragraph line\nsecond line\n\n- item one\n- item two", minimumRuns: 4)
 	}
 
+	@Test func lazyListContinuationAfterInlineHTMLStampsVerbatim() {
+		// swift-markdown reports these continuation lines at the list content's
+		// virtual indentation. Stamps must recover the actual source column.
+		expectStampsVerbatim(in: """
+		2. **Timeline** - /app/lib/timeline<br />
+		This view is displayed after the break. <br/>
+		When an event is in view, show the ArticlePage.
+		""", minimumRuns: 3)
+	}
+
 	@Test func frontmatterShiftsStampsToFullSource() {
 		expectStampsVerbatim(in: "---\ntitle: Test\n---\n\nBody paragraph here")
 	}

@@ -100,7 +100,7 @@ struct InlineBuilder: MarkupWalker {
 		   let offset = converter.verbatimUTF16Offset(
 			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
-			renderedLength: text.string.utf16.count) {
+			rendered: text.string) {
 			str.markdownSourceOffset = offset
 		}
 		result += str
