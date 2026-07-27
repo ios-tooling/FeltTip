@@ -126,8 +126,7 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		bar.isHidden = true
 		needsLayout = true
 		window?.makeFirstResponder(webView)
-		// Drop the match highlight (find() selects the match).
-		webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
+		clearMatch()
 	}
 
 	private func find(forward: Bool) {
@@ -142,6 +141,11 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		}
 	}
 
+	private func clearMatch() {
+		// WKWebView represents the active find result as a selection.
+		webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
+	}
+
 	// MARK: Bar UI
 
 	private func buildBar() {
@@ -153,8 +157,10 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		searchField.delegate = self
 		searchField.target = self
 		searchField.action = #selector(searchFieldAction(_:))
-		searchField.sendsSearchStringImmediately = false
-		searchField.sendsWholeSearchString = true
+		// Match the system find bar: update results as the query changes instead
+		// of requiring Return before the first search is issued.
+		searchField.sendsSearchStringImmediately = true
+		searchField.sendsWholeSearchString = false
 
 		doneButton.bezelStyle = .accessoryBarAction
 		doneButton.controlSize = .small
@@ -179,7 +185,10 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	}
 
 	@objc private func searchFieldAction(_ sender: NSSearchField) {
-		guard !sender.stringValue.isEmpty else { return }
+		guard !sender.stringValue.isEmpty else {
+			clearMatch()
+			return
+		}
 		let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
 		find(forward: !backwards)
 	}

@@ -211,6 +211,61 @@ import Testing
 		}
 	}
 
+	@Test func selectionSpanningEveryReadOnlyIslandKindCannotDeleteAndEditingRecovers() async throws {
+		let fixtures: [(name: String, selector: String, source: String)] = [
+			(
+				"alert", ".alert",
+				"Before\n\n> [!NOTE]\n> Important information\n\nAfter"),
+			(
+				"details", "details",
+				"Before\n\n<details>\n<summary>More</summary>\n\nBody\n\n</details>\n\nAfter"),
+			(
+				"frontmatter", ".frontmatter",
+				"---\ntitle: Test\n---\n\nBefore\n\nAfter"),
+			(
+				"image", "img",
+				"Before\n\n![Alt](missing.png)\n\nAfter"),
+			(
+				"thematic break", "hr",
+				"Before\n\n---\n\nAfter"),
+		]
+		for fixture in fixtures {
+			let harness = try await CoordinatorBridgeHarness(source: fixture.source)
+			#expect(
+				try await harness.evaluate(
+					"document.querySelector(\(json(fixture.selector))) ? 'yes' : 'no'") == "yes",
+				"missing \(fixture.name) fixture")
+			try await harness.run("""
+				var range = document.createRange()
+				range.selectNodeContents(document.body)
+				var selection = window.getSelection()
+				selection.removeAllRanges()
+				selection.addRange(range)
+				document.execCommand('delete')
+				""")
+			try await Task.sleep(for: .milliseconds(150))
+			#expect(harness.source == fixture.source, "island=\(fixture.name)")
+			#expect(harness.sourceEditCount == 0, "island=\(fixture.name)")
+			#expect(
+				try await harness.evaluate("window.__mdIsFrozen() ? 'yes' : 'no'") == "no",
+				"island=\(fixture.name)")
+
+			let after = (fixture.source as NSString).range(of: "After").upperBound
+			let stampDump = try await harness.evaluate("""
+				Array.from(document.querySelectorAll('[data-s]')).map(function (run) {
+				  return run.getAttribute('data-s') + ':' + run.textContent
+				    + ':' + (run.closest('details') ? 'details' : 'editable')
+				}).join('|')
+				""") ?? ""
+			try await harness.type("Q", at: after)
+			try await harness.waitForSourceEdits(1)
+			#expect(
+				harness.source == fixture.source + "Q",
+				"island=\(fixture.name), after=\(after), stamps=\(stampDump)")
+			try await assertHealthy(harness)
+		}
+	}
+
 	@Test func crossCellSelectionReplacementIsBlockedBeforeItCanEatTablePipes() async throws {
 		let source = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 41 |"
 		let start = (source as NSString).range(of: "Alice").location
@@ -263,6 +318,33 @@ import Testing
 		try await harness.type("Q", at: (harness.source as NSString).range(of: "Tail").location)
 		try await harness.waitForSourceEdits(2)
 		#expect(harness.source == "Alpha misspelled omega\n\nQTail")
+	}
+
+	@Test func compositionWithAstralAndCombiningTextKeepsLaterUTF16OffsetsExact() async throws {
+		let source = "Alpha old omega\n\nTail 😀"
+		let replacement = "👩‍💻e\u{301}"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let range = (source as NSString).range(of: "old")
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(range.location), \(range.length))",
+			"document.body.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))",
+			"document.execCommand('insertText', false, '\(replacement)')",
+			"""
+			document.body.dispatchEvent(new CompositionEvent('compositionend', {
+			  bubbles: true, data: '\(replacement)'
+			}))
+			""",
+		])
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "Alpha \(replacement) omega\n\nTail 😀")
+		#expect(harness.sourceEditCount == 1)
+		try await assertHealthy(harness)
+
+		let tail = (harness.source as NSString).range(of: "Tail 😀").upperBound
+		try await harness.type("Q", at: tail)
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "Alpha \(replacement) omega\n\nTail 😀Q")
+		try await assertHealthy(harness)
 	}
 
 	@Test func activeSelectionCannotOverwriteAHostUpdateFromTheOtherPane() async throws {

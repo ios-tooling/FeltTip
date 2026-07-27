@@ -10,6 +10,7 @@
 //
 
 #if os(macOS)
+import AppKit
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -227,6 +228,137 @@ struct SeededRNG: RandomNumberGenerator {
 		#expect(harness.coordinator.bridgeIncidents == [], "table fuzz: \(script)")
 	}
 
+	@Test(arguments: [UInt64(9101), 9102, 9103])
+	func repeatedCrossBlockCutPasteMovesStaySynchronized(seed: UInt64) async throws {
+		var rng = SeededRNG(seed: seed)
+		var expected = (0..<9)
+			.map { "paragraph \($0) alpha bravo charlie delta" }
+			.joined(separator: "\n\n")
+		let harness = try await CoordinatorBridgeHarness(source: expected)
+		let pasteboard = NSPasteboard.general
+		let saved = pasteboard.string(forType: .string)
+		defer {
+			pasteboard.clearContents()
+			if let saved { pasteboard.setString(saved, forType: .string) }
+		}
+		var edits = 0
+		var log: [String] = []
+
+		for _ in 0..<6 {
+			let runs = try await Self.nonEmptyStampedRuns(harness)
+				.filter { $0.length >= 4 }
+			guard runs.count >= 2 else { break }
+			let firstIndex = Int.random(in: 0..<(runs.count - 1), using: &rng)
+			let lastIndex = Int.random(in: (firstIndex + 1)..<runs.count, using: &rng)
+			let first = runs[firstIndex], last = runs[lastIndex]
+			let start = first.base + Int.random(in: 1..<(first.length - 1), using: &rng)
+			let end = last.base + Int.random(in: 1..<(last.length - 1), using: &rng)
+			guard end > start else { continue }
+			let removed = NSRange(location: start, length: end - start)
+			let afterCut = (expected as NSString).replacingCharacters(in: removed, with: "")
+
+			pasteboard.clearContents()
+			try await harness.run("window.__mdPlaceCaret(\(start), \(end - start))")
+			Self.performResponderCommand("cut", in: harness)
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			let copied = try #require(pasteboard.string(forType: .string))
+			log.append("cut \(start)..<\(end), copied \(copied.debugDescription)")
+			expected = afterCut
+			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
+			try await harness.waitQuiescent()
+
+			guard let destination = try await Self.randomStampedOffset(harness, &rng) else { break }
+			try await harness.placeCaret(destination)
+			Self.performResponderCommand("paste", in: harness)
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			expected = (expected as NSString).replacingCharacters(
+				in: NSRange(location: destination, length: 0),
+				with: copied)
+			log.append("paste @\(destination)")
+			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [],
+				"seed \(seed):\n\(log.joined(separator: "\n"))")
+		}
+
+		let script = "seed \(seed):\n" + log.joined(separator: "\n")
+		#expect(harness.coordinator.resyncCount == 0, "chunk-move fuzz: \(script)")
+		#expect(harness.coordinator.hardRejections == 0, "chunk-move fuzz: \(script)")
+		#expect(harness.coordinator.bridgeIncidents == [], "chunk-move fuzz: \(script)")
+	}
+
+	@Test(arguments: [UInt64(9201), 9202, 9203])
+	func repeatedTableCellCutPasteMovesNeverDamagePipes(seed: UInt64) async throws {
+		var rng = SeededRNG(seed: seed)
+		var expected = """
+			| Name | Role | Score |
+			| --- | --- | --- |
+			| Alice | Writer | Thirty |
+			| Bob | Editor | FortyOne |
+			| Carol | Tester | FiftyTwo |
+			"""
+		let harness = try await CoordinatorBridgeHarness(source: expected)
+		let pasteboard = NSPasteboard.general
+		let saved = pasteboard.string(forType: .string)
+		defer {
+			pasteboard.clearContents()
+			if let saved { pasteboard.setString(saved, forType: .string) }
+		}
+		var edits = 0
+		var log: [String] = []
+
+		for _ in 0..<8 {
+			let sourceRuns = try await Self.tableCellStampedRuns(harness)
+				.filter { $0.length > 0 }
+			guard let sourceRun = sourceRuns.randomElement(using: &rng) else { break }
+			let lower = Int.random(in: 0..<sourceRun.length, using: &rng)
+			let length = Int.random(in: 1...(sourceRun.length - lower), using: &rng)
+			let start = sourceRun.base + lower
+			let afterCut = (expected as NSString).replacingCharacters(
+				in: NSRange(location: start, length: length),
+				with: "")
+
+			pasteboard.clearContents()
+			try await harness.run("window.__mdPlaceCaret(\(start), \(length))")
+			Self.performResponderCommand("cut", in: harness)
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			let copied = try #require(pasteboard.string(forType: .string))
+			expected = afterCut
+			log.append("cut \(start)..<\(start + length) → \(copied.debugDescription)")
+			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
+			try await harness.waitQuiescent()
+
+			let destinationRuns = try await Self.tableCellStampedRuns(harness)
+			guard let destinationRun = destinationRuns.randomElement(using: &rng) else { break }
+			let destination = destinationRun.base
+				+ Int.random(in: 0...destinationRun.length, using: &rng)
+			try await harness.placeCaret(destination)
+			Self.performResponderCommand("paste", in: harness)
+			edits += 1
+			try await harness.waitForSourceEdits(edits)
+			expected = (expected as NSString).replacingCharacters(
+				in: NSRange(location: destination, length: 0),
+				with: copied)
+			log.append("paste @\(destination)")
+			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
+			#expect(expected.split(separator: "\n").allSatisfy {
+				$0.filter { $0 == "|" }.count == 4
+			}, "seed \(seed):\n\(log.joined(separator: "\n"))")
+			try await harness.waitQuiescent()
+		}
+
+		let script = "seed \(seed):\n" + log.joined(separator: "\n")
+		#expect(try await harness.evaluate("String(document.querySelectorAll('table').length)") == "1",
+			"table move fuzz: \(script)")
+		#expect(try await harness.stampMismatches() == [], "table move fuzz: \(script)")
+		#expect(harness.coordinator.resyncCount == 0, "table move fuzz: \(script)")
+		#expect(harness.coordinator.hardRejections == 0, "table move fuzz: \(script)")
+		#expect(harness.coordinator.bridgeIncidents == [], "table move fuzz: \(script)")
+	}
+
 	static func generateDocument(_ rng: inout SeededRNG) -> String {
 		let words = ["alpha", "beta", "gamma", "delta", "words", "text", "sample"]
 		var blocks: [String] = []
@@ -310,6 +442,14 @@ struct SeededRNG: RandomNumberGenerator {
 
 	static func plain(_ s: String) -> String {
 		s.replacingOccurrences(of: "\u{00A0}", with: " ")
+	}
+
+	static func performResponderCommand(
+		_ command: String,
+		in harness: CoordinatorBridgeHarness
+	) {
+		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
 	}
 }
 #endif

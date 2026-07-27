@@ -70,4 +70,41 @@ import Testing
 		#expect(patch.html.count == 1)
 		#expect(patch.tailAnchorOffset == -1, "an empty tail needs no anchor")
 	}
+
+	@Test func deletingTheFirstBlockAnchorsEverySurvivingStamp() {
+		let old = fragments("Discard\n\nAlpha\n\nBeta")
+		let new = fragments("Alpha\n\nBeta")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+
+		#expect(patch.start == 0)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.isEmpty)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[0].firstStamp)
+	}
+
+	@Test func deletingTheLastBlockNeedsNoTailAnchor() {
+		let old = fragments("Alpha\n\nBeta\n\nDiscard")
+		let new = fragments("Alpha\n\nBeta")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+
+		#expect(patch.start == 2)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.isEmpty)
+		#expect(patch.tailAnchorOffset == -1)
+	}
+
+	@Test func unicodeEditBeforeRepeatedBlocksPatchesOnlyTheEditedBlock() {
+		let repeatedTail = "\n\nSame 😀 block\n\nSame 😀 block\n\nFinal"
+		let old = fragments("Prefix" + repeatedTail)
+		let new = fragments("Prefix 👩‍💻" + repeatedTail)
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+
+		#expect(patch.start == 0)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.count == 1)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[1].firstStamp)
+		#expect(patch.expectedOldCount == old.count)
+	}
 }

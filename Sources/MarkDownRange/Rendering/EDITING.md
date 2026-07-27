@@ -152,4 +152,6 @@ visible boundary of those elements. The splicer then verifies and consumes the
 adjacent source delimiters. This keeps deleting `**text**`, `[text](url)`, a
 heading, or a list item from leaving empty or unbalanced syntax. Boundary
 metadata that does not match the source is vetoed; it is never used as
-permission to guess.
+permission to guess. Nested rendered traits may expose a different DOM ancestry
+order than their authored delimiters; the splicer therefore verifies the exact
+declared delimiter set against the source boundary without relying on tag order.

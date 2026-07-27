@@ -193,30 +193,12 @@ enum MarkdownEditSplicer {
 	) -> NSRange? {
 		var start = range.location
 		var end = range.upperBound
-		for tag in edit.syntaxStart {
-			switch tag {
-			case "strong":
-				guard consumeBefore(["**", "__"], cursor: &start, in: text) else { return nil }
-			case "em":
-				guard consumeBefore(["*", "_"], cursor: &start, in: text) else { return nil }
-			case "u":
-				guard consumeBefore(["<u>"], cursor: &start, in: text) else { return nil }
-			case "del":
-				guard consumeBefore(["~~"], cursor: &start, in: text) else { return nil }
-			case "mark":
-				guard consumeBefore(["=="], cursor: &start, in: text) else { return nil }
-			case "sup":
-				guard consumeBefore(["^"], cursor: &start, in: text) else { return nil }
-			case "sub":
-				guard consumeBefore(["~"], cursor: &start, in: text) else { return nil }
-			case "code":
-				guard consumeCodeDelimiterBefore(cursor: &start, in: text) else { return nil }
-			case "a":
-				guard consumeBefore(["["], cursor: &start, in: text) else { return nil }
-			default:
-				return nil
-			}
-		}
+		// Attribute rendering may normalize nested DOM tags into an order that
+		// differs from the authored Markdown delimiters (for example
+		// `~~**text**~~` can render with <del>/<strong> ancestry reversed).
+		// Consume the exact declared set in whichever order the verified source
+		// boundary actually contains instead of trusting DOM ancestry order.
+		guard consumeSyntaxStart(edit.syntaxStart, cursor: &start, in: text) else { return nil }
 		for prefix in edit.blockPrefixes {
 			switch prefix {
 			case "heading":
@@ -229,31 +211,126 @@ enum MarkdownEditSplicer {
 				return nil
 			}
 		}
-		for tag in edit.syntaxEnd {
-			switch tag {
-			case "strong":
-				guard consumeAfter(["**", "__"], cursor: &end, in: text) else { return nil }
-			case "em":
-				guard consumeAfter(["*", "_"], cursor: &end, in: text) else { return nil }
-			case "u":
-				guard consumeAfter(["</u>"], cursor: &end, in: text) else { return nil }
-			case "del":
-				guard consumeAfter(["~~"], cursor: &end, in: text) else { return nil }
-			case "mark":
-				guard consumeAfter(["=="], cursor: &end, in: text) else { return nil }
-			case "sup":
-				guard consumeAfter(["^"], cursor: &end, in: text) else { return nil }
-			case "sub":
-				guard consumeAfter(["~"], cursor: &end, in: text) else { return nil }
-			case "code":
-				guard consumeCodeDelimiterAfter(cursor: &end, in: text) else { return nil }
-			case "a":
-				guard consumeLinkSuffix(cursor: &end, in: text) else { return nil }
-			default:
-				return nil
+		guard consumeSyntaxEnd(edit.syntaxEnd, cursor: &end, in: text) else { return nil }
+		return NSRange(location: start, length: end - start)
+	}
+
+	private static func consumeSyntaxStart(
+		_ tags: [String],
+		cursor: inout Int,
+		in text: NSString
+	) -> Bool {
+		var failedStates: Set<String> = []
+		return consumeSyntaxStart(
+			tags, cursor: &cursor, in: text, failedStates: &failedStates)
+	}
+
+	private static func consumeSyntaxStart(
+		_ tags: [String],
+		cursor: inout Int,
+		in text: NSString,
+		failedStates: inout Set<String>
+	) -> Bool {
+		guard !tags.isEmpty else { return true }
+		let state = syntaxConsumptionState(cursor: cursor, tags: tags)
+		guard !failedStates.contains(state) else { return false }
+		var attemptedTags: Set<String> = []
+		for index in tags.indices {
+			guard attemptedTags.insert(tags[index]).inserted else { continue }
+			var candidateCursor = cursor
+			guard consumeSyntaxStartTag(tags[index], cursor: &candidateCursor, in: text) else { continue }
+			var remaining = tags
+			remaining.remove(at: index)
+			if consumeSyntaxStart(
+				remaining, cursor: &candidateCursor, in: text,
+				failedStates: &failedStates
+			) {
+				cursor = candidateCursor
+				return true
 			}
 		}
-		return NSRange(location: start, length: end - start)
+		failedStates.insert(state)
+		return false
+	}
+
+	private static func consumeSyntaxEnd(
+		_ tags: [String],
+		cursor: inout Int,
+		in text: NSString
+	) -> Bool {
+		var failedStates: Set<String> = []
+		return consumeSyntaxEnd(
+			tags, cursor: &cursor, in: text, failedStates: &failedStates)
+	}
+
+	private static func consumeSyntaxEnd(
+		_ tags: [String],
+		cursor: inout Int,
+		in text: NSString,
+		failedStates: inout Set<String>
+	) -> Bool {
+		guard !tags.isEmpty else { return true }
+		let state = syntaxConsumptionState(cursor: cursor, tags: tags)
+		guard !failedStates.contains(state) else { return false }
+		var attemptedTags: Set<String> = []
+		for index in tags.indices {
+			guard attemptedTags.insert(tags[index]).inserted else { continue }
+			var candidateCursor = cursor
+			guard consumeSyntaxEndTag(tags[index], cursor: &candidateCursor, in: text) else { continue }
+			var remaining = tags
+			remaining.remove(at: index)
+			if consumeSyntaxEnd(
+				remaining, cursor: &candidateCursor, in: text,
+				failedStates: &failedStates
+			) {
+				cursor = candidateCursor
+				return true
+			}
+		}
+		failedStates.insert(state)
+		return false
+	}
+
+	private static func syntaxConsumptionState(cursor: Int, tags: [String]) -> String {
+		"\(cursor)|\(tags.sorted().joined(separator: ","))"
+	}
+
+	private static func consumeSyntaxStartTag(
+		_ tag: String,
+		cursor: inout Int,
+		in text: NSString
+	) -> Bool {
+		switch tag {
+		case "strong": consumeBefore(["**", "__"], cursor: &cursor, in: text)
+		case "em": consumeBefore(["*", "_"], cursor: &cursor, in: text)
+		case "u": consumeBefore(["<u>"], cursor: &cursor, in: text)
+		case "del": consumeBefore(["~~"], cursor: &cursor, in: text)
+		case "mark": consumeBefore(["=="], cursor: &cursor, in: text)
+		case "sup": consumeBefore(["^"], cursor: &cursor, in: text)
+		case "sub": consumeBefore(["~"], cursor: &cursor, in: text)
+		case "code": consumeCodeDelimiterBefore(cursor: &cursor, in: text)
+		case "a": consumeBefore(["["], cursor: &cursor, in: text)
+		default: false
+		}
+	}
+
+	private static func consumeSyntaxEndTag(
+		_ tag: String,
+		cursor: inout Int,
+		in text: NSString
+	) -> Bool {
+		switch tag {
+		case "strong": consumeAfter(["**", "__"], cursor: &cursor, in: text)
+		case "em": consumeAfter(["*", "_"], cursor: &cursor, in: text)
+		case "u": consumeAfter(["</u>"], cursor: &cursor, in: text)
+		case "del": consumeAfter(["~~"], cursor: &cursor, in: text)
+		case "mark": consumeAfter(["=="], cursor: &cursor, in: text)
+		case "sup": consumeAfter(["^"], cursor: &cursor, in: text)
+		case "sub": consumeAfter(["~"], cursor: &cursor, in: text)
+		case "code": consumeCodeDelimiterAfter(cursor: &cursor, in: text)
+		case "a": consumeLinkSuffix(cursor: &cursor, in: text)
+		default: false
+		}
 	}
 
 	private static func consumeBefore(

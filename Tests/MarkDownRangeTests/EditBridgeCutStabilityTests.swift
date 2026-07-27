@@ -93,6 +93,11 @@ import Testing
 			("^Alpha^ Tail", "Alpha", " Tail"),
 			("~Alpha~ Tail", "Alpha", " Tail"),
 			("[Alpha](https://example.com) Tail", "Alpha", " Tail"),
+			("***Alpha*** Tail", "Alpha", " Tail"),
+			("**_Alpha_** Tail", "Alpha", " Tail"),
+			("[**Alpha**](https://example.com) Tail", "Alpha", " Tail"),
+			("~~**Alpha**~~ Tail", "Alpha", " Tail"),
+			("<u>**Alpha**</u> Tail", "Alpha", " Tail"),
 		]
 		for (source, selected, expected) in cases {
 			try await assertCut(source: source, selected: selected, expected: expected)
@@ -105,6 +110,9 @@ import Testing
 			("~~Alpha~~ Tail", "Alpha", " Tail"),
 			("`Alpha` Tail", "Alpha", " Tail"),
 			("[Alpha](https://example.com) Tail", "Alpha", " Tail"),
+			("~~**Alpha**~~ Tail", "Alpha", " Tail"),
+			("<u>**Alpha**</u> Tail", "Alpha", " Tail"),
+			("[**Alpha**](https://example.com) Tail", "Alpha", " Tail"),
 			("# Alpha\n\nTail", "Alpha", "\n\nTail"),
 			("> Alpha\n\nTail", "Alpha", "\n\nTail"),
 			("- Alpha\n\nTail", "Alpha", "\n\nTail"),
@@ -146,6 +154,7 @@ import Testing
 			("1. Alpha\n\nTail", "\n\nTail"),
 			("- [ ] Alpha\n\nTail", "\n\nTail"),
 			("> - **Alpha**\n\nTail", "\n\nTail"),
+			("- Parent\n  - Alpha\n  - Sibling\n- Tail", "- Parent\n  \n  - Sibling\n- Tail"),
 		]
 		for (source, expected) in cases {
 			try await assertCut(source: source, selected: "Alpha", expected: expected)

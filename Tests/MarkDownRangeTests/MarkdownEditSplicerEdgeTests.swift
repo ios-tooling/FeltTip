@@ -131,6 +131,47 @@ import Testing
 		#expect(applied(outcome)?.1 == NSRange(location: 0, length: 0))
 	}
 
+	@Test func cutVerifiesNestedSyntaxIndependentOfNormalizedDOMTagOrder() {
+		for item in [
+			(source: "~~**Alpha**~~ Tail", start: 4, tags: ["del", "strong"]),
+			(source: "<u>**Alpha**</u> Tail", start: 5, tags: ["u", "strong"]),
+		] {
+			let outcome = MarkdownEditSplicer.apply(
+				edit(
+					item.start, item.start + 5, text: "", expected: "Alpha",
+					caret: item.start, selected: true,
+					syntaxStart: item.tags, syntaxEnd: item.tags),
+				to: item.source)
+			#expect(applied(outcome)?.0 == " Tail", "source=\(item.source)")
+		}
+	}
+
+	@Test func reorderedSyntaxMetadataStillRejectsAnUnverifiedExtraDelimiter() {
+		let outcome = MarkdownEditSplicer.apply(
+			edit(
+				4, 9, text: "", expected: "Alpha", caret: 4, selected: true,
+				syntaxStart: ["del", "strong", "em"],
+				syntaxEnd: ["del", "strong", "em"]),
+			to: "~~**Alpha**~~ Tail")
+		#expect(rejection(outcome)?.contains("syntax boundaries") == true)
+	}
+
+	@Test func deeplyRepeatedMalformedSyntaxMetadataRejectsWithoutPermutationExplosion() {
+		let authoredDepth = 40
+		let source = String(repeating: "<u>", count: authoredDepth)
+			+ "Alpha"
+			+ String(repeating: "</u>", count: authoredDepth)
+		let metadata = Array(repeating: "u", count: authoredDepth + 1)
+		let start = authoredDepth * 3
+		let outcome = MarkdownEditSplicer.apply(
+			edit(
+				start, start + 5, text: "", expected: "Alpha",
+				caret: start, selected: true,
+				syntaxStart: metadata, syntaxEnd: metadata),
+			to: source)
+		#expect(rejection(outcome)?.contains("syntax boundaries") == true)
+	}
+
 	@Test func cutConsumesPaddedVariableLengthCodeDelimiters() {
 		let source = "`` `Alpha` `` Tail"
 		let outcome = MarkdownEditSplicer.apply(
