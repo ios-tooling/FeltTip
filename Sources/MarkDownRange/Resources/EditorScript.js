@@ -422,6 +422,16 @@
       } else { for (var i = 0; i < n.childNodes.length; i++) { walk(n.childNodes[i]); if (found) return; } }
     }
     walk(root);
+    // Never leave the caret inside a surrogate pair: a host-supplied offset
+    // (an undo caret hint, a diff-derived restore) can land mid-emoji, and a
+    // splice made from there splits the pair — lone surrogates then mangle
+    // to U+FFFD crossing the JSON bridge and poison every later
+    // verification. Snap to the pair's start.
+    if (found && found.node.nodeType === 3 && found.offset > 0 && found.offset < found.node.nodeValue.length) {
+      var hi = found.node.nodeValue.charCodeAt(found.offset - 1);
+      var lo = found.node.nodeValue.charCodeAt(found.offset);
+      if (hi >= 0xD800 && hi <= 0xDBFF && lo >= 0xDC00 && lo <= 0xDFFF) { found.offset -= 1; }
+    }
     return found;
   }
   // The same-column cell one row down (crossing thead → tbody), or null on

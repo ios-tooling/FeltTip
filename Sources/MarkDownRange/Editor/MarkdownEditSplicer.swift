@@ -72,6 +72,14 @@ enum MarkdownEditSplicer {
 		guard edit.start >= 0, edit.end >= edit.start, edit.end <= text.length else {
 			return .rejected("out-of-bounds start=\(edit.start) end=\(edit.end) len=\(text.length)")
 		}
+		// A boundary inside a surrogate pair would split it: the source would
+		// hold a lone surrogate that mangles to U+FFFD crossing the JSON
+		// bridge, desyncing every later verification. The page snaps carets
+		// to pair boundaries; this is the safety net for offsets that arrive
+		// by other routes.
+		if splitsSurrogatePair(text, at: edit.start) || splitsSurrogatePair(text, at: edit.end) {
+			return .rejected("range splits a surrogate pair start=\(edit.start) end=\(edit.end)")
+		}
 		let range = NSRange(location: edit.start, length: edit.end - edit.start)
 		let actual = text.substring(with: range)
 		if !edit.crossRun, plain(actual) != plain(edit.expected) {
@@ -473,6 +481,14 @@ enum MarkdownEditSplicer {
 
 	private static func quoted(_ s: String) -> String {
 		"\"\(s.replacingOccurrences(of: "\n", with: "\\n"))\""
+	}
+
+	/// True when `offset` falls between the two halves of a UTF-16 surrogate
+	/// pair — a position no splice boundary may ever occupy.
+	private static func splitsSurrogatePair(_ text: NSString, at offset: Int) -> Bool {
+		guard offset > 0, offset < text.length else { return false }
+		return (0xD800...0xDBFF).contains(text.character(at: offset - 1))
+			&& (0xDC00...0xDFFF).contains(text.character(at: offset))
 	}
 }
 
