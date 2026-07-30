@@ -21,9 +21,14 @@ import WebKit
 
 @MainActor
 public final class MermaidSVGRenderer {
-	private let webView: WKWebView
-	private let loader = MermaidLoadWaiter()
+	private var webView: WKWebView
+	private var loader = WebViewLoadWaiter()
 	private var initialized = false
+	private static let maximumSources = 100
+	private static let maximumSourceBytes = 1 * 1024 * 1024
+	private static let maximumDimension: CGFloat = 8_192
+	private static let maximumPixels: CGFloat = 32 * 1024 * 1024
+	private static let javaScriptTimeout: Duration = .seconds(5)
 
 	public init() {
 		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
@@ -35,29 +40,50 @@ public final class MermaidSVGRenderer {
 	/// raw code block), so a single malformed diagram can't sink the export.
 	public func renderSVGs(for sources: [String], theme: String) async -> [String: String] {
 		guard !sources.isEmpty, let engine = MermaidResources.engineJS else { return [:] }
-		await initialize(engine: engine, theme: theme)
+		guard await initialize(engine: engine, theme: theme) else { return [:] }
 		var result: [String: String] = [:]
-		for source in sources where result[source] == nil {
-			if let svg = await render(source) { result[source] = svg }
-		}
+		for source in sources.prefix(Self.maximumSources)
+			where result[source] == nil && source.utf8.count <= Self.maximumSourceBytes {
+				if let svg = await render(source) { result[source] = svg }
+				if !initialized { break }
+			}
 		return result
 	}
 
-	private func initialize(engine: String, theme: String) async {
-		if initialized { return }
+	private func initialize(engine: String, theme: String) async -> Bool {
+		if initialized { return true }
 		let html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><script>\(engine)</script></head><body></body></html>"
 		webView.loadHTMLString(html, baseURL: nil)
-		await loader.wait()
-		_ = try? await webView.callAsyncJavaScript(
-			"mermaid.initialize({ startOnLoad: false, theme: t, securityLevel: 'strict', fontFamily: '-apple-system, BlinkMacSystemFont, \"SF Pro Text\", sans-serif' });",
-			arguments: ["t": theme], contentWorld: .page)
+		do {
+			try await loader.wait()
+		} catch {
+			resetWebView()
+			return false
+		}
+		let didInitialize: Bool? = await callWithTimeout { [webView] in
+			do {
+				_ = try await webView.callAsyncJavaScript(
+					"mermaid.initialize({ startOnLoad: false, theme: t, securityLevel: 'strict', fontFamily: '-apple-system, BlinkMacSystemFont, \"SF Pro Text\", sans-serif' });",
+					arguments: ["t": theme], contentWorld: .page)
+				return true
+			} catch {
+				return false
+			}
+		}
+		guard didInitialize == true else {
+			resetWebView()
+			return false
+		}
 		initialized = true
+		return true
 	}
 
 	private func render(_ source: String) async -> String? {
 		let js = "const { svg } = await mermaid.render('mmd-' + Math.floor(Math.random() * 1e9), src); return svg;"
-		let result = try? await webView.callAsyncJavaScript(js, arguments: ["src": source], contentWorld: .page)
-		return result as? String
+		return await callWithTimeout { [webView] in
+			try? await webView.callAsyncJavaScript(
+				js, arguments: ["src": source], contentWorld: .page) as? String
+		}
 	}
 
 	/// Renders each distinct mermaid source to a PNG (`scale`× pixels) plus its
@@ -67,11 +93,13 @@ public final class MermaidSVGRenderer {
 	/// markup form survives.
 	public func renderImages(for sources: [String], theme: String, scale: CGFloat = 2) async -> [String: RenderedDiagram] {
 		guard !sources.isEmpty, let engine = MermaidResources.engineJS else { return [:] }
-		await initialize(engine: engine, theme: theme)
+		guard await initialize(engine: engine, theme: theme) else { return [:] }
 		var result: [String: RenderedDiagram] = [:]
-		for source in sources where result[source] == nil {
-			if let diagram = await renderImage(source, scale: scale) { result[source] = diagram }
-		}
+		for source in sources.prefix(Self.maximumSources)
+			where result[source] == nil && source.utf8.count <= Self.maximumSourceBytes {
+				if let diagram = await renderImage(source, scale: scale) { result[source] = diagram }
+				if !initialized { break }
+			}
 		return result
 	}
 
@@ -94,11 +122,25 @@ public final class MermaidSVGRenderer {
 		const r = el.getBoundingClientRect();
 		return { x: r.left, y: r.top, w: Math.ceil(r.width), h: Math.ceil(r.height) };
 		"""
-		guard let dims = try? await webView.callAsyncJavaScript(layout, arguments: ["src": source], contentWorld: .page) as? [String: Any],
-			  let w = (dims["w"] as? NSNumber)?.doubleValue, w > 0,
-			  let h = (dims["h"] as? NSNumber)?.doubleValue, h > 0 else { return nil }
-		let x = (dims["x"] as? NSNumber)?.doubleValue ?? 0
-		let y = (dims["y"] as? NSNumber)?.doubleValue ?? 0
+		guard let dims: DiagramDimensions = await callWithTimeout({ [webView] in
+			guard let values = try? await webView.callAsyncJavaScript(
+				layout, arguments: ["src": source], contentWorld: .page) as? [String: Any],
+				  let w = (values["w"] as? NSNumber)?.doubleValue,
+				  let h = (values["h"] as? NSNumber)?.doubleValue else { return nil }
+			return DiagramDimensions(
+				x: (values["x"] as? NSNumber)?.doubleValue ?? 0,
+				y: (values["y"] as? NSNumber)?.doubleValue ?? 0,
+				width: w,
+				height: h
+			)
+		}) else { return nil }
+		let w = dims.width
+		let h = dims.height
+		guard w.isFinite, w > 0, h.isFinite, h > 0,
+			  w <= Self.maximumDimension, h <= Self.maximumDimension,
+			  w * h <= Self.maximumPixels else { return nil }
+		let x = dims.x
+		let y = dims.y
 
 		// Render to PDF — `createPDF` works on a detached, off-screen webview
 		// (`takeSnapshot` needs an on-screen window), then rasterize the vector
@@ -116,8 +158,63 @@ public final class MermaidSVGRenderer {
 		return RenderedDiagram(png: png, size: CGSize(width: w, height: h))
 	}
 
+	private struct DiagramDimensions: Sendable {
+		let x: Double
+		let y: Double
+		let width: Double
+		let height: Double
+	}
+
+	private enum TimedResult<Value: Sendable>: Sendable {
+		case value(Value?)
+		case timedOut
+	}
+
+	/// Race WebKit against a hard deadline. A timed-out WebView is discarded:
+	/// JavaScript promises cannot be reliably interrupted in place.
+	private func callWithTimeout<Value: Sendable>(
+		_ operation: @escaping @MainActor @Sendable () async -> Value?
+	) async -> Value? {
+		let operationTask = Task { @MainActor in await operation() }
+		let (stream, continuation) = AsyncStream<TimedResult<Value>>.makeStream()
+		let resultObserver = Task {
+			continuation.yield(.value(await operationTask.value))
+		}
+		let timeoutTask = Task {
+			try? await Task.sleep(for: Self.javaScriptTimeout)
+			guard !Task.isCancelled else { return }
+			continuation.yield(.timedOut)
+		}
+		var iterator = stream.makeAsyncIterator()
+		let result = await iterator.next() ?? .timedOut
+		continuation.finish()
+		resultObserver.cancel()
+		timeoutTask.cancel()
+		switch result {
+		case .value(let value):
+			return value
+		case .timedOut:
+			operationTask.cancel()
+			resetWebView()
+			return nil
+		}
+	}
+
+	private func resetWebView() {
+		webView.stopLoading()
+		webView.navigationDelegate = nil
+		loader = WebViewLoadWaiter()
+		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+		webView.navigationDelegate = loader
+		initialized = false
+	}
+
 	private static func rasterize(pdf: Data, size: CGSize, scale: CGFloat) -> Data? {
-		guard let pdfImage = NSImage(data: pdf) else { return nil }
+		guard scale.isFinite, scale > 0, scale <= 4,
+			  size.width.isFinite, size.height.isFinite,
+			  size.width <= maximumDimension, size.height <= maximumDimension,
+			  size.width * size.height * scale * scale <= maximumPixels,
+			  let pdfImage = NSImage(data: pdf) else { return nil }
 		let pixelsWide = Int((size.width * scale).rounded())
 		let pixelsHigh = Int((size.height * scale).rounded())
 		guard pixelsWide > 0, pixelsHigh > 0,
@@ -140,21 +237,4 @@ public struct RenderedDiagram: Sendable {
 	public let size: CGSize
 }
 
-private final class MermaidLoadWaiter: NSObject, WKNavigationDelegate {
-	private var continuation: CheckedContinuation<Void, Never>?
-
-	func wait() async {
-		await withCheckedContinuation { continuation = $0 }
-	}
-
-	private func resume() {
-		guard let continuation else { return }
-		self.continuation = nil
-		continuation.resume()
-	}
-
-	func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { resume() }
-	func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { resume() }
-	func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { resume() }
-}
 #endif

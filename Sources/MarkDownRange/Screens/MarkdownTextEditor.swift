@@ -119,7 +119,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.contentView.postsBoundsChangedNotifications = true
 		applyTheme(to: textView, scrollView: scrollView, coordinator: context.coordinator)
 		updateRuler(scrollView: scrollView, textView: textView)
-		updateHighlighting(textView: textView)
+		context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
+		updateHighlighting(textView: textView, coordinator: context.coordinator)
 
 		context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
 			forName: NSView.boundsDidChangeNotification,
@@ -207,6 +208,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let sel = textView.selectedRange()
 			textView.string = text
 			context.coordinator.lineIndex.rebuild(for: text)
+			context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
 			context.coordinator.scheduleIncrementalLayout(for: textView)
@@ -341,9 +343,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 	}
 
-	private func updateHighlighting(textView: NSTextView) {
+	private func updateHighlighting(textView: NSTextView, coordinator: Coordinator) {
 		if syntaxHighlightingEnabled, let theme {
-			MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme, options: markdownOptions)
+			let fences = coordinator.codeFenceRanges
+				?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
+			coordinator.codeFenceRanges = fences
+			MarkdownSyntaxHighlighter.highlight(
+				textView: textView, theme: theme, options: markdownOptions,
+				codeFenceRanges: fences)
 		} else if !syntaxHighlightingEnabled {
 			MarkdownSyntaxHighlighter.clearHighlighting(textView: textView)
 		}
@@ -372,7 +379,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		coordinator.lastHighlightedSyntaxEnabled = syntaxHighlightingEnabled
 		coordinator.lastHighlightedThemeSignature = theme?.signature
 		coordinator.lastHighlightedOptions = markdownOptions
-		updateHighlighting(textView: textView)
+		updateHighlighting(textView: textView, coordinator: coordinator)
 	}
 
 	/// Show (or clear) the other pane's selection as an inactive-selection
@@ -478,6 +485,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// Accumulates the edited range between debounced highlight passes.
 		/// Cleared each time the debounced timer fires.
 		var pendingHighlightRange: NSRange?
+		/// Maintained incrementally so ordinary typing never runs the fence
+		/// regex across the whole document.
+		var codeFenceRanges: [NSRange]?
 		/// UTF-16 offsets of logical line starts. Maintained incrementally from
 		/// NSTextStorage edits so cursor reports can binary-search instead of
 		/// allocating and splitting the entire prefix on every movement.
@@ -496,11 +506,41 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard editedMask.contains(.editedCharacters) else { return }
 			lineIndex.applyEdit(
 				in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
+			updateFenceRanges(after: editedRange, delta: delta, in: textStorage.string as NSString)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
 				pendingHighlightRange = editedRange
 			}
+		}
+
+		private func updateFenceRanges(after editedRange: NSRange, delta: Int, in text: NSString) {
+			guard var ranges = codeFenceRanges else { return }
+			let insertedEnd = min(text.length, editedRange.location + editedRange.length)
+			if editedRange.location <= insertedEnd,
+			   text.substring(with: NSRange(
+				location: editedRange.location,
+				length: max(0, insertedEnd - editedRange.location))).contains("`") {
+				codeFenceRanges = nil
+				return
+			}
+			let oldLength = max(0, editedRange.length - delta)
+			let oldEnd = editedRange.location + oldLength
+			for index in ranges.indices {
+				let fence = ranges[index]
+				if oldEnd <= fence.location {
+					ranges[index].location += delta
+				} else if editedRange.location >= fence.location + fence.length {
+					continue
+				} else if editedRange.location > fence.location + 3,
+						  oldEnd < fence.location + fence.length - 3 {
+					ranges[index].length += delta
+				} else {
+					codeFenceRanges = nil
+					return
+				}
+			}
+			codeFenceRanges = ranges
 		}
 
 		/// Runs once scrolling has been quiet for the debounce window. Reads
@@ -557,7 +597,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				guard let self, let textView, let theme = self.parent.theme else { return }
 				let edited = self.pendingHighlightRange
 				self.pendingHighlightRange = nil
-				MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme, options: self.parent.markdownOptions, editedRange: edited)
+				let fences = self.codeFenceRanges
+					?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
+				self.codeFenceRanges = fences
+				MarkdownSyntaxHighlighter.highlight(
+					textView: textView, theme: theme,
+					options: self.parent.markdownOptions, editedRange: edited,
+					codeFenceRanges: fences)
 			}
 		}
 

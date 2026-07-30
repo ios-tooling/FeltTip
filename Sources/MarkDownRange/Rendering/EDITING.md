@@ -129,9 +129,11 @@ markdown *is* the rich form. Inside a table cell newlines fold to spaces.
   callback can never overwrite newer HTML or make future diffs target a page
   that never accepted their baseline.
 - Documents are untrusted input: `HTMLPassthroughSanitizer` strips script,
-  framing and remote-loading HTML from the one seam (`.htmlBlock`) where a
-  document's own markup reaches the page. The page hosts the edit bridge, so
-  script there would have the document, the network and the clipboard in reach.
+  framing, event handlers and network-capable attributes such as `ping` from
+  the one seam (`.htmlBlock`) where a document's own markup reaches the page.
+  The generated page also carries a CSP that blocks all remote subresources
+  unless the host explicitly opts in. The page hosts the edit bridge, so script
+  there would have the document, the network and the clipboard in reach.
 
 ## Test seams, cheapest first
 

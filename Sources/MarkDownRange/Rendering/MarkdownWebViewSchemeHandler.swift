@@ -8,15 +8,55 @@ import AppKit
 import UniformTypeIdentifiers
 import WebKit
 
+/// Thread-safe filesystem boundary shared by the SwiftUI update path and the
+/// URL-scheme handler. A web page may request only supported resources beneath
+/// the document folder that supplied its base URL.
+final class LocalResourceAccessPolicy: @unchecked Sendable {
+	static let maximumResourceBytes = 64 * 1024 * 1024
+	private let lock = NSLock()
+	private var root: URL?
+
+	func setRoot(_ url: URL?) {
+		let resolved = url?.standardizedFileURL.resolvingSymlinksInPath()
+		lock.lock()
+		root = resolved
+		lock.unlock()
+	}
+
+	func authorizedFileURL(for requestURL: URL) -> URL? {
+		guard requestURL.host == "res" else { return nil }
+		lock.lock()
+		let root = root
+		lock.unlock()
+		guard let root else { return nil }
+		let candidate = URL(fileURLWithPath: requestURL.path)
+			.standardizedFileURL.resolvingSymlinksInPath()
+		let rootPath = root.path
+		guard candidate.path == rootPath
+			|| candidate.path.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/")
+		else { return nil }
+		guard let type = UTType(filenameExtension: candidate.pathExtension),
+			  type.conforms(to: .image)
+				|| type.conforms(to: .audiovisualContent)
+				|| type.conforms(to: .font)
+		else { return nil }
+		guard let size = try? candidate.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+			  size <= Self.maximumResourceBytes else { return nil }
+		return candidate
+	}
+}
+
 /// Serves local files referenced by the rendered page (images, etc.) under the
 /// custom resource scheme. The request URL's path is the real filesystem path,
 /// so we read the bytes directly — the way to show local images in a
 /// `loadHTMLString` page, which WKWebView won't let load `file://` subresources.
 final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
 	weak var coordinator: MarkdownWebView.Coordinator?
+	private let accessPolicy: LocalResourceAccessPolicy
 
-	init(coordinator: MarkdownWebView.Coordinator?) {
+	init(coordinator: MarkdownWebView.Coordinator?, accessPolicy: LocalResourceAccessPolicy) {
 		self.coordinator = coordinator
+		self.accessPolicy = accessPolicy
 		super.init()
 	}
 
@@ -38,11 +78,23 @@ final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
 			task.didFinish()
 			return
 		}
-		let fileURL = URL(fileURLWithPath: url.path)
-		guard let data = try? Data(contentsOf: fileURL) else {
+		guard let fileURL = accessPolicy.authorizedFileURL(for: url) else {
 			task.didFailWithError(URLError(.noPermissionsToReadFile))
 			let coordinator = coordinator
 			Task { @MainActor in coordinator?.reportResourceAccessDenied() }
+			return
+		}
+		guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+			task.didFailWithError(URLError(.noPermissionsToReadFile))
+			let coordinator = coordinator
+			Task { @MainActor in coordinator?.reportResourceAccessDenied() }
+			return
+		}
+		defer { try? handle.close() }
+		guard let data = try? handle.read(
+				upToCount: LocalResourceAccessPolicy.maximumResourceBytes + 1),
+			  data.count <= LocalResourceAccessPolicy.maximumResourceBytes else {
+			task.didFailWithError(URLError(.dataLengthExceedsMaximum))
 			return
 		}
 		let mimeType = UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"

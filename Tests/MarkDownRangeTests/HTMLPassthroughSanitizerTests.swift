@@ -55,7 +55,13 @@ import Testing
 	}
 
 	@Test func smilAnimationCannotInstallAHandler() {
-		#expect(clean("<set attributeName=\"onload\" to=\"alert(1)\" />") == "<set to=\"alert(1)\" />")
+		#expect(clean("<set attributeName=\"onload\" to=\"alert(1)\" />") == "")
+	}
+
+	@Test func smilCannotMutateLinksIntoExecutableURLs() {
+		#expect(clean("<svg><a><set attributeName=\"href\" to=\"javascript:alert(1)\"/><text>x</text></a></svg>")
+			== "<svg><a><text>x</text></a></svg>")
+		#expect(clean("<animate attributeName=\"href\" values=\"https://safe;javascript:alert(1)\"/>") == "")
 	}
 
 	// MARK: URL schemes
@@ -64,7 +70,8 @@ import Testing
 		#expect(clean("<a href=\"javascript:alert(1)\">x</a>") == "<a>x</a>")
 		#expect(clean("<a href=\"JaVaScRiPt:alert(1)\">x</a>") == "<a>x</a>")
 		#expect(clean("<a href=\"vbscript:x\">x</a>") == "<a>x</a>")
-		#expect(clean("<form action=\"javascript:x\"><input></form>") == "<form><input></form>")
+		#expect(clean("<form action=\"javascript:x\"><input></form>") == "")
+		#expect(clean("<form action=\"https://example.com\"><button>Continue</button></form>") == "Continue")
 	}
 
 	@Test func encodedScriptURLsAreDroppedToo() {
@@ -94,12 +101,21 @@ import Testing
 		#expect(clean("<div srcdoc=\"<script>alert(1)</script>\">x</div>") == "<div>x</div>")
 	}
 
+	@Test func hyperlinkAuditingIsDropped() {
+		#expect(clean("<a href=\"https://safe.example\" ping=\"https://tracker.example/p\">x</a>")
+			== "<a href=\"https://safe.example\">x</a>")
+		#expect(clean("<a PING='//tracker.example/p' href='/local'>x</a>")
+			== "<a href=\"/local\">x</a>")
+	}
+
 	// MARK: Document-level elements
 
 	@Test func documentReloadingElementsAreDropped() {
 		#expect(clean("<base href=\"https://evil.example/\">") == "")
 		#expect(clean("<meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\">") == "")
 		#expect(clean("<link rel=\"stylesheet\" href=\"https://evil.example/x.css\">") == "")
+		#expect(clean("<style>@import url(https://evil.example/x.css);</style>") == "")
+		#expect(clean("<div style=\"background:url(https://evil.example/pixel)\">x</div>") == "<div>x</div>")
 	}
 
 	@Test func embeddedDocumentsAreDropped() {
@@ -122,7 +138,6 @@ import Testing
 			"<br>",
 			"<hr />",
 			"<p>unquoted=values and text</p>",
-			"<style>.x { color: red; }</style>",
 			"<!-- a comment -->",
 			"<div>\n\t<p>indented</p>\n</div>",
 		]

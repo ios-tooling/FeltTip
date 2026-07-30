@@ -14,7 +14,15 @@ import WebKit
 
 extension MarkdownWebView.Coordinator {
 	public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-		guard message.name == "mdedit", let body = message.body as? [String: Any] else { return }
+		guard message.name == "mdedit",
+			  message.frameInfo.isMainFrame,
+			  message.webView === webView,
+			  isTrustedDocumentURL(message.frameInfo.request.url),
+			  let body = message.body as? [String: Any]
+		else {
+			bridgeIncidents.append("rejected message from untrusted frame/origin")
+			return
+		}
 		// Scroll position report — remembered so reloads don't jump to top, and
 		// forwarded to the host (as top/visible/content fractions) for sync.
 		if body["type"] as? String == "scroll" {

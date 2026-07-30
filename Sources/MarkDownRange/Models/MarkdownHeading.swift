@@ -22,7 +22,11 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 		markdown.enumerateSubstrings(
 			in: markdown.startIndex..<markdown.endIndex,
 			options: [.byLines, .substringNotRequired]
-		) { _, lineRange, _, _ in
+		) { _, lineRange, _, stop in
+			if Task.isCancelled {
+				stop = true
+				return
+			}
 			let sourceRange = NSRange(lineRange, in: markdown)
 			let line = String(markdown[lineRange])
 			let trimmed = line.trimmingCharacters(in: .whitespaces)

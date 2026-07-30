@@ -29,6 +29,7 @@ public enum MarkdownBlockParser {
 		trackSourceOffsets: Bool = false,
 		options: MarkdownOptions = .default
 	) -> [MarkdownBlock] {
+		guard !Task.isCancelled else { return [] }
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body, bodyOffset, _) = extractFrontmatter(markdown)
 		let tPre0 = CFAbsoluteTimeGetCurrent()
@@ -50,6 +51,7 @@ public enum MarkdownBlockParser {
 			processed = MarkdownPreprocessor.process(body, options: options)
 			offsetMap = nil
 		}
+		guard !Task.isCancelled else { return [] }
 		let tDoc0 = CFAbsoluteTimeGetCurrent()
 		// Editable rendering must keep run text byte-identical to the source,
 		// so cmark's own smart punctuation (quotes/dashes/ellipsis) is disabled
@@ -57,6 +59,7 @@ public enum MarkdownBlockParser {
 		// differently than the source reads and go unstamped. Display-only
 		// parses keep the typography.
 		let document = Document(parsing: processed, options: trackSourceOffsets ? .disableSmartOpts : [])
+		guard !Task.isCancelled else { return [] }
 		let tBuild0 = CFAbsoluteTimeGetCurrent()
 		let counter = CheckboxCounter(checkboxOffset)
 		// Offsets come back through the preprocessing map (when present) and then
@@ -65,6 +68,7 @@ public enum MarkdownBlockParser {
 		let converter = trackSourceOffsets ? SourceOffsetConverter(processed, baseOffset: bodyOffset, map: offsetMap) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
+		guard !Task.isCancelled else { return [] }
 		// Frontmatter always renders as the parsed read-only card, including in
 		// the styled-text editor. Body blocks carry their own source offsets
 		// (shifted past the stripped frontmatter by `bodyOffset`), so keeping the
@@ -74,6 +78,7 @@ public enum MarkdownBlockParser {
 		}
 		let tPost0 = CFAbsoluteTimeGetCurrent()
 		let result = postProcess(blocks)
+		guard !Task.isCancelled else { return [] }
 		let tEnd = CFAbsoluteTimeGetCurrent()
 		Self.lastParseMetrics = ParseMetrics(
 			preprocessMs: (tDoc0 - tPre0) * 1000,

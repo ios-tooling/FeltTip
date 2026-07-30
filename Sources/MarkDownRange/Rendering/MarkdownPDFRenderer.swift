@@ -25,13 +25,22 @@ public enum MarkdownPDFRenderer {
 	/// Render a full HTML document (as produced by
 	/// `MarkdownHTMLRenderer.renderDocument`) into PDF data. Returns nil if the
 	/// web content fails to load or no graphics context can be created.
-	public static func pdfData(html: String, fontSize: CGFloat = 13, margin: CGFloat = 36) async -> Data? {
+	public static func pdfData(
+		html: String,
+		fontSize: CGFloat = 13,
+		margin: CGFloat = 36,
+		allowRemoteResources: Bool = false
+	) async -> Data? {
 		let printW = pageWidth - 2 * margin
 		let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: printW, height: pageHeight))
-		let loader = PDFWebViewLoader()
+		let loader = WebViewLoadWaiter()
 		webView.navigationDelegate = loader
-		webView.loadHTMLString(injectingPrintCSS(into: html, fontSize: fontSize), baseURL: nil)
-		do { try await loader.waitForLoad() } catch { return nil }
+		let securedHTML = securingForWebView(
+			html, allowRemoteResources: allowRemoteResources)
+		webView.loadHTMLString(
+			injectingPrintCSS(into: securedHTML, fontSize: fontSize),
+			baseURL: nil)
+		do { try await loader.wait() } catch { return nil }
 
 		// Expand to full content height so createPDF captures the whole document.
 		var cssHeight = pageHeight
@@ -66,6 +75,21 @@ public enum MarkdownPDFRenderer {
 		return html.replacingOccurrences(of: "</head>", with: css + "</head>")
 	}
 
+	/// An export is another untrusted WebView render surface. Keep remote images
+	/// and media from becoming tracking requests (or delaying a PDF indefinitely)
+	/// unless the caller deliberately opts in.
+	static func securingForWebView(_ html: String, allowRemoteResources: Bool) -> String {
+		let policy = MarkdownHTMLRenderer.webViewContentSecurityPolicy(
+			allowRemoteResources: allowRemoteResources)
+		let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(policy)\">"
+		guard let head = html.range(of: "<head>", options: .caseInsensitive) else {
+			return meta + html
+		}
+		var secured = html
+		secured.insert(contentsOf: meta, at: head.upperBound)
+		return secured
+	}
+
 	/// Document-relative top + height (CSS px) of elements we don't want split
 	/// across a page boundary. Fed to the slicer so it can nudge page breaks.
 	static func unbreakableBoxes(in webView: WKWebView) async -> [(top: CGFloat, height: CGFloat)] {
@@ -91,23 +115,4 @@ public enum MarkdownPDFRenderer {
 	}
 }
 
-/// Drives a `WKWebView` load to completion via async/await.
-@MainActor
-final class PDFWebViewLoader: NSObject, WKNavigationDelegate {
-	private var continuation: CheckedContinuation<Void, Error>?
-
-	func waitForLoad() async throws {
-		try await withCheckedThrowingContinuation { self.continuation = $0 }
-	}
-
-	private func resume(throwing error: Error? = nil) {
-		guard let continuation else { return }
-		self.continuation = nil
-		if let error { continuation.resume(throwing: error) } else { continuation.resume() }
-	}
-
-	func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { resume() }
-	func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { resume(throwing: error) }
-	func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { resume(throwing: error) }
-}
 #endif

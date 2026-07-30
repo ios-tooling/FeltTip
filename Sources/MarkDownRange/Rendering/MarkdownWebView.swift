@@ -29,6 +29,7 @@ import SwiftUI
 import WebKit
 
 public struct MarkdownWebView: NSViewRepresentable {
+	@Environment(\.markdownLinkAccessScope) var linkAccessScope
 	let text: String
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
@@ -41,6 +42,10 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// extension's sandbox can't load a payload that large (it crashes the
 	/// preview), so only the in-app web renderer opts in.
 	var renderMermaid = false
+	/// Remote subresources are blocked by the generated page's CSP unless a host
+	/// deliberately opts in. Opening an untrusted Markdown file must not silently
+	/// turn an image URL into a tracking request.
+	var allowsRemoteResources = false
 	/// Called when a local resource (e.g. an image) couldn't be read because the
 	/// sandbox hasn't granted access to its folder. The host uses this to offer
 	/// the user a folder-access grant.
@@ -116,6 +121,13 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func renderMermaid(_ flag: Bool) -> Self {
 		var copy = self
 		copy.renderMermaid = flag
+		return copy
+	}
+
+	/// Permit HTTP(S) images/media for a trusted document. Off by default.
+	public func allowRemoteResources(_ flag: Bool) -> Self {
+		var copy = self
+		copy.allowsRemoteResources = flag
 		return copy
 	}
 
@@ -217,8 +229,13 @@ public struct MarkdownWebView: NSViewRepresentable {
 
 	public func makeNSView(context: Context) -> MarkdownWebViewFindHost {
 		let config = WKWebViewConfiguration()
+		let resourcePolicy = LocalResourceAccessPolicy()
+		resourcePolicy.setRoot(baseURL)
+		context.coordinator.localResourceAccessPolicy = resourcePolicy
 		config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "mdedit")
-		config.setURLSchemeHandler(LocalResourceSchemeHandler(coordinator: context.coordinator), forURLScheme: Self.resourceScheme)
+		config.setURLSchemeHandler(
+			LocalResourceSchemeHandler(coordinator: context.coordinator, accessPolicy: resourcePolicy),
+			forURLScheme: Self.resourceScheme)
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = context.coordinator
 		webView.setValue(false, forKey: "drawsBackground")
@@ -231,6 +248,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func updateNSView(_ host: MarkdownWebViewFindHost, context: Context) {
 		let webView = host.webView
 		context.coordinator.parent = self
+		context.coordinator.localResourceAccessPolicy?.setRoot(baseURL)
 		// Pick up pending restores before the text-driven reload runs, so
 		// `didFinish` places them on the freshly stamped DOM.
 		context.coordinator.applyCaretTarget()

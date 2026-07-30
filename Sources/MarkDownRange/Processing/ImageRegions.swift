@@ -41,38 +41,29 @@ enum ImageRegions {
 	static func collect(in html: String) -> [Hit] {
 		let ns = html as NSString
 		let fullRange = NSRange(location: 0, length: ns.length)
-
-		return imgPattern.matches(in: html, range: fullRange).map { match in
+		var currentAnchor: String?
+		var hits: [Hit] = []
+		for match in tagPattern.matches(in: html, range: fullRange) {
 			let fullTag = ns.substring(with: match.range)
-			let src = ns.substring(with: match.range(at: 1))
+			let lower = fullTag.lowercased()
+			if lower.hasPrefix("</a") {
+				currentAnchor = nil
+				continue
+			}
+			if lower.hasPrefix("<a") {
+				currentAnchor = HTMLAttributeParser.extractAttribute("href", from: fullTag)
+				continue
+			}
+			guard let src = HTMLAttributeParser.extractAttribute("src", from: fullTag) else { continue }
 			let alt = HTMLAttributeParser.extractAttribute("alt", from: fullTag) ?? ""
 			let title = HTMLAttributeParser.extractAttribute("title", from: fullTag)
 			let (w, h) = HTMLAttributeParser.extractDimensions(from: fullTag)
-			let link = enclosingAnchorHref(in: html, ns: ns, before: match.range.location)
-			return Hit(range: match.range, src: src, alt: alt, link: link, width: w, height: h, title: title)
+			hits.append(Hit(range: match.range, src: src, alt: alt, link: currentAnchor, width: w, height: h, title: title))
 		}
+		return hits
 	}
 
-	private static let imgPattern = try! NSRegularExpression(
-		pattern: #"<img[^>]*src=["']([^"']+)["'][^>]*>"#, options: .caseInsensitive
+	private static let tagPattern = try! NSRegularExpression(
+		pattern: #"<(?:a\b[^>]*|/a\s*|img\b[^>]*)>"#, options: .caseInsensitive
 	)
-
-	private static let openAnchorPattern = try! NSRegularExpression(
-		pattern: #"<a[^>]*href=["']([^"']+)["'][^>]*>"#, options: .caseInsensitive
-	)
-
-	private static let closeAnchorPattern = try! NSRegularExpression(
-		pattern: #"</a\s*>"#, options: .caseInsensitive
-	)
-
-	/// Last `<a href="…">` opening before `position` with no `</a>` between it and `position`.
-	private static func enclosingAnchorHref(in html: String, ns: NSString, before position: Int) -> String? {
-		let prefixRange = NSRange(location: 0, length: position)
-		let opens = openAnchorPattern.matches(in: html, range: prefixRange)
-		guard let lastOpen = opens.last else { return nil }
-		let afterOpenStart = lastOpen.range.location + lastOpen.range.length
-		let between = NSRange(location: afterOpenStart, length: position - afterOpenStart)
-		if closeAnchorPattern.firstMatch(in: html, range: between) != nil { return nil }
-		return ns.substring(with: lastOpen.range(at: 1))
-	}
 }

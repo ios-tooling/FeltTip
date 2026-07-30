@@ -67,5 +67,29 @@ import Testing
 		#expect(try await harness.evaluate("String(document.querySelectorAll('div.note').length)") == "1")
 		#expect(try await harness.evaluate("document.querySelector('div.note').textContent") == "kept")
 	}
+
+	@Test func formControlsCannotSurviveOrNavigateTheEditor() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: """
+			before
+
+			<form action="https://example.com/escape"><button>Continue</button></form>
+
+			after
+			""")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("String(document.querySelectorAll('form,input,button').length)") == "0")
+		#expect(try await harness.evaluate("document.body.textContent.includes('Continue') ? 'yes' : 'no'") == "yes")
+		#expect(harness.coordinator.isTrustedDocumentURL(harness.webView.url))
+	}
+
+	@Test func programmaticRemoteTopLevelNavigationIsBlocked() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "trusted body\n")
+		let originalURL = harness.webView.url
+		harness.webView.load(URLRequest(url: try #require(URL(string: "https://example.com/escape"))))
+		try await Task.sleep(for: .milliseconds(200))
+		#expect(harness.webView.url == originalURL)
+		#expect(try await harness.evaluate("document.body.textContent.includes('trusted body') ? 'yes' : 'no'") == "yes")
+	}
 }
 #endif

@@ -20,7 +20,8 @@ enum MarkdownSyntaxHighlighter {
 		textView: NSTextView,
 		theme: MarkdownTheme,
 		options: MarkdownOptions = .default,
-		editedRange: NSRange? = nil
+		editedRange: NSRange? = nil,
+		codeFenceRanges cachedFenceRanges: [NSRange]? = nil
 	) {
 		guard let layoutManager = textView.layoutManager,
 			  let textStorage = textView.textStorage else { return }
@@ -44,7 +45,7 @@ enum MarkdownSyntaxHighlighter {
 
 		// Code fences must always be scanned over the whole document because a
 		// fence may begin outside `scope` but reach into it.
-		let codeFenceRanges = matches(for: codeFencePattern, in: string)
+		let codeFenceRanges = cachedFenceRanges ?? fenceRanges(in: string)
 		for fence in codeFenceRanges {
 			let inter = NSIntersectionRange(fence, scope)
 			if inter.length > 0 {
@@ -156,6 +157,10 @@ enum MarkdownSyntaxHighlighter {
 	private static func matches(for regex: NSRegularExpression, in string: String) -> [NSRange] {
 		let nsString = string as NSString
 		return regex.matches(in: string, range: NSRange(location: 0, length: nsString.length)).map(\.range)
+	}
+
+	static func fenceRanges(in string: String) -> [NSRange] {
+		matches(for: codeFencePattern, in: string)
 	}
 
 	/// Range-scoped variant — only returns matches whose ranges sit entirely

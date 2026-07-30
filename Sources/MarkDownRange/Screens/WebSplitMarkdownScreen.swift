@@ -23,12 +23,16 @@ public struct WebSplitMarkdownScreen: View {
 	/// When set, edits from either pane are reported here — with the post-edit
 	/// caret offset when known — instead of being written to the `text` binding.
 	var onSourceEdit: ((String, Int?) -> Void)?
+	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	var onVisibleSectionChanged: ((String) -> Void)?
 	var initialScrollFraction: Double?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	/// Host-driven caret restore (undo/redo), applied to both panes so the
 	/// insertion point lands at the edit site regardless of which pane is focused.
 	var caretTarget: MarkdownCaretTarget?
+	var selectionTarget: MarkdownSelectionTarget?
+	var onResourceAccessDenied: (() -> Void)?
+	var contentReloadToken: Int
 	/// Forwarded to the web preview so task-list checkboxes stay interactive,
 	/// matching SplitMarkdownScreen (which picks this up from the environment).
 	@Environment(\.onCheckboxToggle) private var onCheckboxToggle
@@ -44,10 +48,14 @@ public struct WebSplitMarkdownScreen: View {
 		editablePreview: Bool = false,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
 		onSourceEdit: ((String, Int?) -> Void)? = nil,
+		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		onVisibleSectionChanged: ((String) -> Void)? = nil,
 		initialScrollFraction: Double? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
-		caretTarget: MarkdownCaretTarget? = nil
+		caretTarget: MarkdownCaretTarget? = nil,
+		selectionTarget: MarkdownSelectionTarget? = nil,
+		onResourceAccessDenied: (() -> Void)? = nil,
+		contentReloadToken: Int = 0
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -59,10 +67,14 @@ public struct WebSplitMarkdownScreen: View {
 		self.editablePreview = editablePreview
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.onSourceEdit = onSourceEdit
+		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.onVisibleSectionChanged = onVisibleSectionChanged
 		self.initialScrollFraction = initialScrollFraction
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.caretTarget = caretTarget
+		self.selectionTarget = selectionTarget
+		self.onResourceAccessDenied = onResourceAccessDenied
+		self.contentReloadToken = contentReloadToken
 	}
 
 	#if os(macOS)
@@ -103,8 +115,10 @@ public struct WebSplitMarkdownScreen: View {
 					rawMirror = nil
 					previewMirror = range
 				},
+				onSourceSelectionChanged: onSourceSelectionChanged,
 				mirroredSelection: rawMirror,
-				caretTarget: caretTarget
+				caretTarget: caretTarget,
+				selectionTarget: selectionTarget
 			)
 			.frame(minWidth: 150, maxWidth: .infinity)
 
@@ -149,6 +163,12 @@ public struct WebSplitMarkdownScreen: View {
 			}
 			.mirroredSelection(previewMirror)
 			.caretTarget(caretTarget)
+			.selectionTarget(selectionTarget)
+			.contentReloadToken(contentReloadToken)
+			.onSourceSelectionChanged { onSourceSelectionChanged?($0) }
+		if let onResourceAccessDenied {
+			view = view.onResourceAccessDenied(onResourceAccessDenied)
+		}
 		if let onCheckboxToggle {
 			view = view.onCheckboxToggle(onCheckboxToggle)
 		}

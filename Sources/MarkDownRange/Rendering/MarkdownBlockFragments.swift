@@ -95,7 +95,13 @@ extension MarkdownHTMLRenderer {
 			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
 		return $emitSourceOffsets.withValue(includeSourceOffsets) {
 			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) {
-				blocks.map { MarkdownBlockFragment(html: renderBlock($0)) }
+				var fragments: [MarkdownBlockFragment] = []
+				fragments.reserveCapacity(blocks.count)
+				for block in blocks {
+					if Task.isCancelled { break }
+					fragments.append(MarkdownBlockFragment(html: renderBlock(block)))
+				}
+				return fragments
 			}
 		}
 	}

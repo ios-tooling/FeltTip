@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import ImageIO
 import JohnnyCache
 #if os(macOS)
 import AppKit
@@ -33,17 +34,27 @@ final class ImageDimensionCache: @unchecked Sendable {
 
 	private let lock = NSLock()
 	private var sizes: [URL: CGSize] = [:]
+	private var recency: [URL] = []
 	private var inFlight: Set<URL> = []
 	private var subscribers: [UUID: @Sendable () -> Void] = [:]
 
 	@MainActor
 	private static let persistentCache = JohnnyCache<URL, ImageDimensionRecord>(
-		configuration: .init(name: "markdown-image-dimensions")
+		configuration: .init(
+			name: "markdown-image-dimensions",
+			inMemory: 1 * 1024 * 1024,
+			onDisk: 8 * 1024 * 1024
+		)
 	)
+	private static let maximumDimension: CGFloat = 32_768
+	private static let maximumPixels: CGFloat = 128 * 1024 * 1024
+	private static let maximumMemoryEntries = 1_024
 
 	func size(for url: URL) -> CGSize? {
 		lock.lock(); defer { lock.unlock() }
-		return sizes[url]
+		guard let size = sizes[url] else { return nil }
+		touchLocked(url)
+		return size
 	}
 
 	/// MainActor-only read that also checks the persistent JohnnyCache store.
@@ -54,7 +65,10 @@ final class ImageDimensionCache: @unchecked Sendable {
 		if let cached = size(for: url) { return cached }
 		guard let record = Self.persistentCache[url] else { return nil }
 		let size = record.cgSize
-		lock.lock(); sizes[url] = size; lock.unlock()
+		guard Self.isSafe(size) else { return nil }
+		lock.lock()
+		storeLocked(size, for: url)
+		lock.unlock()
 		return size
 	}
 
@@ -63,10 +77,10 @@ final class ImageDimensionCache: @unchecked Sendable {
 	}
 
 	private func record(_ size: CGSize, for url: URL, persist: Bool) {
-		guard size.width > 0, size.height > 0 else { return }
+		guard Self.isSafe(size) else { return }
 		lock.lock()
 		let changed = sizes[url] != size
-		sizes[url] = size
+		storeLocked(size, for: url)
 		let callbacks = changed ? Array(subscribers.values) : []
 		lock.unlock()
 		if persist, changed {
@@ -116,17 +130,13 @@ final class ImageDimensionCache: @unchecked Sendable {
 	func prefetchSyncIfLocal(_ url: URL) {
 		guard url.isFileURL else { return }
 		if size(for: url) != nil { return }
-		guard let data = try? Data(contentsOf: url) else { return }
+		guard let data = try? ImageDataLoader.localData(from: url) else { return }
 		let measured: CGSize?
 		if url.isSVGImage {
 			let text = String(data: data, encoding: .utf8) ?? ""
 			measured = SVGDimensionParser.parse(text)
 		} else {
-			#if os(macOS)
-			measured = NSImage(data: data)?.size
-			#else
-			measured = UIImage(data: data)?.size
-			#endif
+			measured = Self.rasterSize(from: data)
 		}
 		guard let measured, measured.width > 0, measured.height > 0 else { return }
 		record(measured, for: url)
@@ -144,18 +154,43 @@ final class ImageDimensionCache: @unchecked Sendable {
 		inFlight.remove(url)
 	}
 
+	private func storeLocked(_ size: CGSize, for url: URL) {
+		sizes[url] = size
+		touchLocked(url)
+		while recency.count > Self.maximumMemoryEntries {
+			sizes.removeValue(forKey: recency.removeFirst())
+		}
+	}
+
+	private func touchLocked(_ url: URL) {
+		recency.removeAll { $0 == url }
+		recency.append(url)
+	}
+
 	private static func fetchSize(_ url: URL) async -> CGSize? {
 		guard let data = try? await ImageDataLoader.data(from: url) else { return nil }
 		if url.isSVGImage {
 			let text = String(data: data, encoding: .utf8) ?? ""
 			return SVGDimensionParser.parse(text)
 		}
-		#if os(macOS)
-		guard let img = NSImage(data: data), img.size.width > 0 else { return nil }
-		return img.size
-		#else
-		guard let img = UIImage(data: data), img.size.width > 0 else { return nil }
-		return img.size
-		#endif
+		return rasterSize(from: data)
+	}
+
+	/// Read only the image header. Constructing NSImage/UIImage can decode a
+	/// compressed pixel bomb merely to discover its dimensions.
+	private static func rasterSize(from data: Data) -> CGSize? {
+		guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+			  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+			  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+			  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue else { return nil }
+		let size = CGSize(width: width, height: height)
+		return isSafe(size) ? size : nil
+	}
+
+	private static func isSafe(_ size: CGSize) -> Bool {
+		size.width.isFinite && size.height.isFinite
+			&& size.width > 0 && size.height > 0
+			&& size.width <= maximumDimension && size.height <= maximumDimension
+			&& size.width * size.height <= maximumPixels
 	}
 }

@@ -40,7 +40,10 @@ public enum MarkdownHTMLRenderer {
 	public static func renderBlocks(_ blocks: [MarkdownBlock]) -> String {
 		var output = ""
 		output.reserveCapacity(blocks.count * 256)
-		for block in blocks { output += renderBlock(block) }
+		for block in blocks {
+			if Task.isCancelled { break }
+			output += renderBlock(block)
+		}
 		return output
 	}
 
@@ -100,15 +103,20 @@ public enum MarkdownHTMLRenderer {
 	/// that render per-block fragments can build the same document from them.
 	static func wrapDocument(
 		body: String, theme: MarkdownTheme, fontSize: CGFloat,
-		embedMermaidEngine: Bool = false, mermaidEngineViaScheme: Bool = false
+		embedMermaidEngine: Bool = false, mermaidEngineViaScheme: Bool = false,
+		contentSecurityPolicy: String? = nil
 	) -> String {
 		let mermaid = embedMermaidEngine ? mermaidEmbed(forBody: body, theme: theme, viaScheme: mermaidEngineViaScheme) : ""
+		let csp = contentSecurityPolicy.map {
+			"<meta http-equiv=\"Content-Security-Policy\" content=\"\($0)\">"
+		} ?? ""
 		return """
 		<!DOCTYPE html>
 		<html>
 		<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
+		\(csp)
 		<style>\(css(for: theme, fontSize: fontSize))</style>
 		</head>
 		<body>
@@ -117,6 +125,26 @@ public enum MarkdownHTMLRenderer {
 		</body>
 		</html>
 		"""
+	}
+
+	/// The live editor/preview policy. Inline style/script are required by the
+	/// generated document and edit bridge; network-capable resource classes stay
+	/// closed unless the host explicitly trusts the document.
+	static func webViewContentSecurityPolicy(allowRemoteResources: Bool) -> String {
+		let remote = allowRemoteResources ? " https: http:" : ""
+		return [
+			"default-src 'none'",
+			"base-uri 'none'",
+			"connect-src 'none'",
+			"font-src data:",
+			"form-action 'none'",
+			"frame-src 'none'",
+			"img-src data: markerlocalres:\(remote)",
+			"media-src data: markerlocalres:\(remote)",
+			"object-src 'none'",
+			"script-src 'unsafe-inline' markerlocalres:",
+			"style-src 'unsafe-inline'",
+		].joined(separator: "; ")
 	}
 
 	/// Inline `<script>` block that bundles the mermaid engine and renders the
@@ -146,15 +174,20 @@ public enum MarkdownHTMLRenderer {
 		\(engineTag)
 		<script>
 		(function () {
-		  document.querySelectorAll('pre > code.language-mermaid').forEach(function (code) {
+		  var diagrams = [];
+		  var candidates = document.querySelectorAll('pre > code.language-mermaid');
+		  for (var i = 0; i < candidates.length && diagrams.length < 100; i++) {
+		    var code = candidates[i];
+		    if ((code.textContent || '').length > 1048576) continue;
 		    var div = document.createElement('div');
 		    div.className = 'mermaid';
 		    div.textContent = code.textContent;
 		    code.parentElement.replaceWith(div);
-		  });
+		    diagrams.push(div);
+		  }
 		  try {
 		    mermaid.initialize({ startOnLoad: false, theme: '\(theme.mermaidTheme)', securityLevel: 'strict', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif' });
-		    mermaid.run({ querySelector: '.mermaid' });
+		    mermaid.run({ nodes: diagrams });
 		  } catch (e) {}
 		})();
 		</script>

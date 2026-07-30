@@ -18,6 +18,7 @@ extension MarkdownWebView {
 	public final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
 		var parent: MarkdownWebView
 		weak var webView: WKWebView?
+		var localResourceAccessPolicy: LocalResourceAccessPolicy?
 		/// The exact text the page currently renders; with `lastConfigSignature`
 		/// it decides whether a state update needs any render at all. A stored
 		/// string, not a hash — hash collisions silently skipped reloads.
@@ -105,13 +106,20 @@ extension MarkdownWebView {
 		var vetoedEdits = 0
 		/// Why each resync/rejection happened, for test failure messages.
 		var bridgeIncidents: [String] = []
+		private var openedLinkAccessScopes: [URL] = []
 
 		init(parent: MarkdownWebView) {
 			self.parent = parent
 		}
 
+		deinit {
+			for scope in openedLinkAccessScopes {
+				scope.stopAccessingSecurityScopedResource()
+			}
+		}
+
 		func configSignature() -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
 		}
 
 		/// Advance to a fresh revision epoch. Called whenever the page's DOM is
@@ -225,7 +233,7 @@ extension MarkdownWebView {
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
 			renderTask = Task { @MainActor [weak self, weak webView] in
-				let fragments = await MarkdownRenderService.shared.blockFragments(
+				let rendered = await MarkdownRenderService.shared.blockResult(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets,
 					interactiveCheckboxes: checkboxes)
@@ -239,7 +247,7 @@ extension MarkdownWebView {
 				self.lastRenderedText = text
 				self.currentSource = text
 				self.pendingHostText = nil
-				self.apply(fragments: fragments, into: webView, thenPlaceCaret: nil)
+				self.apply(rendered, into: webView, thenPlaceCaret: nil)
 			}
 		}
 
@@ -268,32 +276,28 @@ extension MarkdownWebView {
 			let checkboxes = parent.onCheckboxToggle != nil
 			renderTask?.cancel()
 			renderTask = Task { @MainActor [weak self, weak webView] in
-				let fragments = await MarkdownRenderService.shared.blockFragments(
+				let rendered = await MarkdownRenderService.shared.blockResult(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes)
 				guard let self, let webView, generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.pendingSelection = nil
-				self.apply(fragments: fragments, into: webView, thenPlaceCaret: selection)
+				self.apply(rendered, into: webView, thenPlaceCaret: selection)
 			}
 		}
 
 		/// Land freshly rendered fragments on the page: patch the changed span
 		/// when the baseline allows it, otherwise swap the whole body. Assumes
 		/// the caller has already committed coordinator state (text, epoch).
-		private func apply(fragments: [MarkdownBlockFragment], into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
+		private func apply(_ rendered: MarkdownRenderService.BlockResult, into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
+			let fragments = rendered.fragments
 			let generation = renderGeneration
 			let revision = currentRev
 			let fullSwap = { [weak self, weak webView] in
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
-				guard let encoded = try? JSONEncoder().encode(fragments.lazy.map(\.html).joined()),
-				      let json = String(data: encoded, encoding: .utf8) else {
-					self.loadHTML(for: self.currentSource ?? self.parent.text, into: webView)
-					return
-				}
 				self.log("body swap: \(fragments.count) blocks rev=\(revision)")
-				webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(json), \(revision));") {
+				webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(rendered.bodyJSON), \(revision));") {
 					[weak self, weak webView] _, error in
 					guard let self, let webView, error == nil,
 					      generation == self.renderGeneration, revision == self.currentRev else { return }
@@ -357,6 +361,7 @@ extension MarkdownWebView {
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
+			let allowRemoteResources = parent.allowsRemoteResources
 			// Render mermaid as diagrams when the host opted in and we're not
 			// editing (editing keeps the raw, editable source). The engine
 			// loads through our scheme handler instead of being inlined.
@@ -366,7 +371,8 @@ extension MarkdownWebView {
 				let rendered = await MarkdownRenderService.shared.documentHTML(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
-					embedMermaidEngine: embedMermaid)
+					embedMermaidEngine: embedMermaid,
+					allowRemoteResources: allowRemoteResources)
 				guard let self, let webView, generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.lastFragments = rendered.fragments
@@ -392,6 +398,10 @@ extension MarkdownWebView {
 		// MARK: Navigation
 
 		public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+			guard isTrustedDocumentURL(webView.url) else {
+				log("refusing script injection into untrusted navigation \(webView.url?.absoluteString ?? "nil")")
+				return
+			}
 			if parent.onCheckboxToggle != nil {
 				webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
 			}
@@ -507,24 +517,51 @@ extension MarkdownWebView {
 			}
 		}
 
-		public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-			guard navigationAction.navigationType == .linkActivated,
-			      let url = navigationAction.request.url else {
+		public func webView(
+			_ webView: WKWebView,
+			decidePolicyFor navigationAction: WKNavigationAction,
+			decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+		) {
+			let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+			guard isMainFrame else {
+				decisionHandler(.cancel)
+				return
+			}
+			guard let url = navigationAction.request.url else {
+				decisionHandler(.cancel)
+				return
+			}
+			if navigationAction.navigationType == .other, isTrustedDocumentURL(url) {
 				decisionHandler(.allow)
 				return
 			}
-			if isInPageAnchor(url, base: webView.url) {
+			if navigationAction.navigationType == .linkActivated,
+			   isInPageAnchor(url, base: webView.url) {
 				decisionHandler(.allow)
 				return
 			}
 			decisionHandler(.cancel)
-			open(url)
+			if navigationAction.navigationType == .linkActivated {
+				open(url)
+			} else {
+				log("blocked top-level navigation type=\(navigationAction.navigationType.rawValue) url=\(url.absoluteString)")
+			}
+		}
+
+		func isTrustedDocumentURL(_ url: URL?) -> Bool {
+			guard let url else { return false }
+			if url.scheme == "about" { return url.absoluteString == "about:blank" }
+			return url.scheme == MarkdownWebView.resourceScheme && url.host == "res"
 		}
 
 		private func isInPageAnchor(_ url: URL, base: URL?) -> Bool {
 			guard url.fragment != nil else { return false }
 			guard let base else { return url.scheme == "about" }
-			return url.scheme == base.scheme && url.path == base.path
+			var target = URLComponents(url: url, resolvingAgainstBaseURL: true)
+			var current = URLComponents(url: base, resolvingAgainstBaseURL: true)
+			target?.fragment = nil
+			current?.fragment = nil
+			return target == current
 		}
 
 		func open(_ url: URL) {
@@ -532,12 +569,48 @@ extension MarkdownWebView {
 			// to real file URLs before opening.
 			let resolved = url.scheme == MarkdownWebView.resourceScheme ? URL(fileURLWithPath: url.path) : url
 			if resolved.isFileURL, Self.markdownExtensions.contains(resolved.pathExtension.lowercased()) {
-				NSDocumentController.shared.openDocument(withContentsOf: resolved, display: true) { document, _, _ in
-					if document == nil { NSWorkspace.shared.open(resolved) }
+				NSDocumentController.shared.openDocument(withContentsOf: resolved, display: true) { [weak self] document, _, _ in
+					if document == nil { self?.requestAccessAndOpen(resolved) }
 				}
 			} else {
 				NSWorkspace.shared.open(resolved)
 			}
+		}
+
+		private func requestAccessAndOpen(_ target: URL) {
+			let panel = NSOpenPanel()
+			panel.allowsMultipleSelection = false
+			panel.canCreateDirectories = false
+			panel.directoryURL = target.deletingLastPathComponent()
+			switch parent.linkAccessScope {
+			case .file:
+				panel.canChooseFiles = true
+				panel.canChooseDirectories = false
+				panel.message = "Select “\(target.lastPathComponent)” to allow Marker to open this link."
+			case .folder:
+				panel.canChooseFiles = false
+				panel.canChooseDirectories = true
+				panel.message = "Select a folder containing “\(target.lastPathComponent)” to allow this and sibling links."
+			}
+			guard panel.runModal() == .OK, let selected = panel.url else { return }
+			let chosen = selected.standardizedFileURL.resolvingSymlinksInPath()
+			let wanted = target.standardizedFileURL.resolvingSymlinksInPath()
+			let coversTarget: Bool
+			switch parent.linkAccessScope {
+			case .file:
+				coversTarget = chosen.path == wanted.path
+			case .folder:
+				coversTarget = wanted.path.hasPrefix(
+					chosen.path.hasSuffix("/") ? chosen.path : chosen.path + "/")
+			}
+			guard coversTarget else { return }
+			if chosen.startAccessingSecurityScopedResource() {
+				openedLinkAccessScopes.append(chosen)
+			}
+			NSDocumentController.shared.openDocument(
+				withContentsOf: wanted, display: true) { document, _, _ in
+					if document == nil { NSWorkspace.shared.open(wanted) }
+				}
 		}
 
 		private static let markdownExtensions: Set<String> = MarkdownLinkExtensions.all

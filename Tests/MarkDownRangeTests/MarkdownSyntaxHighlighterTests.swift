@@ -165,5 +165,25 @@ import Testing
 		MarkdownSyntaxHighlighter.highlight(textView: tv, theme: .default, editedRange: stale)
 		// We don't assert on styling here — only that no crash occurred.
 	}
+
+	@Test @MainActor
+	func incremental_largeDocumentWithCachedFences_remainsResponsive() {
+		let paragraph = "ordinary prose with **emphasis**, a [link](https://example.com), and `code`.\n\n"
+		let source = String(repeating: paragraph, count: 15_000)
+		let tv = textView(source)
+		let fences = MarkdownSyntaxHighlighter.fenceRanges(in: source)
+		let middle = NSRange(location: (source as NSString).length / 2, length: 1)
+
+		let clock = ContinuousClock()
+		let elapsed = clock.measure {
+			MarkdownSyntaxHighlighter.highlight(
+				textView: tv,
+				theme: .default,
+				editedRange: middle,
+				codeFenceRanges: fences)
+		}
+
+		#expect(elapsed < .seconds(1))
+	}
 }
 #endif

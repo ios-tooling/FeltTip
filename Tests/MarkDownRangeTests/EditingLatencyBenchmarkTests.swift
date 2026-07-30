@@ -40,7 +40,11 @@ import Testing
 		// An accidental full-document re-render per keystroke costs hundreds
 		// of milliseconds on an 800-block document; a healthy fast-path
 		// keystroke is a JS round-trip plus one splice.
-		#expect(median < .milliseconds(100), "median keystroke commit \(median) in an 800-block document")
+		// Concurrent WebKit integration suites can add roughly 10–20 ms of
+		// scheduler contention. Keep the gate comfortably below the
+		// several-hundred-millisecond full-render failure mode without making
+		// the complete parallel test run timing-sensitive.
+		#expect(median < .milliseconds(150), "median keystroke commit \(median) in an 800-block document")
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
 	}

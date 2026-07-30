@@ -139,31 +139,14 @@ enum HTMLInlineConverter {
 
 	private static func segmentIsImageOnly(_ html: String, image: ImageRegions.Hit) -> Bool {
 		let ns = html as NSString
-		// Include an enclosing `<a href="…">…</a>` (when present) in the
-		// "image span," since BlockBuilder's HTML-image extractor and the
-		// regions collector both treat the anchor as part of the image.
-		var spanStart = image.range.location
-		var spanEnd = image.range.location + image.range.length
-		if image.link != nil {
-			if let openMatch = openAnchorPattern.matches(in: html, range: NSRange(location: 0, length: spanStart)).last {
-				spanStart = openMatch.range.location
-			}
-			if let closeMatch = closeAnchorPattern.firstMatch(in: html, range: NSRange(location: spanEnd, length: ns.length - spanEnd)) {
-				spanEnd = closeMatch.range.location + closeMatch.range.length
-			}
-		}
+		// `isWhitespaceOnly` strips tags, so enclosing anchor markup does not
+		// need a second pair of prefix/suffix regex scans.
+		let spanStart = image.range.location
+		let spanEnd = image.range.location + image.range.length
 		let before = ns.substring(with: NSRange(location: 0, length: spanStart))
 		let after = ns.substring(with: NSRange(location: spanEnd, length: ns.length - spanEnd))
 		return isWhitespaceOnly(before) && isWhitespaceOnly(after)
 	}
-
-	private static let openAnchorPattern = try! NSRegularExpression(
-		pattern: #"<a[^>]*href=["'][^"']+["'][^>]*>"#, options: .caseInsensitive
-	)
-
-	private static let closeAnchorPattern = try! NSRegularExpression(
-		pattern: #"</a\s*>"#, options: .caseInsensitive
-	)
 
 	private static func isWhitespaceOnly(_ html: String) -> Bool {
 		HTMLAttributeParser.decodeEntities(HTMLAttributeParser.stripTags(html))

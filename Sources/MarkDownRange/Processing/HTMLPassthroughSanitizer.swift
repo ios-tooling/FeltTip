@@ -20,17 +20,27 @@ enum HTMLPassthroughSanitizer {
 	/// code or load a document of their own.
 	static let droppedWithContent: Set<String> = [
 		"script", "iframe", "object", "embed", "applet", "frame", "frameset",
-		"noembed", "noframes",
+		"noembed", "noframes", "style",
 	]
 
 	/// Elements dropped on their own: they re-point or reload the page around
 	/// the content rather than adding any.
-	static let droppedTags: Set<String> = ["base", "meta", "link"]
+	static let droppedTags: Set<String> = [
+		"base", "meta", "link",
+		// Interactive form controls can navigate a WKWebView through a
+		// `.formSubmitted` action, bypassing ordinary link handling. Keep any
+		// human-readable content between paired tags, but remove the controls.
+		"form", "input", "button", "select", "option", "optgroup", "textarea",
+		"label", "fieldset", "legend", "datalist", "output",
+		// SVG SMIL can mutate an initially harmless href/event attribute after
+		// sanitization (`<set attributeName="href" to="javascript:…">`).
+		"animate", "animatemotion", "animatetransform", "set", "discard", "mpath",
+	]
 
 	/// Attributes carrying a URL, checked against the scheme allow-list.
 	static let urlAttributes: Set<String> = [
-		"href", "src", "srcset", "poster", "data", "background", "action",
-		"formaction", "cite", "longdesc", "xlink:href", "ping",
+		"href", "src", "srcset", "poster", "data", "background",
+		"cite", "longdesc", "xlink:href",
 	]
 
 	/// Schemes a document may point at. Everything script-bearing (`javascript:`,
@@ -103,10 +113,16 @@ enum HTMLPassthroughSanitizer {
 	private static func allows(attribute name: String, value: String?) -> Bool {
 		// Event handlers, in any casing, on any element.
 		if name.hasPrefix("on") { return false }
+		// CSS can initiate arbitrary remote loads and can visually replace the
+		// editor chrome/content. Raw HTML keeps structural formatting, not CSS.
+		if name == "style" { return false }
 		// SMIL animation can otherwise install a handler after the fact.
 		if name == "attributename", value?.lowercased().hasPrefix("on") == true { return false }
 		// An inline document of its own, exempt from everything above.
 		if name == "srcdoc" { return false }
+		// Hyperlink auditing can POST to each URL in `ping` even when the host
+		// cancels the eventual top-level navigation.
+		if name == "ping" { return false }
 		guard urlAttributes.contains(name), let value else { return true }
 		return allows(url: value)
 	}
