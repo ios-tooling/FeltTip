@@ -52,6 +52,20 @@ struct RenderHardeningTests {
 		#expect(view.allowRemoteResources(true).allowsRemoteResources)
 	}
 
+	@Test("Separate WebViews do not share a render queue")
+	@MainActor
+	func webViewsOwnIndependentRenderServices() {
+		let first = MarkdownWebView(
+			text: "large background document", theme: .default, fontSize: 16
+		).makeCoordinator()
+		let second = MarkdownWebView(
+			text: "active document", theme: .default, fontSize: 16
+		).makeCoordinator()
+
+		#expect(ObjectIdentifier(first.renderService)
+			!= ObjectIdentifier(second.renderService))
+	}
+
 	@Test("PDF WebView blocks remote subresources unless explicitly allowed")
 	@MainActor
 	func pdfRemoteResourcesRequireOptIn() {

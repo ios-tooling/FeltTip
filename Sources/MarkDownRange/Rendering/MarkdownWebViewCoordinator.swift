@@ -85,6 +85,10 @@ extension MarkdownWebView {
 		/// the task as well as advancing the generation, so cancellable render
 		/// stages can stop consuming CPU instead of merely dropping their result.
 		var renderTask: Task<Void, Never>?
+		/// Serialize renders for this document without forcing unrelated
+		/// windows through one process-wide queue. A huge background document
+		/// must not head-of-line block a small edit in the active window.
+		let renderService = MarkdownRenderService()
 		/// The per-block fragments of the page currently shown — the baseline
 		/// incremental patches diff against. Nil until a full render lands.
 		var lastFragments: [MarkdownBlockFragment]?
@@ -233,8 +237,9 @@ extension MarkdownWebView {
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
 			let baseline = lastFragments
+			let renderService = renderService
 			renderTask = Task { @MainActor [weak self, weak webView] in
-				let rendered = await MarkdownRenderService.shared.blockResult(
+				let rendered = await renderService.blockResult(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets,
 					interactiveCheckboxes: checkboxes,
@@ -277,9 +282,10 @@ extension MarkdownWebView {
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
 			let baseline = lastFragments
+			let renderService = renderService
 			renderTask?.cancel()
 			renderTask = Task { @MainActor [weak self, weak webView] in
-				let rendered = await MarkdownRenderService.shared.blockResult(
+				let rendered = await renderService.blockResult(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets,
 					interactiveCheckboxes: checkboxes,
@@ -301,12 +307,13 @@ extension MarkdownWebView {
 			let fullSwap = { [weak self, weak webView] in
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
+				let renderService = self.renderService
 				Task { @MainActor [weak self, weak webView] in
 					let bodyJSON: String
 					if let prepared = rendered.bodyJSON {
 						bodyJSON = prepared
 					} else {
-						bodyJSON = await MarkdownRenderService.shared.bodyJSON(for: fragments)
+						bodyJSON = await renderService.bodyJSON(for: fragments)
 					}
 					guard let self, let webView,
 					      generation == self.renderGeneration,
@@ -382,8 +389,9 @@ extension MarkdownWebView {
 			// loads through our scheme handler instead of being inlined.
 			let embedMermaid = parent.renderMermaid && !parent.isEditable
 			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
+			let renderService = renderService
 			renderTask = Task { @MainActor [weak self, weak webView] in
-				let rendered = await MarkdownRenderService.shared.documentHTML(
+				let rendered = await renderService.documentHTML(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
 					embedMermaidEngine: embedMermaid,
