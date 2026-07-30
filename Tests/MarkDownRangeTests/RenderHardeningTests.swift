@@ -7,6 +7,13 @@ import Foundation
 import Testing
 @testable import MarkDownRange
 
+#if os(macOS)
+@MainActor
+private final class RenderCancellationFlag {
+	var wasCancelled = false
+}
+#endif
+
 @Suite("Render hardening")
 struct RenderHardeningTests {
 	@Test("Live WebView documents block remote subresources by default")
@@ -64,6 +71,27 @@ struct RenderHardeningTests {
 
 		#expect(ObjectIdentifier(first.renderService)
 			!= ObjectIdentifier(second.renderService))
+	}
+
+	@Test("Closing a WebView cancels outstanding render work")
+	@MainActor
+	func closingWebViewCancelsOutstandingWork() async {
+		let renderFlag = RenderCancellationFlag()
+		let swapFlag = RenderCancellationFlag()
+		var coordinator: MarkdownWebView.Coordinator? = MarkdownWebView(
+			text: "large document", theme: .default, fontSize: 16
+		).makeCoordinator()
+
+		coordinator?.renderTask = cancellationProbe(flag: renderFlag)
+		coordinator?.pendingSwap = cancellationProbe(flag: swapFlag)
+		coordinator = nil
+
+		for _ in 0..<50 where !renderFlag.wasCancelled || !swapFlag.wasCancelled {
+			try? await Task.sleep(for: .milliseconds(10))
+		}
+
+		#expect(renderFlag.wasCancelled)
+		#expect(swapFlag.wasCancelled)
 	}
 
 	@Test("PDF WebView blocks remote subresources unless explicitly allowed")
@@ -164,4 +192,19 @@ struct RenderHardeningTests {
 		#expect(hits.last?.link == "https://example.com/\(count - 1)")
 		#expect(elapsed < .seconds(2), "linked-image scan took \(elapsed)")
 	}
+
+	#if os(macOS)
+	@MainActor
+	private func cancellationProbe(
+		flag: RenderCancellationFlag
+	) -> Task<Void, Never> {
+		Task { @MainActor in
+			do {
+				try await Task.sleep(for: .seconds(5))
+			} catch {
+				flag.wasCancelled = Task.isCancelled
+			}
+		}
+	}
+	#endif
 }

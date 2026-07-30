@@ -117,6 +117,8 @@ extension MarkdownWebView {
 		}
 
 		deinit {
+			pendingSwap?.cancel()
+			renderTask?.cancel()
 			for scope in openedLinkAccessScopes {
 				scope.stopAccessingSecurityScopedResource()
 			}
