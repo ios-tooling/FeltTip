@@ -38,6 +38,26 @@
 		#expect(ruler.ruleThickness <= 12, "bars-only gutter should be slim, got \(ruler.ruleThickness)")
 	}
 
+	@Test func incrementalEditorIndexAvoidsFullRebuildAfterAnEdit() throws {
+		let source = (0..<20_000)
+			.map { "line \($0)" }
+			.joined(separator: "\n")
+		let (ruler, _) = makeRuler(text: source)
+		_ = try renderedColors(of: ruler)
+		#expect(ruler.fullIndexRebuildCount == 1)
+
+		var index = MarkdownLineIndex(text: source)
+		let edited = ("X\n" + source) as NSString
+		index.applyEdit(
+			in: edited,
+			editedRange: NSRange(location: 0, length: 2),
+			delta: 2)
+		ruler.setLineStarts(index.starts)
+		_ = try renderedColors(of: ruler)
+
+		#expect(ruler.fullIndexRebuildCount == 1)
+	}
+
 	// MARK: Plumbing
 
 	private func makeRuler(text: String) -> (LineNumberRulerView, NSWindow) {

@@ -118,7 +118,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.autohidesScrollers = true
 		scrollView.contentView.postsBoundsChangedNotifications = true
 		applyTheme(to: textView, scrollView: scrollView, coordinator: context.coordinator)
-		updateRuler(scrollView: scrollView, textView: textView)
+		updateRuler(
+			scrollView: scrollView, textView: textView,
+			coordinator: context.coordinator)
 		context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
 		updateHighlighting(textView: textView, coordinator: context.coordinator)
 
@@ -197,7 +199,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			context.coordinator.lastAppliedFontSize = fontSize
 		}
 		applyTheme(to: textView, scrollView: scrollView, coordinator: context.coordinator)
-		updateRuler(scrollView: scrollView, textView: textView)
+		updateRuler(
+			scrollView: scrollView, textView: textView,
+			coordinator: context.coordinator)
 		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
 		if textView.string != text {
@@ -208,6 +212,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let sel = textView.selectedRange()
 			textView.string = text
 			context.coordinator.lineIndex.rebuild(for: text)
+			context.coordinator.lineNumberRuler?.setLineStarts(
+				context.coordinator.lineIndex.starts)
 			context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
@@ -294,7 +300,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	public func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-	private func updateRuler(scrollView: NSScrollView, textView: NSTextView) {
+	private func updateRuler(
+		scrollView: NSScrollView,
+		textView: NSTextView,
+		coordinator: Coordinator
+	) {
 		let hadRuler = scrollView.verticalRulerView != nil
 		// Change indicators need the gutter even when line numbers are off —
 		// the ruler then draws bars only.
@@ -302,6 +312,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if scrollView.verticalRulerView == nil {
 				let ruler = LineNumberRulerView(textView: textView)
 				ruler.textColor = NSColor(theme?.secondaryColor ?? .secondary)
+				ruler.setLineStarts(coordinator.lineIndex.starts)
+				coordinator.lineNumberRuler = ruler
 				scrollView.verticalRulerView = ruler
 			}
 			if let ruler = scrollView.verticalRulerView as? LineNumberRulerView {
@@ -330,6 +342,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if !scrollView.hasVerticalRuler { scrollView.hasVerticalRuler = true }
 			if !scrollView.rulersVisible { scrollView.rulersVisible = true }
 		} else if scrollView.verticalRulerView != nil {
+			coordinator.lineNumberRuler = nil
 			scrollView.hasVerticalRuler = false
 			scrollView.rulersVisible = false
 			scrollView.verticalRulerView = nil
@@ -445,6 +458,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var scrollReportScheduled = false
 		/// In-flight incremental pre-layout of freshly set text.
 		var prelayoutTask: Task<Void, Never>?
+		weak var lineNumberRuler: LineNumberRulerView?
 
 		/// Lay the document out ahead of scrolling. TextKit lays out lazily,
 		/// so unvisited regions stall the scroll as they're reached — a
@@ -506,6 +520,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard editedMask.contains(.editedCharacters) else { return }
 			lineIndex.applyEdit(
 				in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
+			lineNumberRuler?.setLineStarts(lineIndex.starts)
 			updateFenceRanges(after: editedRange, delta: delta, in: textStorage.string as NSString)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
@@ -575,7 +590,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				parent.text = tv.string
 			}
 			if parent.typewriterMode { centerCursor(in: tv) }
-			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
+			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?
+				.invalidateLineNumbers()
 			// Defer the re-highlight off the keystroke hot path: running 9
 			// regexes + a font rewrite on every character was the dominant
 			// source of typing lag. The cache is synced up front so that the

@@ -33,6 +33,9 @@ final class LineNumberRulerView: NSRulerView {
 	/// O(scroll position) per frame, visibly slow near the bottom of large
 	/// documents.
 	private var lineStarts: [Int] = []
+	/// Test-visible operation count: ordinary edits should install the
+	/// coordinator's incrementally maintained index instead of rebuilding.
+	private(set) var fullIndexRebuildCount = 0
 
 	init(textView: NSTextView) {
 		self.textView = textView
@@ -48,6 +51,18 @@ final class LineNumberRulerView: NSRulerView {
 	/// the rebuild happens lazily on the next draw.
 	func noteTextChanged() {
 		lineStarts = []
+		needsDisplay = true
+	}
+
+	/// Adopt the editor coordinator's incrementally updated line table. Array
+	/// assignment shares its storage copy-on-write, so this is constant-time
+	/// and avoids scanning the full NSTextStorage on the next gutter draw.
+	func setLineStarts(_ starts: [Int]) {
+		lineStarts = starts
+		let newThickness = thickness(for: starts.count)
+		if ruleThickness != newThickness {
+			ruleThickness = newThickness
+		}
 		needsDisplay = true
 	}
 
@@ -126,6 +141,7 @@ final class LineNumberRulerView: NSRulerView {
 
 	private func rebuildLineStartsIfNeeded() {
 		guard lineStarts.isEmpty, let string = textView?.string else { return }
+		fullIndexRebuildCount += 1
 		var starts = [0]
 		var offset = 0
 		for unit in string.utf16 {
