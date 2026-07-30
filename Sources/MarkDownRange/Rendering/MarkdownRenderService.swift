@@ -79,6 +79,14 @@ actor MarkdownRenderService {
 	}
 
 	private static func bodyJSON(_ fragments: [MarkdownBlockFragment]) -> String? {
+		guard let body = joinedBody(fragments) else { return nil }
+		return jsonString(for: body) ?? "\"\""
+	}
+
+	/// Cancellation-aware fragment concatenation shared by incremental
+	/// full-swap fallback and initial/full document loads. A superseded render
+	/// should release its per-document actor before assembling obsolete HTML.
+	private static func joinedBody(_ fragments: [MarkdownBlockFragment]) -> String? {
 		guard !Task.isCancelled else { return nil }
 		var body = ""
 		for (index, fragment) in fragments.enumerated() {
@@ -86,7 +94,7 @@ actor MarkdownRenderService {
 			body += fragment.html
 		}
 		guard !Task.isCancelled else { return nil }
-		return jsonString(for: body) ?? "\"\""
+		return body
 	}
 
 	private static func jsonString<Value: Encodable>(for value: Value) -> String? {
@@ -106,12 +114,14 @@ actor MarkdownRenderService {
 			markdown: markdown, theme: theme, fontSize: fontSize,
 			includeSourceOffsets: includeSourceOffsets,
 			interactiveCheckboxes: interactiveCheckboxes)
+		guard let body = Self.joinedBody(fragments) else { return ("", []) }
 		let html = MarkdownHTMLRenderer.wrapDocument(
-			body: fragments.lazy.map(\.html).joined(), theme: theme, fontSize: fontSize,
+			body: body, theme: theme, fontSize: fontSize,
 			embedMermaidEngine: embedMermaidEngine, mermaidEngineViaScheme: true,
 			contentSecurityPolicy: allowRemoteResources.map {
 				MarkdownHTMLRenderer.webViewContentSecurityPolicy(allowRemoteResources: $0)
 			})
+		guard !Task.isCancelled else { return ("", []) }
 		return (html, fragments)
 	}
 }

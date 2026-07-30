@@ -214,6 +214,28 @@ struct RenderHardeningTests {
 		#expect(await task.value == nil)
 	}
 
+	@Test("Cancelled full-document serialization does not publish wrapped HTML")
+	func cancellationStopsFullDocumentSerialization() async {
+		let service = MarkdownRenderService()
+		let markdown = (0..<10_000)
+			.map { "Paragraph \($0) with **bold text** and [link](https://example.com/\($0))." }
+			.joined(separator: "\n\n")
+		let task = Task {
+			withUnsafeCurrentTask { $0?.cancel() }
+			return await service.documentHTML(
+				markdown: markdown,
+				theme: .default,
+				fontSize: 16,
+				includeSourceOffsets: true,
+				interactiveCheckboxes: false,
+				embedMermaidEngine: false)
+		}
+
+		let rendered = await task.value
+		#expect(rendered.html.isEmpty)
+		#expect(rendered.fragments.isEmpty)
+	}
+
 	@Test("Image-region collection remains linear on linked-image-heavy HTML")
 	func linkedImageCollectionScales() {
 		let count = 4_000

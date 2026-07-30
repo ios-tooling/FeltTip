@@ -401,7 +401,8 @@ extension MarkdownWebView {
 					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
 					embedMermaidEngine: embedMermaid,
 					allowRemoteResources: allowRemoteResources)
-				guard let self, let webView, generation == self.renderGeneration else { return }
+				guard !Task.isCancelled, let self, let webView,
+				      generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.lastFragments = rendered.fragments
 				// Load under the custom resource scheme (when we have a document
