@@ -270,6 +270,12 @@ struct SeededRNG: RandomNumberGenerator {
 
 			guard let destination = try await Self.randomStampedOffset(harness, &rng) else { break }
 			try await harness.placeCaret(destination)
+			// Parameterized seeds can interleave across the awaits above while
+			// sharing the process-wide pasteboard. Reassert this case's payload
+			// immediately before the synchronous responder command so another
+			// seed's Cut cannot turn this move into unrelated text.
+			pasteboard.clearContents()
+			pasteboard.setString(copied, forType: .string)
 			Self.performResponderCommand("paste", in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
@@ -336,6 +342,10 @@ struct SeededRNG: RandomNumberGenerator {
 			let destination = destinationRun.base
 				+ Int.random(in: 0...destinationRun.length, using: &rng)
 			try await harness.placeCaret(destination)
+			// Keep concurrently scheduled argument cases from borrowing one
+			// another's process-wide pasteboard contents.
+			pasteboard.clearContents()
+			pasteboard.setString(copied, forType: .string)
 			Self.performResponderCommand("paste", in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
