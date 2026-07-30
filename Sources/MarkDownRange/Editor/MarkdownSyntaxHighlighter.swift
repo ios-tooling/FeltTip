@@ -160,7 +160,43 @@ enum MarkdownSyntaxHighlighter {
 	}
 
 	static func fenceRanges(in string: String) -> [NSRange] {
-		matches(for: codeFencePattern, in: string)
+		let text = string as NSString
+		let length = text.length
+		guard length > 0 else { return [] }
+
+		// A direct line walk is both more predictable than a whole-document
+		// lazy regex and able to represent an unterminated fence. The latter
+		// matters while the user is in the middle of typing a code block: from
+		// the opener through EOF, Markdown syntax must remain suppressed.
+		var ranges: [NSRange] = []
+		var openFenceLocation: Int?
+		var lineLocation = 0
+		while lineLocation < length {
+			let lineRange = text.lineRange(
+				for: NSRange(location: lineLocation, length: 0))
+			if lineRange.length >= 3,
+			   text.character(at: lineLocation) == 0x60,
+			   text.character(at: lineLocation + 1) == 0x60,
+			   text.character(at: lineLocation + 2) == 0x60 {
+				if let opener = openFenceLocation {
+					// Match the previous behavior: the fenced range ends after
+					// the closing marker, not after any trailing info text.
+					ranges.append(NSRange(
+						location: opener,
+						length: lineLocation + 3 - opener))
+					openFenceLocation = nil
+				} else {
+					openFenceLocation = lineLocation
+				}
+			}
+			let nextLine = NSMaxRange(lineRange)
+			guard nextLine > lineLocation else { break }
+			lineLocation = nextLine
+		}
+		if let opener = openFenceLocation {
+			ranges.append(NSRange(location: opener, length: length - opener))
+		}
+		return ranges
 	}
 
 	/// Range-scoped variant — only returns matches whose ranges sit entirely
@@ -178,8 +214,6 @@ enum MarkdownSyntaxHighlighter {
 
 	private typealias Color = SwiftUI.Color
 
-	private static let codeFencePattern = try! NSRegularExpression(
-		pattern: "^```[^\\n]*\\n[\\s\\S]*?^```", options: [.anchorsMatchLines])
 	private static let inlineCodePattern = try! NSRegularExpression(
 		pattern: "`[^`\\n]+`")
 

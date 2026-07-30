@@ -82,6 +82,60 @@ import Testing
 		#expect(boldRanges(in: tv).isEmpty)
 	}
 
+	@Test @MainActor
+	func unterminatedCodeFence_suppressesMarkdownThroughEndOfDocument() {
+		let source = "# Outside\n\n```\n##Inside\n**also code**"
+		let tv = textView(source)
+
+		MarkdownSyntaxHighlighter.highlight(
+			textView: tv,
+			theme: .default,
+			options: MarkdownOptions(headingsRequireSpaceAfterHash: false))
+
+		let outside = (source as NSString).range(of: "# Outside")
+		let inside = (source as NSString).range(of: "##Inside")
+		#expect(isBold(at: outside.location, in: tv))
+		#expect(!isBold(at: inside.location, in: tv))
+	}
+
+	@Test
+	func fenceDiscovery_preservesClosedRangesAndExtendsUnclosedFenceToEOF() {
+		let source = """
+			```
+			one
+			```
+			plain
+			```swift
+			two
+			```
+			```
+			three
+			"""
+		let nsSource = source as NSString
+
+		let ranges = MarkdownSyntaxHighlighter.fenceRanges(in: source)
+
+		#expect(ranges.count == 3)
+		#expect(nsSource.substring(with: ranges[0]) == "```\none\n```")
+		#expect(nsSource.substring(with: ranges[1]) == "```swift\ntwo\n```")
+		#expect(nsSource.substring(with: ranges[2]) == "```\nthree")
+	}
+
+	@Test
+	func fenceDiscovery_manyFencesRemainsResponsive() {
+		let block = "```\nlet value = 1\n```\nplain text\n"
+		let source = String(repeating: block, count: 20_000)
+
+		let clock = ContinuousClock()
+		var ranges: [NSRange] = []
+		let elapsed = clock.measure {
+			ranges = MarkdownSyntaxHighlighter.fenceRanges(in: source)
+		}
+
+		#expect(ranges.count == 20_000)
+		#expect(elapsed < .seconds(1))
+	}
+
 	// MARK: - Incremental highlighting
 
 	/// Returns true if the character at `offset` has the bold heading font.
