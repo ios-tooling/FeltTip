@@ -13,6 +13,12 @@ public struct MarkdownFootnote: Identifiable, Equatable, Sendable {
 	/// Parses all footnotes — named references ([^label]) and inline (^[content]) —
 	/// ordered by first occurrence in the document.
 	public static func parse(from text: String) -> [MarkdownFootnote] {
+		// Normal documents should not pay for two arrays of every source line.
+		// A cheap syntax check also keeps absent-feature preprocessing
+		// responsive for very large files.
+		let source = text as NSString
+		guard source.range(of: "[^").location != NSNotFound
+			|| source.range(of: "^[").location != NSNotFound else { return [] }
 		// First pass: collect named definitions
 		var definitions: [String: String] = [:]
 		var inCodeBlock = false

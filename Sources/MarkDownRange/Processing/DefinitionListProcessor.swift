@@ -9,7 +9,8 @@ public enum DefinitionListProcessor {
 	/// Converts definition list syntax (`term\n: definition`) into `<dl>` HTML
 	/// blocks that survive CommonMark parsing as HTML blocks.
 	public static func process(_ text: String) -> String {
-		guard text.contains("\n:") || text.hasPrefix(":") else { return text }
+		guard text.hasPrefix(":")
+			|| (text as NSString).range(of: "\n:").location != NSNotFound else { return text }
 
 		var result: [String] = []
 		let lines = text.components(separatedBy: .newlines)

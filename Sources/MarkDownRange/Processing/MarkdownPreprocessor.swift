@@ -225,33 +225,111 @@ public enum MarkdownPreprocessor {
 		options: MarkdownOptions,
 		preservingSourceText: Bool
 	) -> String? {
+		let features = LinePassFeatures(
+			text: text,
+			options: options,
+			preservingSourceText: preservingSourceText)
+		guard features.requiresPass else { return text }
 		var output: [String] = []
 		var inFence = false
 		let lines = text.components(separatedBy: "\n")
 		output.reserveCapacity(lines.count)
-		let injectHeadingSpace = !options.headingsRequireSpaceAfterHash
 		for (index, line) in lines.enumerated() {
 			if index & 63 == 0, Task.isCancelled { return nil }
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-				inFence.toggle()
-				output.append(line); continue
+			if features.fences {
+				let trimmed = line.trimmingCharacters(in: .whitespaces)
+				if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+					inFence.toggle()
+					output.append(line); continue
+				}
+				if inFence { output.append(line); continue }
 			}
-			if inFence { output.append(line); continue }
 			var processed = line
-			if injectHeadingSpace { processed = HeadingSpaceInjector.applyLine(processed) }
-			processed = SuperSubProcessor.applyLine(processed)
-			processed = InsertedTextProcessor.applyLine(processed)
-			if !preservingSourceText {
+			if features.headings { processed = HeadingSpaceInjector.applyLine(processed) }
+			if features.superSub { processed = SuperSubProcessor.applyLine(processed) }
+			if features.inserted { processed = InsertedTextProcessor.applyLine(processed) }
+			if features.emoticons {
 				processed = EmoticonShortcodes.applyLine(processed)
+			}
+			if features.quotes {
 				processed = SmartQuotes.applyLine(processed)
+			}
+			if features.typography {
 				processed = SmartTypography.applyLine(processed)
 			}
-			processed = HighlightSyntax.applyLine(processed)
+			if features.highlight { processed = HighlightSyntax.applyLine(processed) }
 			output.append(processed)
 		}
 		guard !Task.isCancelled else { return nil }
 		return output.joined(separator: "\n")
+	}
+
+	private struct LinePassFeatures {
+		let fences: Bool
+		let headings: Bool
+		let superSub: Bool
+		let inserted: Bool
+		let emoticons: Bool
+		let quotes: Bool
+		let typography: Bool
+		let highlight: Bool
+
+		var requiresPass: Bool {
+			fences || headings || superSub || inserted
+				|| emoticons || quotes || typography || highlight
+		}
+
+		init(
+			text: String,
+			options: MarkdownOptions,
+			preservingSourceText: Bool
+		) {
+			let wholeRange = NSRange(text.startIndex..., in: text)
+			let hasStructuralCandidate = Self.structuralPattern.firstMatch(
+				in: text, range: wholeRange) != nil
+			let hasEmoticon = !preservingSourceText
+				&& EmoticonShortcodes.containsToken(in: text)
+			let hasCosmeticCandidate = !preservingSourceText
+				&& Self.cosmeticPattern.firstMatch(in: text, range: wholeRange) != nil
+			guard hasStructuralCandidate || hasEmoticon || hasCosmeticCandidate else {
+				fences = false
+				headings = false
+				superSub = false
+				inserted = false
+				emoticons = false
+				quotes = false
+				typography = false
+				highlight = false
+				return
+			}
+
+			let source = text as NSString
+			func contains(_ marker: String) -> Bool {
+				source.range(of: marker).location != NSNotFound
+			}
+
+			fences = contains("```") || contains("~~~")
+			headings = !options.headingsRequireSpaceAfterHash && contains("#")
+			superSub = contains("^") || contains("~")
+			inserted = contains("++")
+			highlight = contains("==")
+			if preservingSourceText {
+				emoticons = false
+				quotes = false
+				typography = false
+			} else {
+				emoticons = hasEmoticon
+				quotes = contains("\"") || contains("'")
+				typography = contains("(") || contains("+-") || contains("...") || contains("--")
+			}
+		}
+
+		private static let structuralPattern = try! NSRegularExpression(
+			pattern: #"```|~~~|#|\^|~|\+\+|=="#
+		)
+		private static let cosmeticPattern = try! NSRegularExpression(
+			pattern: #"["']|\(|\+-|\.\.\.|--"#
+		)
 	}
 
 	/// Per-processor timings (ms) accumulated across a single preprocess

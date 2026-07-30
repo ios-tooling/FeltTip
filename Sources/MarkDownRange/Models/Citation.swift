@@ -14,6 +14,10 @@ public struct Citation: Identifiable, Equatable, Sendable {
 	/// Definitions: `[@key]: Author. Title. Year.`
 	/// References: `[@key]` in body text.
 	public static func parse(from text: String) -> [Citation] {
+		// The preprocessing pipeline calls this for every document. Avoid two
+		// eager split-and-trim passes when citation syntax is absent, which is
+		// the overwhelmingly common case.
+		guard (text as NSString).range(of: "[@").location != NSNotFound else { return [] }
 		var definitions: [String: String] = [:]
 		var inCodeBlock = false
 

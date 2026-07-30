@@ -19,7 +19,7 @@ import Foundation
 /// rewritten.
 public enum AbbreviationProcessor {
 	public static func process(_ text: String) -> String {
-		guard text.contains("*[") else { return text }
+		guard (text as NSString).range(of: "*[").location != NSNotFound else { return text }
 		let (definitions, withoutDefs) = extractDefinitions(text)
 		guard !definitions.isEmpty else { return text }
 		return rewriteOccurrences(in: withoutDefs, definitions: definitions)

@@ -11,7 +11,7 @@ import Foundation
 /// in URLs or identifiers.
 public enum EmoticonShortcodes {
 	public static func process(_ text: String) -> String {
-		guard text.contains(":") || text.contains(";") || text.contains("8") || text.contains("=") else { return text }
+		guard containsToken(in: text) else { return text }
 		var output: [String] = []
 		var inFence = false
 		for line in text.components(separatedBy: "\n") {
@@ -31,6 +31,17 @@ public enum EmoticonShortcodes {
 			output.append(processLine(line))
 		}
 		return output.joined(separator: "\n")
+	}
+
+	/// One document-wide regex search is materially cheaper than invoking the
+	/// per-line scanner merely because ordinary prose contains a digit, colon,
+	/// semicolon, or equals sign. The pattern is built from the exact supported
+	/// spellings, so it cannot suppress a real replacement.
+	static func containsToken(in text: String) -> Bool {
+		tokenPattern.firstMatch(
+			in: text,
+			range: NSRange(text.startIndex..., in: text)
+		) != nil
 	}
 
 	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
@@ -113,4 +124,10 @@ public enum EmoticonShortcodes {
 		(";)",  "😉"),
 		("=)",  "🙂"),
 	]
+
+	private static let tokenPattern = try! NSRegularExpression(
+		pattern: tokens
+			.map { NSRegularExpression.escapedPattern(for: $0.0) }
+			.joined(separator: "|")
+	)
 }

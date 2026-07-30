@@ -7,7 +7,7 @@ import Foundation
 
 public enum EmojiShortcodes {
 	public static func process(_ text: String) -> String {
-		guard text.contains(":") else { return text }
+		guard (text as NSString).range(of: ":").location != NSNotFound else { return text }
 		return text.replacing(/:([a-z0-9_+-]+):/) { match in
 			lookup[String(match.1)] ?? String(match.0)
 		}

@@ -84,4 +84,31 @@ import Markdown
 		print("  Total:             \(String(format: "%.3f", t4 - t0))s → \(blocks.count) blocks")
 		#expect(!blocks.isEmpty)
 	}
+
+	@Test func plainDocumentsSkipCitationAndFootnoteLinePasses() {
+		let text = (0..<50_000)
+			.map { "Ordinary paragraph \($0) with no note syntax." }
+			.joined(separator: "\n")
+
+		let elapsed = ContinuousClock().measure {
+			#expect(Citation.parse(from: text).isEmpty)
+			#expect(MarkdownFootnote.parse(from: text).isEmpty)
+		}
+
+		#expect(elapsed < .milliseconds(100), "absent note parsing took \(elapsed)")
+	}
+
+	@Test func plainDocumentPreprocessingAvoidsSlowFeatureSearches() {
+		let text = (0..<50_000)
+			.map { "Ordinary paragraph \($0) with no extension syntax." }
+			.joined(separator: "\n")
+		var processed = ""
+
+		let elapsed = ContinuousClock().measure {
+			processed = MarkdownPreprocessor.process(text)
+		}
+
+		#expect(processed == text)
+		#expect(elapsed < .milliseconds(300), "plain preprocessing took \(elapsed)")
+	}
 }
