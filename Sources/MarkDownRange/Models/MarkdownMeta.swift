@@ -52,11 +52,27 @@ public struct MarkdownMeta: Sendable, Equatable {
 
 	public init(text: String, blocks: [MarkdownBlock]) {
 		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-		self.characterCount = trimmed.count
-		self.lineCount = text.components(separatedBy: .newlines).count
+		var characterCount = 0
+		var wordCount = 0
+		var inWord = false
+		for character in trimmed {
+			characterCount += 1
+			if character.isWhitespace || character.isNewline {
+				inWord = false
+			} else if !inWord {
+				wordCount += 1
+				inWord = true
+			}
+		}
+		self.characterCount = characterCount
+		self.wordCount = wordCount
 
-		let words = trimmed.split { $0.isWhitespace || $0.isNewline }
-		self.wordCount = trimmed.isEmpty ? 0 : words.count
+		// `components(separatedBy:)` allocated one String per source line even
+		// though metadata needs only the count. Character treats CRLF as one
+		// newline grapheme and recognizes the same Unicode newline family.
+		var lineCount = 1
+		for character in text where character.isNewline { lineCount += 1 }
+		self.lineCount = lineCount
 
 		let minutes = max(1, Int(ceil(Double(wordCount) / 200.0)))
 		self.readingTime = minutes == 1 ? "1 min read" : "\(minutes) min read"

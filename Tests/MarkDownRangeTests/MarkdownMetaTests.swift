@@ -24,6 +24,14 @@ import Foundation
 		#expect(meta.lineCount == 3)
 	}
 
+	@Test func streamingCountsPreserveUnicodeAndNewlineSemantics() {
+		let meta = MarkdownMeta(text: " \t😀 café\r\nnext\u{2028}last \n", blocks: [])
+
+		#expect(meta.wordCount == 4)
+		#expect(meta.characterCount == 16)
+		#expect(meta.lineCount == 4)
+	}
+
 	@Test func readingTimeScalesWithWords() {
 		let short = MarkdownMeta(String(repeating: "word ", count: 50))
 		#expect(short.readingTime == "1 min read")

@@ -21,7 +21,9 @@ public enum MarkdownSourceOffsetAttribute: AttributedStringKey {
 /// answers lookups in O(1).
 struct SourceOffsetConverter {
 	private let lineStartBytes: [Int]   // UTF-8 byte offset of each line's start
-	private let byteToUTF16: [Int]      // UTF-8 byte offset → UTF-16 offset
+	/// UTF-8 byte offset → UTF-16 offset. Nil when the source is ASCII, where
+	/// the mapping is identity and a document-sized Int table would be waste.
+	private let byteToUTF16: [Int]?
 	private let processedUTF16: [UInt16]
 	/// Added to every returned offset. Lets the parsed string be a suffix of
 	/// the caller's source (e.g. the body after frontmatter was stripped) while
@@ -37,6 +39,17 @@ struct SourceOffsetConverter {
 		self.map = map
 		processedUTF16 = Array(source.utf16)
 		var lineStarts = [0]
+		var isASCII = true
+		for (offset, byte) in source.utf8.enumerated() {
+			if byte >= 0x80 { isASCII = false }
+			if byte == 0x0A { lineStarts.append(offset + 1) }
+		}
+		lineStartBytes = lineStarts
+		guard !isASCII else {
+			byteToUTF16 = nil
+			return
+		}
+
 		var byteMap: [Int] = []
 		byteMap.reserveCapacity(source.utf8.count + 1)
 		var utf16Cursor = 0
@@ -44,13 +57,14 @@ struct SourceOffsetConverter {
 			let v = scalar.value
 			let utf8Length = v < 0x80 ? 1 : v < 0x800 ? 2 : v < 0x10000 ? 3 : 4
 			for _ in 0..<utf8Length { byteMap.append(utf16Cursor) }
-			if v == 0x0A { lineStarts.append(byteMap.count) }   // next line starts after "\n"
 			utf16Cursor += v > 0xFFFF ? 2 : 1
 		}
 		byteMap.append(utf16Cursor)
-		lineStartBytes = lineStarts
 		byteToUTF16 = byteMap
 	}
+
+	/// Test-visible allocation invariant for the common ASCII document path.
+	var usesIdentityByteMapping: Bool { byteToUTF16 == nil }
 
 	func utf16Offset(line: Int, column: Int) -> Int? {
 		guard let processedOffset = processedUTF16(line: line, column: column) else { return nil }
@@ -168,20 +182,23 @@ struct SourceOffsetConverter {
 	private func processedUTF16(line: Int, column: Int) -> Int? {
 		guard line >= 1, line <= lineStartBytes.count else { return nil }
 		let byte = lineStartBytes[line - 1] + (column - 1)
-		guard byte >= 0, byte < byteToUTF16.count else { return nil }
-		return byteToUTF16[byte]
+		let byteCount = byteToUTF16?.count ?? (processedUTF16.count + 1)
+		guard byte >= 0, byte < byteCount else { return nil }
+		return byteToUTF16?[byte] ?? byte
 	}
 
 	private func processedLineStart(_ line: Int) -> Int? {
 		guard line >= 1, line <= lineStartBytes.count else { return nil }
-		return byteToUTF16[lineStartBytes[line - 1]]
+		let byte = lineStartBytes[line - 1]
+		return byteToUTF16?[byte] ?? byte
 	}
 
 	private func processedLineEnd(_ line: Int) -> Int? {
 		guard line >= 1, line <= lineStartBytes.count else { return nil }
 		if line < lineStartBytes.count {
 			// Exclude the newline immediately before the next line.
-			return max(0, byteToUTF16[lineStartBytes[line]] - 1)
+			let byte = lineStartBytes[line]
+			return max(0, (byteToUTF16?[byte] ?? byte) - 1)
 		}
 		return processedUTF16.count
 	}
