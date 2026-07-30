@@ -8,6 +8,39 @@ import Testing
 @testable import MarkDownRange
 
 @Suite(.serialized) @MainActor struct EditBridgeCheckboxRevisionTests {
+	@Test func checkboxStateFindsRequestedTaskOnly() {
+		let source = """
+		- [ ] first
+		ordinary text
+		12. [X] second
+		  * [x] third
+		"""
+
+		#expect(MarkdownWebView.Coordinator.checkboxState(
+			at: 0, in: source) == false)
+		#expect(MarkdownWebView.Coordinator.checkboxState(
+			at: 1, in: source) == true)
+		#expect(MarkdownWebView.Coordinator.checkboxState(
+			at: 2, in: source) == true)
+		#expect(MarkdownWebView.Coordinator.checkboxState(
+			at: 3, in: source) == nil)
+	}
+
+	@Test func earlyCheckboxLookupDoesNotScanLargeTail() {
+		let source = "- [x] first\n"
+			+ String(repeating: "ordinary paragraph content\n", count: 200_000)
+		let clock = ContinuousClock()
+		var state: Bool?
+
+		let elapsed = clock.measure {
+			state = MarkdownWebView.Coordinator.checkboxState(
+				at: 0, in: source)
+		}
+
+		#expect(state == true)
+		#expect(elapsed < .milliseconds(100))
+	}
+
 	@Test func checkboxClickIsRevisionGatedAndSourceVerified() async throws {
 		var toggles: [(Int, Bool)] = []
 		let source = "- [ ] first\n- [ ] second\n"

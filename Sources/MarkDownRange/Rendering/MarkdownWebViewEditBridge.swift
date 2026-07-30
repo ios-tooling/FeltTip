@@ -211,15 +211,27 @@ extension MarkdownWebView.Coordinator {
 	/// State of the document-wide indexed task-list marker. Checkbox messages
 	/// are revision-gated first, then verified against source so a stale DOM
 	/// index can never toggle a different item.
-	private static func checkboxState(at target: Int, in source: String) -> Bool? {
+	private static let checkboxPattern = try! NSRegularExpression(
+		pattern: #"(?m)^\s*(?:[-*+]|\d+[.)]) +\[([ xX])\]"#)
+
+	static func checkboxState(at target: Int, in source: String) -> Bool? {
 		guard target >= 0 else { return nil }
-		let pattern = try! NSRegularExpression(
-			pattern: #"(?m)^\s*(?:[-*+]|\d+[.)]) +\[([ xX])\]"#)
-		let range = NSRange(location: 0, length: (source as NSString).length)
-		let matches = pattern.matches(in: source, range: range)
-		guard target < matches.count else { return nil }
-		let marker = (source as NSString).substring(with: matches[target].range(at: 1))
-		return marker.lowercased() == "x"
+		let nsSource = source as NSString
+		let range = NSRange(location: 0, length: nsSource.length)
+		var current = 0
+		var state: Bool?
+		checkboxPattern.enumerateMatches(
+			in: source, range: range
+		) { match, _, stop in
+			guard let match else { return }
+			if current == target {
+				let marker = nsSource.substring(with: match.range(at: 1))
+				state = marker.lowercased() == "x"
+				stop.pointee = true
+			}
+			current += 1
+		}
+		return state
 	}
 
 	/// Splice a fresh empty row after the line containing `at` (a stamp from
