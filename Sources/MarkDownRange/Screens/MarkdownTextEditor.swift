@@ -123,6 +123,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			coordinator: context.coordinator)
 		context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
 		updateHighlighting(textView: textView, coordinator: context.coordinator)
+		context.coordinator.recordCurrentHighlightState()
 
 		context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
 			forName: NSView.boundsDidChangeNotification,
@@ -181,6 +182,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	}
 
 	public func updateNSView(_ scrollView: NSScrollView, context: Context) {
+		let previousHostText = context.coordinator.parent.text
 		context.coordinator.parent = self
 		context.coordinator.isUpdatingFromSwiftUI = true
 		defer { context.coordinator.isUpdatingFromSwiftUI = false }
@@ -202,11 +204,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		updateRuler(
 			scrollView: scrollView, textView: textView,
 			coordinator: context.coordinator)
-		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
-		if textView.string != text {
+		// Cursor/selection reports re-enter updateNSView continuously. Reading
+		// `textView.string` bridges the complete NSTextStorage into a Swift
+		// String, and the old equality check did that twice per tick (here and
+		// in the highlight cache). Decide from host state plus the exact local
+		// edit already reported by the delegate instead.
+		if context.coordinator.shouldReplaceViewText(
+			previousHostText: previousHostText, incomingText: text) {
 			if MarkdownSplitSyncLog.enabled {
-				NSLog("[SplitSync] raw string reassigned (viewLen=%d textLen=%d)", (textView.string as NSString).length, (text as NSString).length)
+				NSLog("[SplitSync] raw string reassigned (textLen=%d)", (text as NSString).length)
 			}
 			(scrollView.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			let sel = textView.selectedRange()
@@ -219,6 +226,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
 			context.coordinator.scheduleIncrementalLayout(for: textView)
 		}
+		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
 		// Host-driven caret restore (undo/redo): once per token, place the
 		// insertion point at the requested offset. Runs after any string
@@ -375,7 +383,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	/// scrolling juddery because each call invalidated layout for the entire
 	/// document.
 	private func updateHighlightingIfNeeded(textView: NSTextView, coordinator: Coordinator) {
-		if textView.string == coordinator.lastHighlightedText,
+		if coordinator.contentRevision == coordinator.lastHighlightedContentRevision,
 		   fontSize == coordinator.lastHighlightedFontSize,
 		   syntaxHighlightingEnabled == coordinator.lastHighlightedSyntaxEnabled,
 		   theme?.signature == coordinator.lastHighlightedThemeSignature,
@@ -384,14 +392,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 		if MarkdownSplitSyncLog.enabled {
 			NSLog("[SplitSync] raw re-highlight (textChanged=%d themeChanged=%d)",
-				  textView.string != coordinator.lastHighlightedText ? 1 : 0,
+				  coordinator.contentRevision != coordinator.lastHighlightedContentRevision ? 1 : 0,
 				  theme?.signature != coordinator.lastHighlightedThemeSignature ? 1 : 0)
 		}
-		coordinator.lastHighlightedText = textView.string
-		coordinator.lastHighlightedFontSize = fontSize
-		coordinator.lastHighlightedSyntaxEnabled = syntaxHighlightingEnabled
-		coordinator.lastHighlightedThemeSignature = theme?.signature
-		coordinator.lastHighlightedOptions = markdownOptions
+		coordinator.recordCurrentHighlightState()
 		updateHighlighting(textView: textView, coordinator: coordinator)
 	}
 
@@ -487,7 +491,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 		var isUpdatingFromSwiftUI = false
 		var lastAppliedFontSize: CGFloat = 0
-		var lastHighlightedText: String?
+		/// Monotonic text-storage generation. Highlight cache checks this
+		/// integer instead of materializing/comparing the full raw document on
+		/// every cursor-only SwiftUI update.
+		private(set) var contentRevision = 0
+		var lastHighlightedContentRevision = -1
 		var lastHighlightedFontSize: CGFloat = 0
 		var lastHighlightedSyntaxEnabled: Bool = false
 		var lastHighlightedThemeSignature: String?
@@ -506,7 +514,31 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// NSTextStorage edits so cursor reports can binary-search instead of
 		/// allocating and splitting the entire prefix on every movement.
 		var lineIndex = MarkdownLineIndex()
+		/// Exact text most recently emitted by NSTextView but not yet observed
+		/// coming back through the host binding.
+		var pendingLocalText: String?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
+
+		/// Whether updateNSView must replace NSTextView's storage. A matching
+		/// pending local value is merely the normal binding round trip; a
+		/// mismatch means the host rejected or superseded that local edit.
+		func shouldReplaceViewText(
+			previousHostText: String, incomingText: String
+		) -> Bool {
+			if let pendingLocalText {
+				self.pendingLocalText = nil
+				return pendingLocalText != incomingText
+			}
+			return previousHostText != incomingText
+		}
+
+		fileprivate func recordCurrentHighlightState() {
+			lastHighlightedContentRevision = contentRevision
+			lastHighlightedFontSize = parent.fontSize
+			lastHighlightedSyntaxEnabled = parent.syntaxHighlightingEnabled
+			lastHighlightedThemeSignature = parent.theme?.signature
+			lastHighlightedOptions = parent.markdownOptions
+		}
 
 		public func textStorage(
 			_ textStorage: NSTextStorage,
@@ -518,6 +550,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// edits (which we generate ourselves when applying styles) would
 			// otherwise create a feedback loop.
 			guard editedMask.contains(.editedCharacters) else { return }
+			contentRevision &+= 1
 			lineIndex.applyEdit(
 				in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
 			lineNumberRuler?.noteLineIndexChanged()
@@ -584,10 +617,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		public func textDidChange(_ notification: Notification) {
 			guard let tv = notification.object as? NSTextView else { return }
+			let updatedText = tv.string
+			pendingLocalText = updatedText
 			if let onSourceEdit = parent.onSourceEdit {
-				onSourceEdit(tv.string, tv.selectedRange().location)
+				onSourceEdit(updatedText, tv.selectedRange().location)
 			} else {
-				parent.text = tv.string
+				parent.text = updatedText
 			}
 			if parent.typewriterMode { centerCursor(in: tv) }
 			(tv.enclosingScrollView?.verticalRulerView as? LineNumberRulerView)?
@@ -598,11 +633,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// updateNSView triggered by `parent.text = tv.string` skips its
 			// own highlight pass; the debounced timer below catches up after
 			// the user stops typing for a beat.
-			lastHighlightedText = tv.string
-			lastHighlightedFontSize = parent.fontSize
-			lastHighlightedSyntaxEnabled = parent.syntaxHighlightingEnabled
-			lastHighlightedThemeSignature = parent.theme?.signature
-			lastHighlightedOptions = parent.markdownOptions
+			recordCurrentHighlightState()
 			scheduleDebouncedHighlight(in: tv)
 		}
 
