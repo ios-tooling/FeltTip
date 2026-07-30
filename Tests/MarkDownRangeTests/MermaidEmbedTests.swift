@@ -27,5 +27,27 @@ import Testing
 		let plainEmbedded = MarkdownHTMLRenderer.renderDocument(markdown: plainDoc, embedMermaidEngine: true)
 		#expect(!plainEmbedded.contains("mermaid.run("))
 	}
+
+	@Test func concurrentResourceReadsAgree() async {
+		let snapshots = await withTaskGroup(
+			of: (engineCount: Int?, templateCount: Int?).self,
+			returning: [(engineCount: Int?, templateCount: Int?)].self
+		) { group in
+			for _ in 0..<32 {
+				group.addTask {
+					(
+						MermaidResources.engineJS?.utf8.count,
+						MermaidResources.html(for: "graph TD; A-->B", theme: "default")?.utf8.count
+					)
+				}
+			}
+			var results: [(engineCount: Int?, templateCount: Int?)] = []
+			for await snapshot in group { results.append(snapshot) }
+			return results
+		}
+
+		#expect(Set(snapshots.map(\.engineCount)).count == 1)
+		#expect(Set(snapshots.map(\.templateCount)).count == 1)
+	}
 }
 #endif
