@@ -212,8 +212,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let sel = textView.selectedRange()
 			textView.string = text
 			context.coordinator.lineIndex.rebuild(for: text)
-			context.coordinator.lineNumberRuler?.setLineStarts(
-				context.coordinator.lineIndex.starts)
+			context.coordinator.lineNumberRuler?.setLineIndex(
+				context.coordinator.lineIndex)
 			context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
@@ -312,7 +312,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if scrollView.verticalRulerView == nil {
 				let ruler = LineNumberRulerView(textView: textView)
 				ruler.textColor = NSColor(theme?.secondaryColor ?? .secondary)
-				ruler.setLineStarts(coordinator.lineIndex.starts)
+				ruler.setLineIndex(coordinator.lineIndex)
 				coordinator.lineNumberRuler = ruler
 				scrollView.verticalRulerView = ruler
 			}
@@ -520,7 +520,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard editedMask.contains(.editedCharacters) else { return }
 			lineIndex.applyEdit(
 				in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
-			lineNumberRuler?.setLineStarts(lineIndex.starts)
+			lineNumberRuler?.noteLineIndexChanged()
 			updateFenceRanges(after: editedRange, delta: delta, in: textStorage.string as NSString)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
@@ -700,14 +700,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 /// remove only starts inside the replaced span, shift the surviving suffix,
 /// and insert newly-created starts in their already-sorted position. This
 /// avoids allocating and sorting the entire line table for every keystroke.
-struct MarkdownLineIndex {
+final class MarkdownLineIndex {
 	private(set) var starts: [Int] = [0]
 
 	init(text: String = "") {
 		rebuild(for: text)
 	}
 
-	mutating func rebuild(for text: String) {
+	func rebuild(for text: String) {
 		starts = [0]
 		var offset = 0
 		for unit in text.utf16 {
@@ -716,7 +716,7 @@ struct MarkdownLineIndex {
 		}
 	}
 
-	mutating func applyEdit(in text: NSString, editedRange: NSRange, delta: Int) {
+	func applyEdit(in text: NSString, editedRange: NSRange, delta: Int) {
 		guard editedRange.location >= 0, editedRange.location <= text.length,
 		      editedRange.length >= 0, NSMaxRange(editedRange) <= text.length else {
 			rebuild(for: text as String)

@@ -32,10 +32,15 @@ final class LineNumberRulerView: NSRulerView {
 	/// walking layout from the top of the document — the walk made scrolling
 	/// O(scroll position) per frame, visibly slow near the bottom of large
 	/// documents.
-	private var lineStarts: [Int] = []
+	private var localLineStarts: [Int] = []
+	private var sharedLineIndex: MarkdownLineIndex?
+	private var lineStarts: [Int] {
+		sharedLineIndex?.starts ?? localLineStarts
+	}
 	/// Test-visible operation count: ordinary edits should install the
 	/// coordinator's incrementally maintained index instead of rebuilding.
 	private(set) var fullIndexRebuildCount = 0
+	var indexedLineCount: Int { lineStarts.count }
 
 	init(textView: NSTextView) {
 		self.textView = textView
@@ -50,16 +55,24 @@ final class LineNumberRulerView: NSRulerView {
 	/// The text changed: line starts are stale. Cheap to call repeatedly —
 	/// the rebuild happens lazily on the next draw.
 	func noteTextChanged() {
-		lineStarts = []
+		sharedLineIndex = nil
+		localLineStarts = []
 		needsDisplay = true
 	}
 
-	/// Adopt the editor coordinator's incrementally updated line table. Array
-	/// assignment shares its storage copy-on-write, so this is constant-time
-	/// and avoids scanning the full NSTextStorage on the next gutter draw.
-	func setLineStarts(_ starts: [Int]) {
-		lineStarts = starts
-		let newThickness = thickness(for: starts.count)
+	/// Share the editor coordinator's incrementally updated line table by
+	/// reference. Holding an Array value here would make the coordinator's
+	/// next mutation copy the complete line table through copy-on-write.
+	func setLineIndex(_ index: MarkdownLineIndex) {
+		sharedLineIndex = index
+		localLineStarts = []
+		noteLineIndexChanged()
+	}
+
+	/// The shared index mutated in place; refresh geometry only if its digit
+	/// width changed, then redraw without touching the document string.
+	func noteLineIndexChanged() {
+		let newThickness = thickness(for: lineStarts.count)
 		if ruleThickness != newThickness {
 			ruleThickness = newThickness
 		}
@@ -148,7 +161,7 @@ final class LineNumberRulerView: NSRulerView {
 			offset += 1
 			if unit == 0x0A { starts.append(offset) }
 		}
-		lineStarts = starts
+		localLineStarts = starts
 		ruleThickness = thickness(for: starts.count)
 	}
 

@@ -46,16 +46,18 @@
 		_ = try renderedColors(of: ruler)
 		#expect(ruler.fullIndexRebuildCount == 1)
 
-		var index = MarkdownLineIndex(text: source)
+		let index = MarkdownLineIndex(text: source)
+		ruler.setLineIndex(index)
 		let edited = ("X\n" + source) as NSString
 		index.applyEdit(
 			in: edited,
 			editedRange: NSRange(location: 0, length: 2),
 			delta: 2)
-		ruler.setLineStarts(index.starts)
+		ruler.noteLineIndexChanged()
 		_ = try renderedColors(of: ruler)
 
 		#expect(ruler.fullIndexRebuildCount == 1)
+		#expect(ruler.indexedLineCount == 20_001)
 	}
 
 	// MARK: Plumbing
