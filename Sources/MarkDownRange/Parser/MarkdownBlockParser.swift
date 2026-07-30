@@ -44,7 +44,8 @@ public enum MarkdownBlockParser {
 			// wikilinks — but not the cosmetic character substitutions, which
 			// would desync run text from the source) and tracks a
 			// processed→source map so edits still resolve to the original source.
-			let tracked = MarkdownPreprocessor.processTrackingOffsets(body, options: options)
+			let tracked = MarkdownPreprocessor.processTrackingOptionalOffsets(
+				body, options: options)
 			processed = tracked.processed
 			offsetMap = tracked.map
 		} else {
@@ -95,10 +96,14 @@ public enum MarkdownBlockParser {
 	/// the raw frontmatter text (the `---…---` block, nil when absent) for the
 	/// editable rendering path.
 	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String, Int, String?) {
-		let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard trimmed.hasPrefix("---") else { return (nil, markdown, 0, nil) }
+		// Inspect only the first line before splitting the document. The old
+		// full-string trim copied/scanned every character of every non-
+		// frontmatter document on each render just to reject the common case.
+		let firstLineEnd = markdown.firstIndex(of: "\n") ?? markdown.endIndex
+		let firstLine = markdown[..<firstLineEnd]
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard firstLine == "---" else { return (nil, markdown, 0, nil) }
 		let lines = markdown.components(separatedBy: .newlines)
-		guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return (nil, markdown, 0, nil) }
 
 		var endIndex: Int?
 		for i in 1..<lines.count {

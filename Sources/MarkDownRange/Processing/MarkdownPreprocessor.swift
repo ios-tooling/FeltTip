@@ -37,8 +37,26 @@ public enum MarkdownPreprocessor {
 	/// `SourceOffsetConverter.verbatimUTF16Offset`), so the editors veto edits
 	/// there instead of corrupting the file.
 	public static func processTrackingOffsets(_ body: String, options: MarkdownOptions = .default) -> (processed: String, map: [Int]) {
+		let tracked = processTrackingOptionalOffsets(body, options: options)
+		return (
+			tracked.processed,
+			tracked.map ?? Array(0..<tracked.processed.utf16.count)
+		)
+	}
+
+	/// Parser-facing form of `processTrackingOffsets`. A nil map means the
+	/// processed source is byte-for-byte identical, which is by far the common
+	/// editable-document case. Keeping identity implicit avoids two full UTF-16
+	/// copies plus a document-sized `[Int]` allocation on every render.
+	static func processTrackingOptionalOffsets(
+		_ body: String,
+		options: MarkdownOptions = .default
+	) -> (processed: String, map: [Int]?) {
 		let processed = process(body, options: options, preservingSourceText: true)
-		return (processed, offsetMap(from: body, to: processed))
+		return (
+			processed,
+			processed == body ? nil : offsetMap(from: body, to: processed)
+		)
 	}
 
 	/// For each UTF-16 position in `processed`, the UTF-16 position in `source`

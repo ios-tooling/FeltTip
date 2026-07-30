@@ -17,8 +17,16 @@ actor MarkdownRenderService {
 
 	struct BlockResult: Sendable {
 		let fragments: [MarkdownBlockFragment]
-		/// JSON string literal for the complete body, built off the main actor.
-		let bodyJSON: String
+		/// The incremental patch and its JSON payload are planned on the render
+		/// actor so a large suffix scan and JSON encoding never land on the UI
+		/// actor. A patch result deliberately omits `bodyJSON`: serializing the
+		/// entire document on every one-block edit was pure wasted work.
+		let patch: MarkdownBlockPatch?
+		let patchHTMLJSON: String?
+		/// Present when the baseline proves a full swap is required. If WebKit
+		/// unexpectedly refuses an incremental patch, the coordinator requests
+		/// this payload lazily through `bodyJSON(for:)`.
+		let bodyJSON: String?
 	}
 
 	func bodyFragment(
@@ -35,25 +43,48 @@ actor MarkdownRenderService {
 		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
 		includeSourceOffsets: Bool, interactiveCheckboxes: Bool
 	) async -> [MarkdownBlockFragment] {
-		blockResult(
+		MarkdownHTMLRenderer.renderBlockFragments(
 			markdown: markdown, theme: theme, fontSize: fontSize,
 			includeSourceOffsets: includeSourceOffsets,
-			interactiveCheckboxes: interactiveCheckboxes
-		).fragments
+			interactiveCheckboxes: interactiveCheckboxes)
 	}
 
 	func blockResult(
 		markdown: String, theme: MarkdownTheme, fontSize: CGFloat,
-		includeSourceOffsets: Bool, interactiveCheckboxes: Bool
+		includeSourceOffsets: Bool, interactiveCheckboxes: Bool,
+		baseline: [MarkdownBlockFragment]? = nil
 	) -> BlockResult {
 		let fragments = MarkdownHTMLRenderer.renderBlockFragments(
 			markdown: markdown, theme: theme, fontSize: fontSize,
 			includeSourceOffsets: includeSourceOffsets,
 			interactiveCheckboxes: interactiveCheckboxes)
-		let body: String = fragments.map(\.html).joined()
-		let encoded = (try? JSONEncoder().encode(body))
-			.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-		return BlockResult(fragments: fragments, bodyJSON: encoded)
+		if let baseline,
+		   let patch = MarkdownBlockDiff.patch(from: baseline, to: fragments),
+		   let patchHTMLJSON = Self.jsonString(for: patch.html) {
+			return BlockResult(
+				fragments: fragments,
+				patch: patch,
+				patchHTMLJSON: patchHTMLJSON,
+				bodyJSON: nil)
+		}
+		return BlockResult(
+			fragments: fragments,
+			patch: nil,
+			patchHTMLJSON: nil,
+			bodyJSON: Self.bodyJSON(fragments))
+	}
+
+	func bodyJSON(for fragments: [MarkdownBlockFragment]) -> String {
+		Self.bodyJSON(fragments)
+	}
+
+	private static func bodyJSON(_ fragments: [MarkdownBlockFragment]) -> String {
+		jsonString(for: fragments.lazy.map(\.html).joined()) ?? "\"\""
+	}
+
+	private static func jsonString<Value: Encodable>(for value: Value) -> String? {
+		(try? JSONEncoder().encode(value))
+			.flatMap { String(data: $0, encoding: .utf8) }
 	}
 
 	/// The full document plus its per-block fragments — the coordinator keeps

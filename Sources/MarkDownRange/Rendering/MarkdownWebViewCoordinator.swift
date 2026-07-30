@@ -232,11 +232,13 @@ extension MarkdownWebView {
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
+			let baseline = lastFragments
 			renderTask = Task { @MainActor [weak self, weak webView] in
 				let rendered = await MarkdownRenderService.shared.blockResult(
 					markdown: text, theme: theme, fontSize: fontSize,
 					includeSourceOffsets: includeOffsets,
-					interactiveCheckboxes: checkboxes)
+					interactiveCheckboxes: checkboxes,
+					baseline: baseline)
 				// Re-validate: a newer render, a config change, a structural edit,
 				// or fresher text supersedes this result.
 				guard let self, let webView, !Task.isCancelled,
@@ -274,11 +276,14 @@ extension MarkdownWebView {
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
+			let baseline = lastFragments
 			renderTask?.cancel()
 			renderTask = Task { @MainActor [weak self, weak webView] in
 				let rendered = await MarkdownRenderService.shared.blockResult(
 					markdown: text, theme: theme, fontSize: fontSize,
-					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes)
+					includeSourceOffsets: includeOffsets,
+					interactiveCheckboxes: checkboxes,
+					baseline: baseline)
 				guard let self, let webView, generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.pendingSelection = nil
@@ -296,19 +301,29 @@ extension MarkdownWebView {
 			let fullSwap = { [weak self, weak webView] in
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
-				self.log("body swap: \(fragments.count) blocks rev=\(revision)")
-				webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(rendered.bodyJSON), \(revision));") {
-					[weak self, weak webView] _, error in
-					guard let self, let webView, error == nil,
-					      generation == self.renderGeneration, revision == self.currentRev else { return }
-					self.lastFragments = fragments
-					self.placeCaretAfterUpdate(selection, into: webView)
-					self.applyLineChanges(to: webView, force: true)
+				Task { @MainActor [weak self, weak webView] in
+					let bodyJSON: String
+					if let prepared = rendered.bodyJSON {
+						bodyJSON = prepared
+					} else {
+						bodyJSON = await MarkdownRenderService.shared.bodyJSON(for: fragments)
+					}
+					guard let self, let webView,
+					      generation == self.renderGeneration,
+					      revision == self.currentRev else { return }
+					self.log("body swap: \(fragments.count) blocks rev=\(revision)")
+					webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(bodyJSON), \(revision));") {
+						[weak self, weak webView] _, error in
+						guard let self, let webView, error == nil,
+						      generation == self.renderGeneration, revision == self.currentRev else { return }
+						self.lastFragments = fragments
+						self.placeCaretAfterUpdate(selection, into: webView)
+						self.applyLineChanges(to: webView, force: true)
+					}
 				}
 			}
-			guard let old = lastFragments, let patch = MarkdownBlockDiff.patch(from: old, to: fragments),
-			      let htmlData = try? JSONEncoder().encode(patch.html),
-			      let htmlJSON = String(data: htmlData, encoding: .utf8) else {
+			guard let patch = rendered.patch,
+			      let htmlJSON = rendered.patchHTMLJSON else {
 				fullSwap()
 				return
 			}

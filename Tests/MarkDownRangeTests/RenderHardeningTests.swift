@@ -68,7 +68,7 @@ struct RenderHardeningTests {
 	}
 	#endif
 
-	@Test("Full-swap payload is prepared with the fragments off the main actor")
+	@Test("Full-swap payload is prepared only when no incremental baseline exists")
 	func fullSwapPayloadMatchesFragments() async throws {
 		let result = await MarkdownRenderService.shared.blockResult(
 			markdown: "# Heading\n\nOne **two** three.\n\n- four\n- five\n",
@@ -77,9 +77,40 @@ struct RenderHardeningTests {
 			includeSourceOffsets: true,
 			interactiveCheckboxes: false
 		)
-		let data = try #require(result.bodyJSON.data(using: .utf8))
+		#expect(result.patch == nil)
+		let bodyJSON = try #require(result.bodyJSON)
+		let data = try #require(bodyJSON.data(using: .utf8))
 		let decoded = try JSONDecoder().decode(String.self, from: data)
 		#expect(decoded == result.fragments.map(\.html).joined())
+	}
+
+	@Test("Incremental render serializes only the changed block payload")
+	func incrementalRenderSkipsWholeBodySerialization() async throws {
+		let source = (0..<1_500)
+			.map { "Paragraph \($0) with **bold text** and a [link](https://example.com/\($0))." }
+			.joined(separator: "\n\n")
+		let baseline = await MarkdownRenderService.shared.blockFragments(
+			markdown: source,
+			theme: .default,
+			fontSize: 16,
+			includeSourceOffsets: true,
+			interactiveCheckboxes: false)
+		let edited = source.replacingOccurrences(
+			of: "Paragraph 700 ",
+			with: "Paragraph 700X ")
+		let result = await MarkdownRenderService.shared.blockResult(
+			markdown: edited,
+			theme: .default,
+			fontSize: 16,
+			includeSourceOffsets: true,
+			interactiveCheckboxes: false,
+			baseline: baseline)
+
+		let patch = try #require(result.patch)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.count == 1)
+		#expect(result.patchHTMLJSON != nil)
+		#expect(result.bodyJSON == nil)
 	}
 
 	@Test("Cancelled block rendering stops before publishing a complete large result")

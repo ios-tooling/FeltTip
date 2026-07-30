@@ -28,4 +28,22 @@ import Testing
 		#expect(!processed.contains("=="))
 		#expect(map.count == (processed as NSString).length)
 	}
+
+	@Test func parserTrackingKeepsIdentityMapsImplicitForLargePlainSource() {
+		let source = (0..<10_000)
+			.map { "Plain paragraph \($0) with no preprocessing syntax." }
+			.joined(separator: "\n\n")
+		let tracked = MarkdownPreprocessor.processTrackingOptionalOffsets(source)
+
+		#expect(tracked.processed == source)
+		#expect(tracked.map == nil)
+	}
+
+	@Test func parserTrackingStillBuildsAMapForStructuralRewrites() {
+		let source = "some ==marked== text"
+		let tracked = MarkdownPreprocessor.processTrackingOptionalOffsets(source)
+
+		#expect(tracked.processed != source)
+		#expect(tracked.map?.count == tracked.processed.utf16.count)
+	}
 }
