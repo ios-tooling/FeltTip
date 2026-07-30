@@ -122,6 +122,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			scrollView: scrollView, textView: textView,
 			coordinator: context.coordinator)
 		context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
+		context.coordinator.scheduleHeadingIndex(for: text, debounce: false)
 		updateHighlighting(textView: textView, coordinator: context.coordinator)
 		context.coordinator.recordCurrentHighlightState()
 
@@ -222,6 +223,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			context.coordinator.lineNumberRuler?.setLineIndex(
 				context.coordinator.lineIndex)
 			context.coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(in: text)
+			context.coordinator.scheduleHeadingIndex(for: text, debounce: false)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
 			context.coordinator.scheduleIncrementalLayout(for: textView)
@@ -462,6 +464,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var scrollReportScheduled = false
 		/// In-flight incremental pre-layout of freshly set text.
 		var prelayoutTask: Task<Void, Never>?
+		/// Cancellable off-main heading-index build. Its matching content
+		/// revision gates use of source ranges after rapid local or host edits.
+		var headingIndexTask: Task<Void, Never>?
+		var indexedHeadings: [MarkdownHeading] = []
+		var indexedHeadingRevision = -1
 		weak var lineNumberRuler: LineNumberRulerView?
 
 		/// Lay the document out ahead of scrolling. TextKit lays out lazily,
@@ -488,6 +495,48 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					try? await Task.sleep(for: .milliseconds(10))
 				}
 			}
+		}
+
+		/// Build a source-ordered heading index away from the AppKit thread.
+		/// Local typing is debounced so a burst creates one parse; initial and
+		/// external host loads start immediately. A superseded task cancels its
+		/// parser, and the revision guard prevents stale ranges from publishing.
+		@MainActor
+		func scheduleHeadingIndex(for text: String, debounce: Bool) {
+			headingIndexTask?.cancel()
+			let revision = contentRevision
+			headingIndexTask = Task { [weak self] in
+				if debounce {
+					do {
+						try await Task.sleep(for: .milliseconds(200))
+					} catch {
+						return
+					}
+				}
+				guard !Task.isCancelled else { return }
+				let worker = Task.detached(priority: .utility) {
+					MarkdownHeading.parse(from: text)
+				}
+				let headings = await withTaskCancellationHandler(
+					operation: { await worker.value },
+					onCancel: { worker.cancel() })
+				guard !Task.isCancelled, let self,
+				      self.contentRevision == revision else { return }
+				self.indexedHeadings = headings
+				self.indexedHeadingRevision = revision
+			}
+		}
+
+		func visibleHeading(at offset: Int, in currentText: String) -> MarkdownHeading? {
+			if indexedHeadingRevision == contentRevision {
+				return MarkdownHeading.heading(
+					atCharacterOffset: offset, in: indexedHeadings)
+			}
+			// The index is briefly stale while a debounced edit refresh is
+			// pending. Preserve exact behavior by scanning the live source
+			// rather than consulting old ranges.
+			return MarkdownHeading.heading(
+				atCharacterOffset: offset, in: currentText)
 		}
 		var isUpdatingFromSwiftUI = false
 		var lastAppliedFontSize: CGFloat = 0
@@ -603,7 +652,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
 			guard glyphIndex < layoutManager.numberOfGlyphs else { return }
 			let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-			let heading = MarkdownHeading.heading(atCharacterOffset: charIndex, in: textView.string)
+			let heading = visibleHeading(
+				at: charIndex, in: textView.string)
 			if heading?.id != lastReportedHeading {
 				lastReportedHeading = heading?.id
 				parent.onVisibleHeadingChanged?(heading?.id)
@@ -611,6 +661,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 		deinit {
 			prelayoutTask?.cancel()
+			headingIndexTask?.cancel()
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
 			headingDebounceTimer?.invalidate()
 			highlightDebounceTimer?.invalidate()
@@ -620,6 +671,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard let tv = notification.object as? NSTextView else { return }
 			let updatedText = tv.string
 			pendingLocalText = updatedText
+			scheduleHeadingIndex(for: updatedText, debounce: true)
 			if let onSourceEdit = parent.onSourceEdit {
 				onSourceEdit(updatedText, tv.selectedRange().location)
 			} else {

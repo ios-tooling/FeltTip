@@ -64,4 +64,42 @@ import Foundation
 		#expect(first.sourceRange == (source as NSString).range(of: "# First"))
 		#expect(second.sourceRange == (source as NSString).range(of: "## Second"))
 	}
+
+	@Test func parsedHeadingIndexLookupPreservesSourceBoundarySemantics() throws {
+		let source = "preface\n# First\nbody 🙂\n## Second\nend"
+		let headings = MarkdownHeading.parse(from: source)
+		let first = try #require(headings.first)
+		let second = try #require(headings.last)
+
+		#expect(MarkdownHeading.heading(
+			atCharacterOffset: first.sourceRange.location - 1,
+			in: headings) == nil)
+		#expect(MarkdownHeading.heading(
+			atCharacterOffset: first.sourceRange.location,
+			in: headings)?.id == first.id)
+		#expect(MarkdownHeading.heading(
+			atCharacterOffset: second.sourceRange.location - 1,
+			in: headings)?.id == first.id)
+		#expect(MarkdownHeading.heading(
+			atCharacterOffset: second.sourceRange.location,
+			in: headings)?.id == second.id)
+	}
+
+	@Test func parsedHeadingIndexSupportsRepeatedDeepScrollLookups() {
+		let headings = (0..<100_000).map { index in
+			MarkdownHeading(
+				id: "\(index)-Heading", level: 2, text: "Heading",
+				sourceRange: NSRange(location: index * 100, length: 10))
+		}
+		let clock = ContinuousClock()
+		let elapsed = clock.measure {
+			for index in 0..<10_000 {
+				let offset = 9_999_999 - index * 7
+				_ = MarkdownHeading.heading(
+					atCharacterOffset: offset, in: headings)
+			}
+		}
+
+		#expect(elapsed < .seconds(1), "indexed heading lookups took \(elapsed)")
+	}
 }

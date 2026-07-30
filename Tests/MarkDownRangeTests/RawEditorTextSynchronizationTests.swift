@@ -74,5 +74,43 @@ struct RawEditorTextSynchronizationTests {
 
 		#expect(flag.wasCancelled)
 	}
+
+	@Test("A revision-matched heading index serves the raw scroll lookup")
+	func matchingHeadingIndexIsUsed() {
+		let source = "# First\n\nbody\n\n## Second"
+		let coordinator = coordinator(text: source)
+		let headings = MarkdownHeading.parse(from: source)
+		coordinator.indexedHeadings = headings
+		coordinator.indexedHeadingRevision = coordinator.contentRevision
+		let secondOffset = (source as NSString).range(of: "## Second").location
+
+		// Pass deliberately unrelated fallback text: a matching index should
+		// resolve from its own exact-revision ranges without scanning it.
+		let heading = coordinator.visibleHeading(
+			at: secondOffset, in: "not the indexed source")
+
+		#expect(heading?.id == headings.last?.id)
+	}
+
+	@Test("A stale heading index falls back to the live source")
+	func staleHeadingIndexIsNeverUsed() {
+		let original = "# Old heading"
+		let coordinator = coordinator(text: original)
+		coordinator.indexedHeadings = MarkdownHeading.parse(from: original)
+		coordinator.indexedHeadingRevision = coordinator.contentRevision
+
+		// NSTextStorage character edits advance the exact revision used to
+		// gate the asynchronous index. The old index must now be ignored.
+		let current = "# Current heading"
+		coordinator.textStorage(
+			NSTextStorage(string: current),
+			didProcessEditing: .editedCharacters,
+			range: NSRange(location: 0, length: (current as NSString).length),
+			changeInLength: (current as NSString).length - (original as NSString).length)
+
+		let heading = coordinator.visibleHeading(at: 0, in: current)
+
+		#expect(heading?.text == "Current heading")
+	}
 }
 #endif

@@ -97,6 +97,28 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 		return lastHeading
 	}
 
+	/// Finds the heading at or immediately before a UTF-16 source offset in an
+	/// already parsed, source-ordered heading index. Raw editors use this after
+	/// their cancellable index build completes so a deep scroll does not rescan
+	/// the document prefix on the main actor.
+	public static func heading(
+		atCharacterOffset offset: Int,
+		in headings: [MarkdownHeading]
+	) -> MarkdownHeading? {
+		var lowerBound = 0
+		var upperBound = headings.count
+		while lowerBound < upperBound {
+			let middle = lowerBound + (upperBound - lowerBound) / 2
+			if headings[middle].sourceRange.location <= offset {
+				lowerBound = middle + 1
+			} else {
+				upperBound = middle
+			}
+		}
+		guard lowerBound > 0 else { return nil }
+		return headings[lowerBound - 1]
+	}
+
 	public static func characterRange(for headingID: String, in text: String) -> NSRange? {
 		var inCodeBlock = false
 		var headingIndex = 0
