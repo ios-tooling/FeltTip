@@ -52,6 +52,10 @@ enum MarkdownEditSplicer {
 		/// the item is indented, so the splice re-indents the new item to match
 		/// the one being continued.
 		var listBreak = false
+		/// Enter was pressed at the first visible character of a block. The
+		/// splice verifies any source prefix hidden by rendering (`# `, `> `,
+		/// `**`, etc.) and inserts before it so the whole block moves.
+		var blockStartBreak = false
 		/// The replacement ends a line with a hard break ("\\\n"). Whitespace
 		/// left at the start of the following line is stripped when rendered,
 		/// which would stamp that run at the whitespace instead of its first
@@ -166,6 +170,18 @@ enum MarkdownEditSplicer {
 		// renderer strips that whitespace, and a stamped run whose text has lost
 		// characters the source still has no longer addresses its own offset.
 		var spliceRange = range
+		if edit.blockStartBreak {
+			guard range.length == 0, replacement == "\n\n",
+				  let lineStart = verifiedBlockStart(
+					in: text, visibleStart: edit.start)
+			else {
+				return .rejected("invalid visual block-start break at \(edit.start)")
+			}
+			spliceRange = NSRange(location: lineStart, length: 0)
+			// Return at a block's visual start leaves the insertion point in
+			// the new empty block above; the original prefixed block moves down.
+			caret = lineStart
+		}
 		if replacement.isEmpty, edit.selected,
 		   !edit.syntaxStart.isEmpty || !edit.syntaxEnd.isEmpty || !edit.blockPrefixes.isEmpty {
 			guard let expanded = syntaxExpandedDeletionRange(edit, range: range, in: text) else {
@@ -183,6 +199,30 @@ enum MarkdownEditSplicer {
 		}
 		return .applied(text.replacingCharacters(in: spliceRange, with: replacement),
 						selection: caret.map { NSRange(location: $0, length: 0) })
+	}
+
+	/// Verifies that the hidden portion before a block's first visible run
+	/// actually begins with the declared Markdown structure. Content after the
+	/// structural marker may itself begin with hidden inline syntax (`**`), so
+	/// the visible stamp is allowed to sit later than the marker.
+	private static func verifiedBlockStart(in text: NSString, visibleStart: Int) -> Int? {
+		guard visibleStart >= 0, visibleStart <= text.length else { return nil }
+		var lineStart = visibleStart
+		while lineStart > 0 {
+			let previous = text.character(at: lineStart - 1)
+			if previous == 0x0A || previous == 0x0D { break }
+			lineStart -= 1
+		}
+		let hidden = text.substring(with: NSRange(
+			location: lineStart, length: visibleStart - lineStart))
+		// A stale or forged flag must not pull visible prose into the moved
+		// block. Legitimately hidden Markdown prefixes contain only whitespace
+		// and punctuation; letters/numbers mean this was not the visual start.
+		guard hidden.rangeOfCharacter(from: .alphanumerics) == nil,
+			  hidden.rangeOfCharacter(from: .newlines) == nil else {
+			return nil
+		}
+		return lineStart
 	}
 
 	/// Leading whitespace of the line containing `offset`.
@@ -514,6 +554,7 @@ extension MarkdownEditSplicer.Edit {
 		self.blockPrefixes = body["blockPrefixes"] as? [String] ?? []
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
+		self.blockStartBreak = body["blockStartBreak"] as? Bool ?? false
 		self.hardBreak = body["hardBreak"] as? Bool ?? false
 	}
 }

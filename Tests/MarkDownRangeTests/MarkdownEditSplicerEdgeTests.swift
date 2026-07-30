@@ -18,12 +18,14 @@ import Testing
 					  before: String = "", after: String = "", caret: Int? = nil,
 					  crossRun: Bool = false, selected: Bool = false,
 					  marker: String? = nil, listBreak: Bool = false,
+					  blockStartBreak: Bool = false,
 					  syntaxStart: [String] = [], syntaxEnd: [String] = []) -> MarkdownEditSplicer.Edit {
 		MarkdownEditSplicer.Edit(start: start, end: end, replacement: text, wrapMarker: marker,
 								 expected: expected, crossRun: crossRun, selected: selected,
 								 before: before, after: after,
 								 syntaxStart: syntaxStart, syntaxEnd: syntaxEnd,
-								 caret: caret, listBreak: listBreak)
+								 caret: caret, listBreak: listBreak,
+								 blockStartBreak: blockStartBreak)
 	}
 
 	private func applied(_ outcome: MarkdownEditSplicer.Outcome) -> (String, NSRange?)? {
@@ -276,6 +278,34 @@ import Testing
 		#expect(applied(outcome)?.0 == "  - Xitem\n")
 	}
 
+	// MARK: Prefixed block starts
+
+	@Test func headingStartBreakMovesHiddenMarkersAndRestoresTheLeadingCaret() {
+		let source = "> ### **Heading**\n"
+		let visible = (source as NSString).range(of: "Heading").location
+		let outcome = MarkdownEditSplicer.apply(
+			edit(visible, visible, text: "\n\n", after: "Heading",
+				 caret: visible + 2, blockStartBreak: true),
+			to: source)
+		let (text, selection) = try! #require(applied(outcome))
+		#expect(text == "\n\n> ### **Heading**\n")
+		#expect(selection == NSRange(location: 0, length: 0))
+	}
+
+	@Test func prefixedBreakRejectsAFlagThatDoesNotMatchTheSource() {
+		let outcome = MarkdownEditSplicer.apply(
+			edit(5, 5, text: "\n\n", before: "plain",
+				 caret: 7, blockStartBreak: true),
+			to: "plain text")
+		#expect(rejection(outcome)?.contains("invalid visual block-start break") == true)
+	}
+
+	@Test func blockStartBreakRejectsNonParagraphReplacements() {
+		let source = "# Heading"
+		#expect(rejection(MarkdownEditSplicer.apply(
+			edit(2, 2, text: "X", blockStartBreak: true), to: source)) != nil)
+	}
+
 	// MARK: Message parsing
 
 	@Test func bodyParsingDefaultsAndOptionals() {
@@ -292,12 +322,21 @@ import Testing
 		#expect(minimal?.blockPrefixes == [])
 		#expect(minimal?.caret == nil)
 		#expect(minimal?.listBreak == false)
+		#expect(minimal?.blockStartBreak == false)
 	}
 
 	@Test func bodyParsingReadsTheListBreakFlag() {
 		let parsed = MarkdownEditSplicer.Edit(body: ["start": 3, "end": 3, "text": "\n- ", "caret": 6, "listBreak": true])
 		#expect(parsed?.listBreak == true)
 		#expect(parsed?.caret == 6)
+	}
+
+	@Test func bodyParsingReadsTheBlockStartBreakFlag() {
+		let parsed = MarkdownEditSplicer.Edit(body: [
+			"start": 2, "end": 2, "text": "\n\n",
+			"blockStartBreak": true,
+		])
+		#expect(parsed?.blockStartBreak == true)
 	}
 
 	@Test func bodyParsingReadsCutSyntaxBoundaries() {

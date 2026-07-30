@@ -74,7 +74,7 @@ pre-restore source — typing the undo straight back out.
 | --- | --- | --- |
 | Typing, delete, forward/word delete | in-place | cross-run variants go structural |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
-| Enter | structural | list items keep their **source** indentation (`listBreak`) |
+| Enter | structural | list items keep their **source** indentation (`listBreak`); at a visual block start, any verified hidden Markdown prefix moves down with its text and the caret stays in the new block above |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
 | Format → inline styles / Link | structural | shared source formatter; inline cross-run selections are blocked |

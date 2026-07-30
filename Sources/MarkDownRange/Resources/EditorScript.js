@@ -454,6 +454,18 @@
     if (!li) return null;
     return li.parentElement && li.parentElement.tagName === 'OL' ? '\n1. ' : '\n- ';
   }
+  // Markdown syntax can be hidden before a block's first visible character:
+  // headings/quotes, or inline openers such as `**`. Enter at that visual
+  // boundary must split before the hidden prefix, not at the first run's
+  // data-s offset (which would produce "# \n\nHeading"). Even when no prefix
+  // exists, the caret belongs in the newly-created block above. Lists
+  // deliberately keep their continuation behavior.
+  function isVisualBlockStart(node, offset) {
+    var el = node.nodeType === 3 ? node.parentNode : node;
+    if (!el || !el.closest || el.closest('li, td, th')) return false;
+    var block = el.closest('h1, h2, h3, h4, h5, h6, p');
+    return !!block && textOffsetWithin(block, node, offset) === 0;
+  }
   function tableCellOf(node) {
     var el = node && node.nodeType === 3 ? node.parentNode : node;
     return el && el.closest ? el.closest('td, th') : null;
@@ -823,8 +835,14 @@
       // as leading spaces) — flag it and let the splice prefix it.
       var listMarker = listItemMarker(range.startContainer);
       var marker = listMarker || '\n\n';
+      var blockStartBreak = !listMarker
+        && isVisualBlockStart(startPos.node, startPos.offset);
       freeze();
-      post({ start: start, end: end, text: marker, expected: expected, crossRun: crossRun, before: before, after: after, caret: start + marker.length, listBreak: !!listMarker, rev: stampRev, seq: seq++ });
+      post({ start: start, end: end, text: marker, expected: expected,
+             crossRun: crossRun, before: before, after: after,
+             caret: start + marker.length, listBreak: !!listMarker,
+             blockStartBreak: blockStartBreak,
+             rev: stampRev, seq: seq++ });
       return;
     }
     // Paste: take the plain text only (markdown IS the rich form here) and
