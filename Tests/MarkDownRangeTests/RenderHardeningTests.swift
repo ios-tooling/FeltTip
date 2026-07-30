@@ -6,6 +6,9 @@
 import Foundation
 import Testing
 @testable import MarkDownRange
+#if os(macOS)
+import WebKit
+#endif
 
 #if os(macOS)
 @MainActor
@@ -94,6 +97,27 @@ struct RenderHardeningTests {
 		#expect(swapFlag.wasCancelled)
 	}
 
+	@Test("Patch fallback serialization is tracked as cancellable render work")
+	@MainActor
+	func patchFallbackSerializationIsTracked() async {
+		let coordinator = MarkdownWebView(
+			text: "document", theme: .default, fontSize: 16
+		).makeCoordinator()
+		let webView = WKWebView()
+		let rendered = MarkdownRenderService.BlockResult(
+			fragments: [MarkdownBlockFragment(html: "<p>fallback</p>")],
+			patch: nil,
+			patchHTMLJSON: nil,
+			bodyJSON: nil)
+
+		coordinator.apply(rendered, into: webView, thenPlaceCaret: nil)
+		let fallbackTask = coordinator.renderTask
+
+		#expect(fallbackTask != nil)
+		fallbackTask?.cancel()
+		await fallbackTask?.value
+	}
+
 	@Test("PDF WebView blocks remote subresources unless explicitly allowed")
 	@MainActor
 	func pdfRemoteResourcesRequireOptIn() {
@@ -174,6 +198,20 @@ struct RenderHardeningTests {
 		task.cancel()
 		let fragments = await task.value
 		#expect(fragments.count < blockCount)
+	}
+
+	@Test("Cancelled fallback serialization skips obsolete whole-body work")
+	func cancellationStopsFallbackSerialization() async {
+		let service = MarkdownRenderService()
+		let fragments = (0..<10_000).map {
+			MarkdownBlockFragment(html: "<p>Paragraph \($0)</p>")
+		}
+		let task = Task {
+			withUnsafeCurrentTask { $0?.cancel() }
+			return await service.bodyJSON(for: fragments)
+		}
+
+		#expect(await task.value == nil)
 	}
 
 	@Test("Image-region collection remains linear on linked-image-heavy HTML")

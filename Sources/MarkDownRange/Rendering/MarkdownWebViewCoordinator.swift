@@ -302,7 +302,7 @@ extension MarkdownWebView {
 		/// Land freshly rendered fragments on the page: patch the changed span
 		/// when the baseline allows it, otherwise swap the whole body. Assumes
 		/// the caller has already committed coordinator state (text, epoch).
-		private func apply(_ rendered: MarkdownRenderService.BlockResult, into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
+		func apply(_ rendered: MarkdownRenderService.BlockResult, into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
 			let fragments = rendered.fragments
 			let generation = renderGeneration
 			let revision = currentRev
@@ -310,16 +310,19 @@ extension MarkdownWebView {
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
 				let renderService = self.renderService
-				Task { @MainActor [weak self, weak webView] in
+				self.renderTask = Task { @MainActor [weak self, weak webView] in
 					let bodyJSON: String
 					if let prepared = rendered.bodyJSON {
 						bodyJSON = prepared
 					} else {
-						bodyJSON = await renderService.bodyJSON(for: fragments)
+						guard let generated = await renderService.bodyJSON(for: fragments)
+						else { return }
+						bodyJSON = generated
 					}
 					guard let self, let webView,
 					      generation == self.renderGeneration,
 					      revision == self.currentRev else { return }
+					self.renderTask = nil
 					self.log("body swap: \(fragments.count) blocks rev=\(revision)")
 					webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(bodyJSON), \(revision));") {
 						[weak self, weak webView] _, error in

@@ -74,12 +74,19 @@ actor MarkdownRenderService {
 			bodyJSON: Self.bodyJSON(fragments))
 	}
 
-	func bodyJSON(for fragments: [MarkdownBlockFragment]) -> String {
+	func bodyJSON(for fragments: [MarkdownBlockFragment]) -> String? {
 		Self.bodyJSON(fragments)
 	}
 
-	private static func bodyJSON(_ fragments: [MarkdownBlockFragment]) -> String {
-		jsonString(for: fragments.lazy.map(\.html).joined()) ?? "\"\""
+	private static func bodyJSON(_ fragments: [MarkdownBlockFragment]) -> String? {
+		guard !Task.isCancelled else { return nil }
+		var body = ""
+		for (index, fragment) in fragments.enumerated() {
+			if index & 63 == 0, Task.isCancelled { return nil }
+			body += fragment.html
+		}
+		guard !Task.isCancelled else { return nil }
+		return jsonString(for: body) ?? "\"\""
 	}
 
 	private static func jsonString<Value: Encodable>(for value: Value) -> String? {
