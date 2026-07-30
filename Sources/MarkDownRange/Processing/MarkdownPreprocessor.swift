@@ -77,19 +77,37 @@ public enum MarkdownPreprocessor {
 		let srcMiddle = Array(src[prefix..<(src.count - suffix)])
 		let dstMiddle = Array(dst[prefix..<(dst.count - suffix)])
 		let diff = dstMiddle.difference(from: srcMiddle)
-		// Transform an identity array of source offsets exactly as the diff
-		// transforms the middle of `src` into the middle of `dst`: drop
-		// removed positions (descending so offsets stay valid), then give
-		// each inserted position its nearest surviving neighbor's offset.
-		var offsets = Array(prefix..<(src.count - suffix))
-		for change in diff.removals.reversed() {
-			if case let .remove(offset, _, _) = change { offsets.remove(at: offset) }
+		// Build the transformed offset array in one pass. Replaying the diff
+		// with Array.remove/insert made documents with a rewrite on every line
+		// quadratic: each mutation shifted the rest of a document-sized array.
+		// Surviving source positions stream into non-inserted destination slots;
+		// synthesized slots inherit the same nearest-neighbour offset as before.
+		let removed = Set(diff.removals.compactMap { change -> Int? in
+			if case let .remove(offset, _, _) = change { return offset }
+			return nil
+		})
+		let inserted = Set(diff.insertions.compactMap { change -> Int? in
+			if case let .insert(offset, _, _) = change { return offset }
+			return nil
+		})
+		var survivors: [Int] = []
+		survivors.reserveCapacity(srcMiddle.count - removed.count)
+		for offset in srcMiddle.indices where !removed.contains(offset) {
+			survivors.append(prefix + offset)
 		}
-		for change in diff.insertions {
-			if case let .insert(offset, _, _) = change {
-				let neighbor = offset > 0 ? offsets[offset - 1]
-					: (offset < offsets.count ? offsets[offset] : (prefix > 0 ? prefix - 1 : 0))
-				offsets.insert(neighbor, at: offset)
+		var offsets: [Int] = []
+		offsets.reserveCapacity(dstMiddle.count)
+		var survivorIndex = 0
+		for offset in dstMiddle.indices {
+			if inserted.contains(offset) {
+				let neighbor = offsets.last
+					?? (survivorIndex < survivors.count
+						? survivors[survivorIndex]
+						: (prefix > 0 ? prefix - 1 : 0))
+				offsets.append(neighbor)
+			} else {
+				offsets.append(survivors[survivorIndex])
+				survivorIndex += 1
 			}
 		}
 		let shift = src.count - dst.count
