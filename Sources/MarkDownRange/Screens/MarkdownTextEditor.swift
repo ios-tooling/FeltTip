@@ -610,6 +610,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 		deinit {
+			prelayoutTask?.cancel()
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
 			headingDebounceTimer?.invalidate()
 			highlightDebounceTimer?.invalidate()
