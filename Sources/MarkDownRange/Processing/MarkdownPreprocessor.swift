@@ -12,12 +12,35 @@ import Foundation
 /// the parsed citations and footnotes for side panels.
 public enum MarkdownPreprocessor {
 	public static func process(_ body: String, options: MarkdownOptions = .default, preservingSourceText: Bool = false) -> String {
+		processCancellable(
+			body, options: options,
+			preservingSourceText: preservingSourceText) ?? body
+	}
+
+	/// Rendering runs preprocessing inside cancellable tasks. Return nil once
+	/// that task is obsolete so a superseded large-document render does not
+	/// continue through the remaining document-wide passes. The public
+	/// synchronous API above falls back to its unchanged input if its caller is
+	/// already cancelled; parser callers discard the result at their next
+	/// cancellation guard.
+	private static func processCancellable(
+		_ body: String,
+		options: MarkdownOptions,
+		preservingSourceText: Bool
+	) -> String? {
+		guard !Task.isCancelled else { return nil }
 		let citations = Citation.parse(from: body)
+		guard !Task.isCancelled else { return nil }
 		let withCitations = Citation.renderableContent(from: body, citations: citations)
+		guard !Task.isCancelled else { return nil }
 		let footnotes = MarkdownFootnote.parse(from: withCitations)
+		guard !Task.isCancelled else { return nil }
 		let withFootnotes = MarkdownFootnote.renderableContent(from: withCitations, footnotes: footnotes)
+		guard !Task.isCancelled else { return nil }
 		let withAppendedNotes = appendFootnoteSection(to: withFootnotes, footnotes: footnotes)
-		return common(after: withAppendedNotes, options: options, preservingSourceText: preservingSourceText)
+		return commonCancellable(
+			after: withAppendedNotes, options: options,
+			preservingSourceText: preservingSourceText)
 	}
 
 	/// Preprocesses `body` and also returns a map from each UTF-16 offset in the
@@ -52,7 +75,11 @@ public enum MarkdownPreprocessor {
 		_ body: String,
 		options: MarkdownOptions = .default
 	) -> (processed: String, map: [Int]?) {
-		let processed = process(body, options: options, preservingSourceText: true)
+		guard let processed = processCancellable(
+			body, options: options, preservingSourceText: true
+		) else {
+			return (body, nil)
+		}
 		return (
 			processed,
 			processed == body ? nil : offsetMap(from: body, to: processed)
@@ -142,6 +169,17 @@ public enum MarkdownPreprocessor {
 	/// (editable rendering) skips the cosmetic character substitutions so
 	/// rendered run text stays byte-for-byte the source's.
 	public static func common(after withFootnotes: String, options: MarkdownOptions = .default, preservingSourceText: Bool = false) -> String {
+		commonCancellable(
+			after: withFootnotes, options: options,
+			preservingSourceText: preservingSourceText) ?? withFootnotes
+	}
+
+	private static func commonCancellable(
+		after withFootnotes: String,
+		options: MarkdownOptions,
+		preservingSourceText: Bool
+	) -> String? {
+		guard !Task.isCancelled else { return nil }
 		let collectTimings = recordsPerformanceMetrics
 		func timed<T>(_ label: String, _ work: () -> T) -> T {
 			guard collectTimings else { return work() }
@@ -151,7 +189,9 @@ public enum MarkdownPreprocessor {
 			return result
 		}
 		let withAbbreviations = timed("Abbreviation") { AbbreviationProcessor.process(withFootnotes) }
+		guard !Task.isCancelled else { return nil }
 		let withContainers = timed("CustomContainer") { CustomContainerProcessor.process(withAbbreviations) }
+		guard !Task.isCancelled else { return nil }
 		// All seven of the per-line processors run inside a single split-
 		// iterate-join pass — we used to do ten separate ones, which cost
 		// ~80 ms of pure split/join on a 200-section document. Order is
@@ -159,10 +199,20 @@ public enum MarkdownPreprocessor {
 		// → Emoticon → SmartQuotes → SmartTypography → Highlight). HeadingSpace
 		// used to run before Abbreviation/CustomContainer; neither of those
 		// inspects heading syntax so the move is behaviour-preserving.
-		let withLinePass = timed("LinePass") { mergedLinePass(withContainers, options: options, preservingSourceText: preservingSourceText) }
+		guard let withLinePass = timed("LinePass", {
+			mergedLinePass(
+				withContainers, options: options,
+				preservingSourceText: preservingSourceText)
+		}) else {
+			return nil
+		}
+		guard !Task.isCancelled else { return nil }
 		let withEmoji = preservingSourceText ? withLinePass : timed("Emoji") { EmojiShortcodes.process(withLinePass) }
+		guard !Task.isCancelled else { return nil }
 		let withDefList = timed("DefinitionList") { DefinitionListProcessor.process(withEmoji) }
+		guard !Task.isCancelled else { return nil }
 		let withWikilinks = timed("Wikilink") { WikilinkProcessor.process(withDefList) }
+		guard !Task.isCancelled else { return nil }
 		return withWikilinks
 	}
 
@@ -170,13 +220,18 @@ public enum MarkdownPreprocessor {
 	/// processor's `applyLine` bakes in its own per-line fast-fail and any
 	/// special skip conditions (e.g. SmartQuotes skipping link reference
 	/// definitions), so we don't need to know per-processor specifics here.
-	private static func mergedLinePass(_ text: String, options: MarkdownOptions, preservingSourceText: Bool) -> String {
+	private static func mergedLinePass(
+		_ text: String,
+		options: MarkdownOptions,
+		preservingSourceText: Bool
+	) -> String? {
 		var output: [String] = []
 		var inFence = false
 		let lines = text.components(separatedBy: "\n")
 		output.reserveCapacity(lines.count)
 		let injectHeadingSpace = !options.headingsRequireSpaceAfterHash
-		for line in lines {
+		for (index, line) in lines.enumerated() {
+			if index & 63 == 0, Task.isCancelled { return nil }
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
 				inFence.toggle()
@@ -195,6 +250,7 @@ public enum MarkdownPreprocessor {
 			processed = HighlightSyntax.applyLine(processed)
 			output.append(processed)
 		}
+		guard !Task.isCancelled else { return nil }
 		return output.joined(separator: "\n")
 	}
 

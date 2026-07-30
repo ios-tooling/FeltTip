@@ -47,6 +47,40 @@ import Testing
 		#expect(tracked.map?.count == tracked.processed.utf16.count)
 	}
 
+	@Test func cancelledDisplayPreprocessingSkipsObsoleteDocumentWidePasses() async {
+		let source = (0..<20_000)
+			.map { "Paragraph \($0) with ==highlight==, :smile:, and [[Wiki]]." }
+			.joined(separator: "\n")
+		let task = Task.detached {
+			while !Task.isCancelled { await Task.yield() }
+			return MarkdownPreprocessor.process(source)
+		}
+
+		task.cancel()
+		let processed = await task.value
+
+		// A cancelled synchronous caller gets the untouched input rather than
+		// a partially transformed document. Before the cancellation checkpoints
+		// this completed every preprocessing pass and returned rewritten text.
+		#expect(processed == source)
+	}
+
+	@Test func cancelledEditablePreprocessingSkipsOffsetDiffAllocation() async {
+		let source = (0..<20_000)
+			.map { "Paragraph \($0) with ==highlight== and [[Wiki]]." }
+			.joined(separator: "\n")
+		let task = Task.detached {
+			while !Task.isCancelled { await Task.yield() }
+			return MarkdownPreprocessor.processTrackingOptionalOffsets(source)
+		}
+
+		task.cancel()
+		let tracked = await task.value
+
+		#expect(tracked.processed == source)
+		#expect(tracked.map == nil)
+	}
+
 	@Test func linearOffsetBuilderPreservesReplaySemantics() {
 		let values = (0...6).flatMap { length in
 			(0..<(1 << length)).map { bits in
