@@ -1,0 +1,89 @@
+#if os(macOS)
+import CoreGraphics
+import Testing
+@testable import MarkDownRange
+
+@Suite struct MarkdownPDFPaginationPerformanceTests {
+	@Test("Indexed pagination preserves the prior planner's break semantics")
+	func indexedPlannerMatchesReference() {
+		let boxes = (0..<240).map { index in
+			let top = CGFloat(index * 37)
+			return (top: top, bottom: top + CGFloat(18 + index % 90))
+		}
+		let headings = stride(from: 80, through: 8_000, by: 173).map {
+			(top: CGFloat($0), bottom: CGFloat($0 + 28))
+		}
+
+		let expected = referencePageTopOffsets(
+			contentHeight: 9_000,
+			printHeight: 720,
+			boxes: boxes,
+			headings: headings)
+		let actual = MarkdownPDFRenderer.pageTopOffsets(
+			contentHeight: 9_000,
+			printHeight: 720,
+			boxes: boxes,
+			headings: headings)
+
+		#expect(actual == expected)
+	}
+
+	@Test("A long report pagination plan remains responsive")
+	func longReportPlannerRemainsResponsive() {
+		let boxes = (0..<30_000).map { index in
+			let top = CGFloat(index * 40)
+			return (top: top, bottom: top + CGFloat(20 + index % 120))
+		}
+		let headings = stride(from: 200, through: 1_199_000, by: 400).map {
+			(top: CGFloat($0), bottom: CGFloat($0 + 32))
+		}
+
+		let clock = ContinuousClock()
+		var pages: [CGFloat] = []
+		let elapsed = clock.measure {
+			pages = MarkdownPDFRenderer.pageTopOffsets(
+				contentHeight: 1_200_000,
+				printHeight: 720,
+				boxes: boxes,
+				headings: headings)
+		}
+
+		#expect(pages.count > 1_600)
+		#expect(elapsed < .seconds(1))
+	}
+
+	/// The pre-optimization implementation, retained only as a small-input
+	/// oracle so the indexed planner cannot change page-break behavior.
+	private func referencePageTopOffsets(
+		contentHeight: CGFloat,
+		printHeight: CGFloat,
+		boxes: [(top: CGFloat, bottom: CGFloat)],
+		headings: [(top: CGFloat, bottom: CGFloat)]
+	) -> [CGFloat] {
+		var tops: [CGFloat] = [0]
+		var current: CGFloat = 0
+		while current + printHeight < contentHeight {
+			var bottom = current + printHeight
+			for box in boxes
+			where box.top > current && box.top < bottom && box.bottom > bottom {
+				if box.bottom - box.top <= printHeight {
+					bottom = min(bottom, box.top)
+				}
+			}
+			for heading in headings
+			where heading.top > current && heading.bottom <= bottom {
+				let next = boxes.filter {
+					$0.top > heading.bottom - 1
+				}.map(\.top).min()
+				if let next, next >= bottom - 0.5 {
+					bottom = min(bottom, heading.top)
+				}
+			}
+			if bottom <= current { bottom = current + printHeight }
+			tops.append(bottom)
+			current = bottom
+		}
+		return tops
+	}
+}
+#endif

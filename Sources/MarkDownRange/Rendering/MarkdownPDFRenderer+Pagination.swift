@@ -21,7 +21,17 @@ extension MarkdownPDFRenderer {
 		let printH = pageHeight - 2 * margin
 		let boxes  = unbreakable.map { (top: $0.top, bottom: $0.top + $0.height) }
 		let heads  = headings.map { (top: $0.top, bottom: $0.top + $0.height) }
-		let tops   = pageTopOffsets(contentHeight: contentHeight, printHeight: printH, boxes: boxes, headings: heads)
+		let planner = Task.detached(priority: .userInitiated) {
+			pageTopOffsets(
+				contentHeight: contentHeight,
+				printHeight: printH,
+				boxes: boxes,
+				headings: heads)
+		}
+		let tops = await withTaskCancellationHandler(
+			operation: { await planner.value },
+			onCancel: { planner.cancel() })
+		guard !Task.isCancelled, !tops.isEmpty else { return nil }
 
 		let out = NSMutableData()
 		guard let consumer = CGDataConsumer(data: out as CFMutableData) else { return nil }
@@ -59,26 +69,59 @@ extension MarkdownPDFRenderer {
 	/// `printHeight` below its start, but if an element that fits on one page
 	/// straddles that boundary, the break is pulled up to the element's top so
 	/// it starts fresh on the next page.
-	private static func pageTopOffsets(contentHeight: CGFloat, printHeight: CGFloat,
-									   boxes: [(top: CGFloat, bottom: CGFloat)],
-									   headings: [(top: CGFloat, bottom: CGFloat)]) -> [CGFloat] {
+	nonisolated static func pageTopOffsets(
+		contentHeight: CGFloat,
+		printHeight: CGFloat,
+		boxes: [(top: CGFloat, bottom: CGFloat)],
+		headings: [(top: CGFloat, bottom: CGFloat)]
+	) -> [CGFloat] {
+		// DOM queries normally arrive in document order, but sorting here makes
+		// the planner robust to nested elements and lets each page inspect only
+		// its own candidates. The old implementation rescanned every box for
+		// every page, then allocated a filter/map array over every box for every
+		// heading — effectively pages × headings × elements on long reports.
+		let boxes = boxes.sorted {
+			$0.top == $1.top ? $0.bottom < $1.bottom : $0.top < $1.top
+		}
+		let headings = headings.sorted {
+			$0.top == $1.top ? $0.bottom < $1.bottom : $0.top < $1.top
+		}
+		let boxTops = boxes.map(\.top)
+		let headingTops = headings.map(\.top)
 		var tops: [CGFloat] = [0]
 		var current: CGFloat = 0
 
 		while current + printHeight < contentHeight {
+			guard !Task.isCancelled else { return [] }
 			var bottom = current + printHeight
 
 			// Don't split an element across the boundary.
-			for box in boxes where box.top > current && box.top < bottom && box.bottom > bottom {
-				if box.bottom - box.top <= printHeight { bottom = min(bottom, box.top) }
+			var boxIndex = upperBound(current, in: boxTops)
+			while boxIndex < boxes.count, boxes[boxIndex].top < bottom {
+				let box = boxes[boxIndex]
+				if box.bottom > bottom,
+				   box.bottom - box.top <= printHeight {
+					bottom = min(bottom, box.top)
+				}
+				boxIndex += 1
 			}
 
 			// Don't leave a heading stranded as the last item on the page: if a
 			// heading sits on this page with no following content before the
 			// break, pull the break up so it starts the next page.
-			for h in headings where h.top > current && h.bottom <= bottom {
-				let nextContentTop = boxes.filter { $0.top > h.bottom - 1 }.map(\.top).min()
-				if let next = nextContentTop, next >= bottom - 0.5 { bottom = min(bottom, h.top) }
+			var headingIndex = upperBound(current, in: headingTops)
+			while headingIndex < headings.count,
+				  headings[headingIndex].top < bottom {
+				let heading = headings[headingIndex]
+				if heading.bottom <= bottom {
+					let nextIndex = upperBound(
+						heading.bottom - 1, in: boxTops)
+					if nextIndex < boxTops.count,
+					   boxTops[nextIndex] >= bottom - 0.5 {
+						bottom = min(bottom, heading.top)
+					}
+				}
+				headingIndex += 1
 			}
 
 			if bottom <= current { bottom = current + printHeight }   // element too tall to help; force progress
@@ -86,6 +129,22 @@ extension MarkdownPDFRenderer {
 			current = bottom
 		}
 		return tops
+	}
+
+	nonisolated private static func upperBound(
+		_ value: CGFloat, in sortedValues: [CGFloat]
+	) -> Int {
+		var lower = 0
+		var upper = sortedValues.count
+		while lower < upper {
+			let middle = lower + (upper - lower) / 2
+			if sortedValues[middle] <= value {
+				lower = middle + 1
+			} else {
+				upper = middle
+			}
+		}
+		return lower
 	}
 }
 #endif
