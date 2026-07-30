@@ -112,5 +112,47 @@ struct RawEditorTextSynchronizationTests {
 
 		#expect(heading?.text == "Current heading")
 	}
+
+	@Test("Appending at an unterminated fence EOF extends its cached range")
+	func appendAtUnterminatedFenceEndStaysInsideFence() {
+		let original = "```\nlet value = "
+		let appended = "**code**"
+		let current = original + appended
+		let coordinator = coordinator(text: original)
+		coordinator.codeFenceRanges = MarkdownSyntaxHighlighter.fenceRanges(
+			in: original)
+
+		coordinator.textStorage(
+			NSTextStorage(string: current),
+			didProcessEditing: .editedCharacters,
+			range: NSRange(
+				location: (original as NSString).length,
+				length: (appended as NSString).length),
+			changeInLength: (appended as NSString).length)
+
+		#expect(coordinator.codeFenceRanges == [
+			NSRange(location: 0, length: (current as NSString).length)
+		])
+	}
+
+	@Test("Appending after a closed EOF fence does not extend its cached range")
+	func appendAfterClosedFenceEndStaysOutsideFence() {
+		let original = "```\nlet value = 1\n```"
+		let appended = " plain"
+		let current = original + appended
+		let originalRanges = MarkdownSyntaxHighlighter.fenceRanges(in: original)
+		let coordinator = coordinator(text: original)
+		coordinator.codeFenceRanges = originalRanges
+
+		coordinator.textStorage(
+			NSTextStorage(string: current),
+			didProcessEditing: .editedCharacters,
+			range: NSRange(
+				location: (original as NSString).length,
+				length: (appended as NSString).length),
+			changeInLength: (appended as NSString).length)
+
+		#expect(coordinator.codeFenceRanges == originalRanges)
+	}
 }
 #endif
