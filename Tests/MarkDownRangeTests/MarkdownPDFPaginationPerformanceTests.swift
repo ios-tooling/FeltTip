@@ -76,6 +76,30 @@ import Testing
 		#expect(mainActorTicks >= 3)
 	}
 
+	@Test("Cancelled PDF capture stops after its in-flight page")
+	@MainActor
+	func cancelledCaptureStopsBeforeRemainingPages() async {
+		var captures: [(top: CGFloat, height: CGFloat)] = []
+
+		let captureTask = Task { @MainActor in
+			await MarkdownPDFRenderer.forEachPageSlice(
+				tops: [0, 720, 1_440, 2_160],
+				contentHeight: 2_500,
+				printHeight: 720
+			) { top, height in
+				captures.append((top, height))
+				withUnsafeCurrentTask { $0?.cancel() }
+				await Task.yield()
+			}
+		}
+		let completed = await captureTask.value
+
+		#expect(!completed)
+		#expect(captures.count == 1)
+		#expect(captures.first?.top == 0)
+		#expect(captures.first?.height == 720)
+	}
+
 	/// The pre-optimization implementation, retained only as a small-input
 	/// oracle so the indexed planner cannot change page-break behavior.
 	private func referencePageTopOffsets(

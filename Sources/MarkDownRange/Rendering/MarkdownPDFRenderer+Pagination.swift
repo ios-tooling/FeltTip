@@ -38,18 +38,23 @@ extension MarkdownPDFRenderer {
 		var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
 		guard let ctx = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else { return nil }
 
-		for (i, top) in tops.enumerated() {
-			let nextTop  = i + 1 < tops.count ? tops[i + 1] : contentHeight
-			let contentH = min(printH, nextTop - top)
-
+		let completed = await forEachPageSlice(
+			tops: tops,
+			contentHeight: contentHeight,
+			printHeight: printH
+		) { top, contentH in
 			let config = WKPDFConfiguration()
-			config.rect = CGRect(x: 0, y: top, width: printW, height: contentH)
-			guard let data = try? await withCheckedThrowingContinuation({ (c: CheckedContinuation<Data, Error>) in
-				webView.createPDF(configuration: config) { c.resume(with: $0) }
+			config.rect = CGRect(
+				x: 0, y: top, width: printW, height: contentH)
+			guard let data = try? await withCheckedThrowingContinuation({
+				(c: CheckedContinuation<Data, Error>) in
+				webView.createPDF(configuration: config) {
+					c.resume(with: $0)
+				}
 			}),
 			let provider = CGDataProvider(data: data as CFData),
 			let slice = CGPDFDocument(provider)?.page(at: 1)
-			else { continue }
+			else { return }
 
 			ctx.beginPDFPage(nil)
 			ctx.saveGState()
@@ -62,7 +67,27 @@ extension MarkdownPDFRenderer {
 		}
 
 		ctx.closePDF()
-		return out as Data
+		return completed ? out as Data : nil
+	}
+
+	/// Runs the inherently MainActor-bound WebKit page captures while checking
+	/// cancellation around every asynchronous slice. `WKWebView.createPDF`
+	/// itself is not cancellable, but a cancelled long export must not continue
+	/// capturing every remaining page after the in-flight slice returns.
+	static func forEachPageSlice(
+		tops: [CGFloat],
+		contentHeight: CGFloat,
+		printHeight: CGFloat,
+		capture: (CGFloat, CGFloat) async -> Void
+	) async -> Bool {
+		for (index, top) in tops.enumerated() {
+			guard !Task.isCancelled else { return false }
+			let nextTop = index + 1 < tops.count
+				? tops[index + 1] : contentHeight
+			await capture(top, min(printHeight, nextTop - top))
+			guard !Task.isCancelled else { return false }
+		}
+		return true
 	}
 
 	/// CSS-top offset where each output page begins. A page would normally end
