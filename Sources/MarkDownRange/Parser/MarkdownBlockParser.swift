@@ -8,16 +8,27 @@ import Markdown
 
 public enum MarkdownBlockParser {
 	/// Per-sub-phase timings for the most recent parse pass, in milliseconds.
-	/// Written from the detached background task that runs `parse`; safe to
-	/// read on the main actor after that task's `.value` has been awaited
-	/// (the await provides the happens-before). Benchmarking only.
+	/// Populated only when `MarkdownPreprocessor.recordsPerformanceMetrics`
+	/// is enabled. Access is synchronized because callers may parse on
+	/// concurrent background tasks. Benchmarking only.
 	public struct ParseMetrics: Sendable {
 		public let preprocessMs: Double
 		public let docInitMs: Double
 		public let blockBuildMs: Double
 		public let postProcessMs: Double
 	}
-	public nonisolated(unsafe) static var lastParseMetrics: ParseMetrics?
+	private static let metricsLock = NSLock()
+	public static var lastParseMetrics: ParseMetrics? {
+		get {
+			metricsLock.lock(); defer { metricsLock.unlock() }
+			return _lastParseMetrics
+		}
+		set {
+			metricsLock.lock(); defer { metricsLock.unlock() }
+			_lastParseMetrics = newValue
+		}
+	}
+	nonisolated(unsafe) private static var _lastParseMetrics: ParseMetrics?
 
 	public static func parse(
 		_ content: some MarkdownContent,
@@ -30,10 +41,13 @@ public enum MarkdownBlockParser {
 		options: MarkdownOptions = .default
 	) -> [MarkdownBlock] {
 		guard !Task.isCancelled else { return [] }
+		let collectMetrics = MarkdownPreprocessor.recordsPerformanceMetrics
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body, bodyOffset, _) = extractFrontmatter(markdown)
-		let tPre0 = CFAbsoluteTimeGetCurrent()
-		MarkdownPreprocessor.recordedTimings = [:]
+		let tPre0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
+		if collectMetrics {
+			MarkdownPreprocessor.recordedTimings = [:]
+		}
 		let processed: String
 		let offsetMap: [Int]?
 		if preprocessed {
@@ -53,7 +67,7 @@ public enum MarkdownBlockParser {
 			offsetMap = nil
 		}
 		guard !Task.isCancelled else { return [] }
-		let tDoc0 = CFAbsoluteTimeGetCurrent()
+		let tDoc0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
 		// Editable rendering must keep run text byte-identical to the source,
 		// so cmark's own smart punctuation (quotes/dashes/ellipsis) is disabled
 		// there — otherwise every run containing those characters would render
@@ -61,7 +75,7 @@ public enum MarkdownBlockParser {
 		// parses keep the typography.
 		let document = Document(parsing: processed, options: trackSourceOffsets ? .disableSmartOpts : [])
 		guard !Task.isCancelled else { return [] }
-		let tBuild0 = CFAbsoluteTimeGetCurrent()
+		let tBuild0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
 		let counter = CheckboxCounter(checkboxOffset)
 		// Offsets come back through the preprocessing map (when present) and then
 		// `bodyOffset` shifts them past any stripped frontmatter, so the stamped
@@ -77,16 +91,18 @@ public enum MarkdownBlockParser {
 		if let fm = frontmatter {
 			blocks.insert(fm, at: 0)
 		}
-		let tPost0 = CFAbsoluteTimeGetCurrent()
+		let tPost0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
 		let result = postProcess(blocks)
 		guard !Task.isCancelled else { return [] }
-		let tEnd = CFAbsoluteTimeGetCurrent()
-		Self.lastParseMetrics = ParseMetrics(
-			preprocessMs: (tDoc0 - tPre0) * 1000,
-			docInitMs: (tBuild0 - tDoc0) * 1000,
-			blockBuildMs: (tPost0 - tBuild0) * 1000,
-			postProcessMs: (tEnd - tPost0) * 1000
-		)
+		if collectMetrics {
+			let tEnd = CFAbsoluteTimeGetCurrent()
+			Self.lastParseMetrics = ParseMetrics(
+				preprocessMs: (tDoc0 - tPre0) * 1000,
+				docInitMs: (tBuild0 - tDoc0) * 1000,
+				blockBuildMs: (tPost0 - tBuild0) * 1000,
+				postProcessMs: (tEnd - tPost0) * 1000
+			)
+		}
 		return result
 	}
 

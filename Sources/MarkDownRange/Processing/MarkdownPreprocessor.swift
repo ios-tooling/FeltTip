@@ -124,7 +124,9 @@ public enum MarkdownPreprocessor {
 	/// (editable rendering) skips the cosmetic character substitutions so
 	/// rendered run text stays byte-for-byte the source's.
 	public static func common(after withFootnotes: String, options: MarkdownOptions = .default, preservingSourceText: Bool = false) -> String {
+		let collectTimings = recordsPerformanceMetrics
 		func timed<T>(_ label: String, _ work: () -> T) -> T {
+			guard collectTimings else { return work() }
 			let t = CFAbsoluteTimeGetCurrent()
 			let result = work()
 			Self.recordTiming(label, ms: (CFAbsoluteTimeGetCurrent() - t) * 1000)
@@ -188,6 +190,19 @@ public enum MarkdownPreprocessor {
 	/// interleave between concurrent parses, which is fine for benchmarking
 	/// where only one parse runs at a time.
 	private static let recordedLock = NSLock()
+	/// Opt-in switch for the ad-hoc render benchmark instrumentation. Keeping
+	/// this off in normal app and test runs avoids clocks and shared-state
+	/// locking in every preprocessing pass.
+	public static var recordsPerformanceMetrics: Bool {
+		get {
+			recordedLock.lock(); defer { recordedLock.unlock() }
+			return _recordsPerformanceMetrics
+		}
+		set {
+			recordedLock.lock(); defer { recordedLock.unlock() }
+			_recordsPerformanceMetrics = newValue
+		}
+	}
 	public static var recordedTimings: [String: Double] {
 		get {
 			recordedLock.lock(); defer { recordedLock.unlock() }
@@ -198,6 +213,7 @@ public enum MarkdownPreprocessor {
 			_recordedTimings = newValue
 		}
 	}
+	nonisolated(unsafe) private static var _recordsPerformanceMetrics = false
 	nonisolated(unsafe) private static var _recordedTimings: [String: Double] = [:]
 
 	fileprivate static func recordTiming(_ label: String, ms: Double) {

@@ -46,4 +46,23 @@ import Testing
 		#expect(tracked.processed != source)
 		#expect(tracked.map?.count == tracked.processed.utf16.count)
 	}
+
+	@Test func normalParsingDoesNotTouchOptInPerformanceMetrics() {
+		let wasEnabled = MarkdownPreprocessor.recordsPerformanceMetrics
+		let previousTimings = MarkdownPreprocessor.recordedTimings
+		defer {
+			MarkdownPreprocessor.recordsPerformanceMetrics = wasEnabled
+			MarkdownPreprocessor.recordedTimings = previousTimings
+		}
+		MarkdownPreprocessor.recordsPerformanceMetrics = false
+		MarkdownPreprocessor.recordedTimings = ["sentinel": 1]
+
+		_ = MarkdownBlockParser.parse(
+			(0..<1_000)
+				.map { "Paragraph \($0) with **formatting**." }
+				.joined(separator: "\n\n"),
+			trackSourceOffsets: true)
+
+		#expect(MarkdownPreprocessor.recordedTimings == ["sentinel": 1])
+	}
 }
