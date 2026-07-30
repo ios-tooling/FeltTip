@@ -52,6 +52,30 @@ import Testing
 		#expect(elapsed < .seconds(1))
 	}
 
+	@Test("Large geometry JSON decoding keeps the main actor responsive")
+	@MainActor
+	func geometryDecodeRunsOffMainActor() async {
+		let entry = "[12345.5,42.25]"
+		let count = 150_000
+		let raw = "[" + Array(
+			repeating: entry, count: count
+		).joined(separator: ",") + "]"
+		var mainActorTicks = 0
+		let ticker = Task { @MainActor in
+			while !Task.isCancelled {
+				mainActorTicks += 1
+				await Task.yield()
+			}
+		}
+
+		let boxes = await MarkdownPDFRenderer.decodeBoxesJSON(raw)
+		ticker.cancel()
+		await ticker.value
+
+		#expect(boxes.count == count)
+		#expect(mainActorTicks >= 3)
+	}
+
 	/// The pre-optimization implementation, retained only as a small-input
 	/// oracle so the indexed planner cannot change page-break behavior.
 	private func referencePageTopOffsets(

@@ -107,11 +107,37 @@ public enum MarkdownPDFRenderer {
 			.map(function(e){ var r = e.getBoundingClientRect(); return [r.top + window.scrollY, r.height]; }))
 		"""
 		guard let result = try? await webView.evaluateJavaScript(js),
-			  let raw = result as? String,
-			  let data = raw.data(using: .utf8),
-			  let arr = try? JSONDecoder().decode([[Double]].self, from: data)
-		else { return [] }
-		return arr.compactMap { $0.count == 2 ? (CGFloat($0[0]), CGFloat($0[1])) : nil }
+			  let raw = result as? String else { return [] }
+		return await decodeBoxesJSON(raw)
+	}
+
+	/// Decode document-sized geometry away from the UI actor. A long report can
+	/// return tens of thousands of boxes and several megabytes of JSON; doing
+	/// both JSONDecoder work and tuple conversion on MainActor visibly stalled
+	/// the export UI before pagination even began.
+	nonisolated static func decodeBoxesJSON(
+		_ raw: String
+	) async -> [(top: CGFloat, height: CGFloat)] {
+		guard !Task.isCancelled else { return [] }
+		let worker = Task.detached(priority: .userInitiated) {
+			() -> [(top: CGFloat, height: CGFloat)] in
+			guard !Task.isCancelled,
+				  let data = raw.data(using: .utf8),
+				  let decoded = try? JSONDecoder().decode(
+					[[Double]].self, from: data) else { return [] }
+			var boxes: [(top: CGFloat, height: CGFloat)] = []
+			boxes.reserveCapacity(decoded.count)
+			for (index, pair) in decoded.enumerated() {
+				if index & 1_023 == 0, Task.isCancelled { return [] }
+				guard pair.count == 2 else { continue }
+				boxes.append((CGFloat(pair[0]), CGFloat(pair[1])))
+			}
+			return boxes
+		}
+		let boxes = await withTaskCancellationHandler(
+			operation: { await worker.value },
+			onCancel: { worker.cancel() })
+		return Task.isCancelled ? [] : boxes
 	}
 }
 
