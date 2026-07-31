@@ -49,8 +49,8 @@ enum MarkdownEditSplicer {
 		var caret: Int?
 		/// The replacement is a list-item continuation ("\n- " / "\n1. ") the
 		/// page composed from DOM structure. Only the source shows how deeply
-		/// the item is indented, so the splice re-indents the new item to match
-		/// the one being continued.
+		/// the item is indented and whether it is a task, so the splice matches
+		/// both properties. A continued task is always created unchecked.
 		var listBreak = false
 		/// Enter was pressed at the first visible character of a block. The
 		/// splice verifies any source prefix hidden by rendering (`# `, `> `,
@@ -161,6 +161,10 @@ enum MarkdownEditSplicer {
 		// nested item's Enter produced a top-level item and reflowed the list.
 		if edit.listBreak, replacement.hasPrefix("\n") {
 			let indent = lineIndent(in: text, at: edit.start)
+			if isTaskListItem(in: text, at: edit.start) {
+				replacement += "[ ] "
+				caret = caret.map { $0 + 4 }
+			}
 			if !indent.isEmpty {
 				replacement = "\n" + indent + replacement.dropFirst()
 				caret = caret.map { $0 + (indent as NSString).length }
@@ -199,6 +203,29 @@ enum MarkdownEditSplicer {
 		}
 		return .applied(text.replacingCharacters(in: spliceRange, with: replacement),
 						selection: caret.map { NSRange(location: $0, length: 0) })
+	}
+
+	private static let taskListPrefix = try! NSRegularExpression(
+		pattern: #"^[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+\[[ xX]\][ \t]+"#)
+
+	/// Whether the source line containing the edit is a task-list item. The DOM
+	/// exposes the surrounding `<li>` but intentionally hides `[ ]` / `[x]`,
+	/// so this distinction must be recovered from the verified source.
+	private static func isTaskListItem(
+		in text: NSString,
+		at offset: Int
+	) -> Bool {
+		var lineStart = min(max(0, offset), text.length)
+		while lineStart > 0 {
+			let previous = text.character(at: lineStart - 1)
+			if previous == 0x0A || previous == 0x0D { break }
+			lineStart -= 1
+		}
+		let prefix = text.substring(with: NSRange(
+			location: lineStart,
+			length: min(max(0, offset - lineStart), text.length - lineStart)))
+		let range = NSRange(location: 0, length: (prefix as NSString).length)
+		return taskListPrefix.firstMatch(in: prefix, range: range) != nil
 	}
 
 	/// Verifies that the hidden portion before a block's first visible run

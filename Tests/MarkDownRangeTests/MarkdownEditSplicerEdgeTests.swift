@@ -264,6 +264,34 @@ import Testing
 		#expect(applied(outcome)?.0 == "1. one\n   1. inner\n   1. \n")
 	}
 
+	@Test func listBreakContinuesAnUncheckedTaskAsUnchecked() {
+		let source = "- [ ] todo\n"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(10, 10, text: "\n- ", caret: 13, listBreak: true),
+			to: source)
+		#expect(applied(outcome)?.0 == "- [ ] todo\n- [ ] \n")
+		#expect(applied(outcome)?.1 == NSRange(location: 17, length: 0))
+	}
+
+	@Test func listBreakContinuesACheckedTaskAsUnchecked() {
+		let source = "- [x] done\n"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(10, 10, text: "\n- ", caret: 13, listBreak: true),
+			to: source)
+		#expect(applied(outcome)?.0 == "- [x] done\n- [ ] \n")
+		#expect(applied(outcome)?.1 == NSRange(location: 17, length: 0))
+	}
+
+	@Test func nestedOrderedTaskBreakKeepsKindIndentAndTaskMarker() {
+		let source = "1. parent\n   1. [X] child\n"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(25, 25, text: "\n1. ", caret: 29, listBreak: true),
+			to: source)
+		#expect(applied(outcome)?.0
+			== "1. parent\n   1. [X] child\n   1. [ ] \n")
+		#expect(applied(outcome)?.1 == NSRange(location: 36, length: 0))
+	}
+
 	@Test func aParagraphBreakIsNeverReIndented() {
 		// Only list continuations carry the flag; an indented paragraph break
 		// must splice verbatim.

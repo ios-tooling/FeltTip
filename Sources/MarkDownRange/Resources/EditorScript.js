@@ -95,6 +95,7 @@
   // State captured at compositionstart, reconciled at compositionend.
   var composing = null;
   installLinkOpenButtons();
+  installListAddButtons();
 
   function textLength(n) {
     if (n.nodeType === 3) return n.nodeValue.length;
@@ -238,6 +239,7 @@
       el.contentEditable = 'false';
     });
     installLinkOpenButtons();
+    installListAddButtons();
   };
   function placeCaretIn(node, offset, anchor) {
     // Re-focus the editable body: a reload (e.g. after undo) clears DOM
@@ -454,6 +456,65 @@
     if (!li) return null;
     return li.parentElement && li.parentElement.tagName === 'OL' ? '\n1. ' : '\n- ';
   }
+  function directListItems(list) {
+    return Array.prototype.filter.call(list.children, function (child) {
+      return child.tagName === 'LI';
+    });
+  }
+  function lastEditableRunInList(list) {
+    var items = directListItems(list);
+    for (var itemIndex = items.length - 1; itemIndex >= 0; itemIndex--) {
+      var runs = items[itemIndex].querySelectorAll('[data-s]');
+      for (var runIndex = runs.length - 1; runIndex >= 0; runIndex--) {
+        if (runs[runIndex].closest('li') === items[itemIndex]) {
+          return runs[runIndex];
+        }
+      }
+    }
+    return null;
+  }
+  function listContainingSelection() {
+    var selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return null;
+    var node = selection.getRangeAt(0).startContainer;
+    var el = node.nodeType === 3 ? node.parentNode : node;
+    var item = el && el.closest ? el.closest('li') : null;
+    return item ? item.parentElement.closest('ul, ol') : null;
+  }
+  function firstVisibleEditableList() {
+    var lists = document.querySelectorAll('ul, ol');
+    for (var i = 0; i < lists.length; i++) {
+      var rect = lists[i].getBoundingClientRect();
+      if (rect.bottom > 0 && rect.top < window.innerHeight &&
+          lastEditableRunInList(lists[i])) {
+        return lists[i];
+      }
+    }
+    return null;
+  }
+  function placeCaretAtListEnd(list) {
+    var run = list && lastEditableRunInList(list);
+    if (!run) return false;
+    var text = lastTextIn(run);
+    if (text) {
+      placeCaretIn(text, text.nodeValue.length, run);
+    } else {
+      placeCaretIn(run, run.childNodes.length, run);
+    }
+    return true;
+  }
+  // Shared button/menu/keyboard command. A requested list wins; otherwise the
+  // caret's list wins, then the first source-mapped list visible from the top.
+  // Keep this on the real insertParagraph route so source verification, task
+  // detection, undo, freezing, patching, and caret restoration match Return.
+  window.__mdInsertListItem = function (requestedList) {
+    if (frozen) return false;
+    var list = requestedList || listContainingSelection() ||
+      firstVisibleEditableList();
+    if (!placeCaretAtListEnd(list)) return false;
+    document.execCommand('insertParagraph');
+    return true;
+  };
   // Markdown syntax can be hidden before a block's first visible character:
   // headings/quotes, or inline openers such as `**`. Enter at that visual
   // boundary must split before the hidden prefix, not at the first run's
@@ -576,6 +637,77 @@
       target.insertAdjacentElement('afterend', button);
     });
   }
+  function installListAddButtons() {
+    if (!document.getElementById('md-list-add-button-style')) {
+      var style = document.createElement('style');
+      style.id = 'md-list-add-button-style';
+      style.textContent = `
+        ul.md-list-with-add, ol.md-list-with-add {
+          position: relative;
+          padding-bottom: 28px;
+        }
+        .md-list-add-button {
+          position: absolute;
+          right: 2px;
+          bottom: 2px;
+          display: inline-flex;
+          width: 24px;
+          height: 24px;
+          padding: 0;
+          border: 1px solid rgba(127, 127, 127, 0.3);
+          border-radius: 50%;
+          align-items: center;
+          justify-content: center;
+          background: rgba(127, 127, 127, 0.08);
+          color: currentColor;
+          cursor: pointer;
+          -webkit-user-select: none;
+          user-select: none;
+          opacity: 0.72;
+        }
+        .md-list-add-button:hover {
+          opacity: 1;
+          background: rgba(127, 127, 127, 0.16);
+        }
+        .md-list-add-button:focus-visible {
+          outline: 2px solid currentColor;
+          outline-offset: 1px;
+        }
+        .md-list-add-button::before {
+          content: "+";
+          font-size: 18px;
+          font-weight: 500;
+          line-height: 1;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    document.querySelectorAll('ul, ol').forEach(function (list) {
+      if (!lastEditableRunInList(list)) return;
+      if (Array.prototype.some.call(list.children, function (child) {
+        return child.classList &&
+          child.classList.contains('md-list-add-button');
+      })) return;
+      list.classList.add('md-list-with-add');
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'md-list-add-button';
+      button.contentEditable = 'false';
+      button.tabIndex = -1;
+      button.title = 'Add list item (⌘↩)';
+      button.setAttribute('aria-label', 'Add list item');
+      button.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.__mdInsertListItem(list);
+      });
+      list.appendChild(button);
+    });
+  }
   // WebKit freely swaps spaces and non-breaking spaces inside
   // contentEditable text to keep visual runs from collapsing — the DOM
   // drifts from the source by U+00A0s on almost every insertion. The
@@ -688,6 +820,15 @@
   window.__mdToggleInlineCode = function () {
     return window.__mdApplyFormat('inlineCode');
   };
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' || !event.metaKey ||
+        event.shiftKey || event.altKey || event.ctrlKey) return;
+    if (window.__mdInsertListItem()) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
 
   document.body.addEventListener('beforeinput', function (e) {
     // Undo/redo are owned by the host (a unified, source-level stack reached

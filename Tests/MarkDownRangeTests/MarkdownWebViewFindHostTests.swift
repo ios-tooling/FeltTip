@@ -73,6 +73,37 @@ struct MarkdownWebViewFindHostTests {
 		#expect(try await bodyText(in: webView) == originalText)
 	}
 
+	@Test
+	func commandReturnInvokesStyledListInsertion() throws {
+		let webView = ScriptRecordingWebView()
+		let host = MarkdownWebViewFindHost(webView: webView)
+		host.frame = NSRect(x: 0, y: 0, width: 500, height: 300)
+		let window = NSWindow(
+			contentRect: host.frame,
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false)
+		window.contentView = host
+		window.orderFront(nil)
+		window.makeFirstResponder(webView)
+		webView.scripts.removeAll()
+		let event = try #require(NSEvent.keyEvent(
+			with: .keyDown,
+			location: .zero,
+			modifierFlags: .command,
+			timestamp: 0,
+			windowNumber: window.windowNumber,
+			context: nil,
+			characters: "\r",
+			charactersIgnoringModifiers: "\r",
+			isARepeat: false,
+			keyCode: 36))
+
+		#expect(host.performKeyEquivalent(with: event))
+		#expect(webView.scripts.last?.contains(
+			"__mdInsertListItem") == true)
+	}
+
 	private func perform(
 		_ action: NSTextFinder.Action,
 		on host: MarkdownWebViewFindHost
@@ -128,6 +159,18 @@ struct MarkdownWebViewFindHostTests {
 			try await Task.sleep(for: .milliseconds(10))
 		}
 		Issue.record("Timed out waiting for \(description)")
+	}
+
+	private final class ScriptRecordingWebView: WKWebView {
+		var scripts: [String] = []
+
+		override func evaluateJavaScript(
+			_ javaScriptString: String,
+			completionHandler: ((Any?, (any Error)?) -> Void)? = nil
+		) {
+			scripts.append(javaScriptString)
+			completionHandler?(nil, nil)
+		}
 	}
 }
 #endif

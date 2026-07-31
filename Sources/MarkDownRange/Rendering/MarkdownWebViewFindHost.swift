@@ -57,6 +57,9 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		case ("x", [.command, .shift]):
 			toggleStrikethrough()
 			return true
+		case ("\r", [.command]), ("\n", [.command]):
+			insertListItem()
+			return true
 		default:
 			return super.performKeyEquivalent(with: event)
 		}
@@ -83,6 +86,16 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	public func applyFormatting(_ command: MarkdownFormattingCommand) {
 		webView.evaluateJavaScript(
 			"window.__mdApplyFormat && window.__mdApplyFormat('\(command.rawValue)')",
+			completionHandler: nil)
+	}
+
+	/// Append to the list containing the styled insertion point, or the first
+	/// visible list when no list owns the selection. The page routes this
+	/// through its ordinary structural Return path, including source
+	/// verification and caret restoration.
+	public func insertListItem() {
+		webView.evaluateJavaScript(
+			"window.__mdInsertListItem && window.__mdInsertListItem()",
 			completionHandler: nil)
 	}
 

@@ -74,11 +74,13 @@ pre-restore source — typing the undo straight back out.
 | --- | --- | --- |
 | Typing, delete, forward/word delete | in-place | cross-run variants go structural |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
-| Enter | structural | list items keep their **source** indentation (`listBreak`); at a visual block start, any verified hidden Markdown prefix moves down with its text and the caret stays in the new block above |
+| Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix moves down with its text and the caret stays in the new block above |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
 | Format → inline styles / Link | structural | shared source formatter; inline cross-run selections are blocked |
 | Format → headings / quote / lists / rule | structural | expands to source line boundaries and supports multi-block selections |
+| Format → List → Add List Item | structural | invokes the same verified list-continuation route as Enter for the focused styled list |
+| List add button / ⌘Return | structural | appends after the target list's final item and restores the caret in the new item; ⌘Return prefers the caret's list, then the first source-mapped list visible from the top |
 | ⇧Enter | structural | writes a `\` break, and swallows the next line's leading whitespace |
 | ⌘V | structural | host reads `NSPasteboard`; see below |
 | IME / dead keys / predictive text | reconciled | whole run diffed at `compositionend` |
