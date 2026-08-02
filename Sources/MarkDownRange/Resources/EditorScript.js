@@ -320,7 +320,10 @@
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     if (start == null || end == null || end < start) { post({ type: 'selection' }); return; }
-    post({ type: 'selection', start: start, length: end - start });
+    post({ type: 'selection', start: start, length: end - start,
+           endAtBlockStart: !r.collapsed && isVisualBlockStart(endPos.node, endPos.offset),
+           syntaxStart: r.collapsed ? [] : selectedSyntaxBoundaries(r, true),
+           syntaxEnd: r.collapsed ? [] : selectedSyntaxBoundaries(r, false) });
   }
   var selectionReportTimer = null;
   document.addEventListener('selectionchange', function () {
@@ -809,6 +812,7 @@
       expected: plain(range.toString()),
       crossRun: crossRun,
       selected: !sel.isCollapsed,
+      endAtBlockStart: !range.collapsed && isVisualBlockStart(endPos.node, endPos.offset),
       before: contextBefore(startPos.node, startPos.offset),
       after: contextAfter(endPos.node, endPos.offset),
       caret: end,
@@ -889,6 +893,11 @@
     // inside it may go. A collapsed caret (block merge) may only remove
     // whitespace; the Swift side enforces the distinction.
     var selected = !window.getSelection().isCollapsed;
+    // beforeinput target ranges are non-collapsed for Backspace/Delete even
+    // when the live selection is only a caret. Only a real selection gets
+    // paragraph-end snapping; otherwise a block merge must keep its native
+    // preceding/following affinity.
+    var endAtBlockStart = selected && isVisualBlockStart(endPos.node, endPos.offset);
     var before = contextBefore(startPos.node, startPos.offset);
     var after = contextAfter(endPos.node, endPos.offset);
 
@@ -906,7 +915,7 @@
       if (crossRun) {
         e.preventDefault();
         freeze();
-        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, before: before, after: after, caret: start + data.length, rev: stampRev, seq: seq++ });
+        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, caret: start + data.length, rev: stampRev, seq: seq++ });
         return;
       }
       queueFastEdit({ start: start, end: end, text: data, expected: expected, before: before, after: after },
@@ -930,6 +939,7 @@
         freeze();
         post({ start: start, end: end, text: '', expected: expected,
                crossRun: crossRun, selected: selected, before: before, after: after,
+               endAtBlockStart: endAtBlockStart,
                syntaxStart: syntaxStart, syntaxEnd: syntaxEnd,
                blockPrefixes: blockPrefixes,
                caret: start, rev: stampRev, seq: seq++ });
@@ -980,7 +990,8 @@
         && isVisualBlockStart(startPos.node, startPos.offset);
       freeze();
       post({ start: start, end: end, text: marker, expected: expected,
-             crossRun: crossRun, before: before, after: after,
+             crossRun: crossRun, selected: selected,
+             endAtBlockStart: endAtBlockStart, before: before, after: after,
              caret: start + marker.length, listBreak: !!listMarker,
              blockStartBreak: blockStartBreak,
              rev: stampRev, seq: seq++ });
@@ -1000,7 +1011,7 @@
       var pasteHost = startPos.node.nodeType === 1 ? startPos.node : startPos.node.parentNode;
       var inCell = !!(pasteHost && pasteHost.closest && pasteHost.closest('td, th'));
       freeze();
-      post({ op: 'paste', inCell: inCell, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, before: before, after: after, rev: stampRev, seq: seq++ });
+      post({ op: 'paste', inCell: inCell, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, rev: stampRev, seq: seq++ });
       return;
     }
     // Shift-Enter: a hard break inside the paragraph. Written as a backslash
@@ -1013,7 +1024,7 @@
       if (breakHost && breakHost.closest && breakHost.closest('td, th')) { return; }
       var hardBreak = '\\\n';
       freeze();
-      post({ start: start, end: end, text: hardBreak, expected: expected, crossRun: crossRun, selected: selected, before: before, after: after, caret: start + hardBreak.length, hardBreak: true, rev: stampRev, seq: seq++ });
+      post({ start: start, end: end, text: hardBreak, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, caret: start + hardBreak.length, hardBreak: true, rev: stampRev, seq: seq++ });
       return;
     }
     if (type === 'formatBold' || type === 'formatItalic' || type === 'formatStrikeThrough') {
@@ -1021,7 +1032,7 @@
       if (start === end) return;  // need a selection to wrap
       var m = type === 'formatBold' ? '**' : type === 'formatItalic' ? '*' : '~~';
       freeze();
-      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, crossRun: crossRun, before: before, after: after, caret: end + 2 * m.length, rev: stampRev, seq: seq++ });
+      post({ op: 'wrap', marker: m, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, caret: end + 2 * m.length, rev: stampRev, seq: seq++ });
       return;
     }
 

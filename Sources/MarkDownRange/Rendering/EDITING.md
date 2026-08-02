@@ -27,6 +27,17 @@ the rendered text has one unique, contiguous source match. DOM range boundaries
 also have directional affinity: a selection start between child nodes maps to
 the following child, while its end maps to the preceding child.
 
+WebKit's paragraph selection ends at the following block's first visible
+character. When that character has hidden opening syntax (for example `**`),
+the page marks the boundary and the host verifies/snaps it to the source line
+start. This includes the selected paragraph separator without accidentally
+selecting the next paragraph's Markdown opener.
+
+Selection reports also include any inline delimiter owned by their visible
+start or end boundary. Thus double-clicking all of `**word**`, or
+triple-clicking a paragraph that starts with emphasized text, mirrors the
+attached Markdown formatting characters into the source pane.
+
 ## Flow of one keystroke
 
 1. `beforeinput` in the page maps the target range to source offsets and reads

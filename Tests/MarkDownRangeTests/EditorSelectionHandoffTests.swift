@@ -33,8 +33,61 @@ struct EditorSelectionHandoffTests {
 		try await harness.waitUntil("extended source selection") {
 			harness.sourceSelectionReportCount > exactCount
 		}
-		#expect(harness.lastReportedSourceSelection == selected)
-		#expect(harness.lastReportedSelection == selected)
+		let selectedWithFormatting = (source as NSString).range(of: "**bravo**")
+		#expect(harness.lastReportedSourceSelection == selectedWithFormatting)
+		#expect(harness.lastReportedSelection == selectedWithFormatting)
+	}
+
+	@Test func paragraphSelectionStopsBeforeTheNextBlocksHiddenFormatting() async throws {
+		let source = "Intro\n\n**Chosen paragraph.**\n\n**Next paragraph.**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("document.hasFocus = function () { return true }")
+		let oldCount = harness.sourceSelectionReportCount
+
+		try await harness.run("""
+			var paragraphs = document.querySelectorAll('p')
+			var first = paragraphs[1].querySelector('[data-s]').firstChild
+			var next = paragraphs[2].querySelector('[data-s]').firstChild
+			var range = document.createRange()
+			range.setStart(first, 0)
+			range.setEnd(next, 0)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			document.dispatchEvent(new Event('selectionchange'))
+			""")
+		try await harness.waitUntil("paragraph source selection") {
+			harness.sourceSelectionReportCount > oldCount
+		}
+
+		let start = (source as NSString).range(of: "**Chosen paragraph.**").location
+		let nextLine = (source as NSString).range(of: "**Next paragraph.**").location
+		let expected = NSRange(location: start, length: nextLine - start)
+		#expect(harness.lastReportedSourceSelection == expected)
+		#expect((source as NSString).substring(with: expected) == "**Chosen paragraph.**\n\n")
+	}
+
+	@Test func wholeFormattedWordSelectionIncludesItsAttachedDelimiters() async throws {
+		let cases = ["**word**", "__word__", "_word_", "~~word~~"]
+		for source in cases {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.run("document.hasFocus = function () { return true }")
+			let oldCount = harness.sourceSelectionReportCount
+			try await harness.run("""
+				var text = document.querySelector('[data-s]').firstChild
+				var range = document.createRange()
+				range.selectNodeContents(text)
+				var selection = window.getSelection()
+				selection.removeAllRanges()
+				selection.addRange(range)
+				document.dispatchEvent(new Event('selectionchange'))
+				""")
+			try await harness.waitUntil("formatted word source selection") {
+				harness.sourceSelectionReportCount > oldCount
+			}
+			#expect(harness.lastReportedSourceSelection == NSRange(
+				location: 0, length: (source as NSString).length), "source=\(source)")
+		}
 	}
 
 	@Test func styledViewInstallsTokenGatedCaretAndSelectionTargets() async throws {

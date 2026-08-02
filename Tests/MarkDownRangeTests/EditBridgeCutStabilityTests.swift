@@ -176,6 +176,30 @@ import Testing
 			backward: true)
 	}
 
+	@Test func deletingAParagraphSelectionDoesNotConsumeTheNextBlocksOpener() async throws {
+		let source = "Intro\n\n**Chosen paragraph.**\n\n**Next paragraph.**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			var paragraphs = document.querySelectorAll('p')
+			var first = paragraphs[1].querySelector('[data-s]').firstChild
+			var next = paragraphs[2].querySelector('[data-s]').firstChild
+			var range = document.createRange()
+			range.setStart(first, 0)
+			range.setEnd(next, 0)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			document.execCommand('delete')
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Intro\n\n**Next paragraph.**")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func cuttingFromALazyListContinuationAcrossAnHTMLBreakUsesTheForwardBoundary() async throws {
 		let source = """
 		2. **Timeline** - /app/lib/timeline<br />

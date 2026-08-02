@@ -56,6 +56,11 @@ enum MarkdownEditSplicer {
 		/// splice verifies any source prefix hidden by rendering (`# `, `> `,
 		/// `**`, etc.) and inserts before it so the whole block moves.
 		var blockStartBreak = false
+		/// A non-collapsed DOM range ended at the first visible character of the
+		/// following block (WebKit's paragraph-selection boundary). Its stamped
+		/// offset sits after any hidden opening Markdown, so source operations must
+		/// use the verified source line start instead.
+		var endAtBlockStart = false
 		/// The replacement ends a line with a hard break ("\\\n"). Whitespace
 		/// left at the start of the following line is stripped when rendered,
 		/// which would stamp that run at the whitespace instead of its first
@@ -84,10 +89,10 @@ enum MarkdownEditSplicer {
 		if splitsSurrogatePair(text, at: edit.start) || splitsSurrogatePair(text, at: edit.end) {
 			return .rejected("range splits a surrogate pair start=\(edit.start) end=\(edit.end)")
 		}
-		let range = NSRange(location: edit.start, length: edit.end - edit.start)
-		let actual = text.substring(with: range)
+		let reportedRange = NSRange(location: edit.start, length: edit.end - edit.start)
+		let actual = text.substring(with: reportedRange)
 		if !edit.crossRun, plain(actual) != plain(edit.expected) {
-			return .rejected("expected mismatch range=\(range) expected=\(quoted(edit.expected)) actual=\(quoted(actual))")
+			return .rejected("expected mismatch range=\(reportedRange) expected=\(quoted(edit.expected)) actual=\(quoted(actual))")
 		}
 		if edit.crossRun, edit.wrapMarker == nil, edit.replacement?.isEmpty == true, !edit.selected,
 		   actual.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil {
@@ -95,6 +100,15 @@ enum MarkdownEditSplicer {
 		}
 		if let reason = contextMismatch(edit, in: text) {
 			return .rejected(reason)
+		}
+		var range = reportedRange
+		if edit.endAtBlockStart {
+			guard edit.selected, edit.end > edit.start,
+				  let blockStart = verifiedBlockStart(in: text, visibleStart: edit.end),
+				  blockStart >= edit.start else {
+				return .rejected("invalid selection end at visual block start \(edit.end)")
+			}
+			range = NSRange(location: edit.start, length: blockStart - edit.start)
 		}
 		if let command = edit.formatCommand {
 			guard !edit.crossRun || command.supportsCrossRunSelection else {
@@ -232,7 +246,7 @@ enum MarkdownEditSplicer {
 	/// actually begins with the declared Markdown structure. Content after the
 	/// structural marker may itself begin with hidden inline syntax (`**`), so
 	/// the visible stamp is allowed to sit later than the marker.
-	private static func verifiedBlockStart(in text: NSString, visibleStart: Int) -> Int? {
+	static func verifiedBlockStart(in text: NSString, visibleStart: Int) -> Int? {
 		guard visibleStart >= 0, visibleStart <= text.length else { return nil }
 		var lineStart = visibleStart
 		while lineStart > 0 {
@@ -266,14 +280,11 @@ enum MarkdownEditSplicer {
 		range: NSRange,
 		in text: NSString
 	) -> NSRange? {
-		var start = range.location
-		var end = range.upperBound
-		// Attribute rendering may normalize nested DOM tags into an order that
-		// differs from the authored Markdown delimiters (for example
-		// `~~**text**~~` can render with <del>/<strong> ancestry reversed).
-		// Consume the exact declared set in whichever order the verified source
-		// boundary actually contains instead of trusting DOM ancestry order.
-		guard consumeSyntaxStart(edit.syntaxStart, cursor: &start, in: text) else { return nil }
+		guard var expanded = syntaxExpandedRange(
+			range, syntaxStart: edit.syntaxStart,
+			syntaxEnd: edit.syntaxEnd, in: text) else { return nil }
+		var start = expanded.location
+		let end = expanded.upperBound
 		for prefix in edit.blockPrefixes {
 			switch prefix {
 			case "heading":
@@ -286,7 +297,28 @@ enum MarkdownEditSplicer {
 				return nil
 			}
 		}
-		guard consumeSyntaxEnd(edit.syntaxEnd, cursor: &end, in: text) else { return nil }
+		expanded = NSRange(location: start, length: end - start)
+		return expanded
+	}
+
+	/// Expands a visible selection over inline Markdown delimiters that its DOM
+	/// boundaries own. Used both by destructive edits and source-selection
+	/// mirroring so double/triple-click selections include attached formatting.
+	static func syntaxExpandedRange(
+		_ range: NSRange,
+		syntaxStart: [String],
+		syntaxEnd: [String],
+		in text: NSString
+	) -> NSRange? {
+		var start = range.location
+		var end = range.upperBound
+		// Attribute rendering may normalize nested DOM tags into an order that
+		// differs from the authored Markdown delimiters (for example
+		// `~~**text**~~` can render with <del>/<strong> ancestry reversed).
+		// Consume the exact declared set in whichever order the verified source
+		// boundary actually contains instead of trusting DOM ancestry order.
+		guard consumeSyntaxStart(syntaxStart, cursor: &start, in: text) else { return nil }
+		guard consumeSyntaxEnd(syntaxEnd, cursor: &end, in: text) else { return nil }
 		return NSRange(location: start, length: end - start)
 	}
 
@@ -582,6 +614,7 @@ extension MarkdownEditSplicer.Edit {
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
 		self.blockStartBreak = body["blockStartBreak"] as? Bool ?? false
+		self.endAtBlockStart = body["endAtBlockStart"] as? Bool ?? false
 		self.hardBreak = body["hardBreak"] as? Bool ?? false
 	}
 }
