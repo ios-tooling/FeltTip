@@ -63,6 +63,14 @@ import Testing
 		#expect(applied(selectedDelete) == "**AlphaBeta")
 	}
 
+	@Test func collapsedBlockMergeStopsBeforeHiddenOpeningSyntax() {
+		let source = "Alpha\n\n\n**Beta**"
+		var merge = edit(start: 5, end: 10, text: "", crossRun: true,
+						 before: "Alpha", after: "Beta", caret: 5)
+		merge.endAtBlockStart = true
+		#expect(applied(MarkdownEditSplicer.apply(merge, to: source)) == "Alpha**Beta**")
+	}
+
 	@Test func crossRunSkipsExpectedButEnforcesContext() {
 		// A cross-run delete's DOM range omits the "\n\n" between paragraphs,
 		// so expected can't be checked — the surrounding run text still is.

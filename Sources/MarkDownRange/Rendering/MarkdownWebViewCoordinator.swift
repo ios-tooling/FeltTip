@@ -377,7 +377,7 @@ extension MarkdownWebView {
 		/// real run on this line; only the latter synthesizes an empty caret home.
 		private func caretPlacementArguments(_ selection: NSRange) -> String {
 			guard selection.length == 0 else {
-				return "\(selection.location), \(selection.length), null, null, false"
+				return "\(selection.location), \(selection.length), null, null, false, null"
 			}
 			let source = (currentSource ?? parent.text) as NSString
 			let offset = min(max(0, selection.location), source.length)
@@ -401,7 +401,37 @@ extension MarkdownWebView {
 			} else {
 				snapHiddenSyntax = false
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax)"
+			let visualBlankOffset = visualBlankOffsetBeforeCaret(in: source, at: offset)
+				.map(String.init) ?? "null"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset)"
+		}
+
+		/// Markdown collapses blank source lines, but Return at a block start has
+		/// just created one the editor must keep visible. Identify the source
+		/// position of that empty row so the page can install a temporary stamped
+		/// spacer while keeping the caret in the moved block below it.
+		private func visualBlankOffsetBeforeCaret(in source: NSString, at offset: Int) -> Int? {
+			var cursor = offset
+			guard consumeLineBreakBackward(in: source, cursor: &cursor),
+				  consumeLineBreakBackward(in: source, cursor: &cursor) else { return nil }
+			let blankOffset = cursor
+			if cursor == 0 { return blankOffset }
+			guard consumeLineBreakBackward(in: source, cursor: &cursor),
+				  consumeLineBreakBackward(in: source, cursor: &cursor) else { return nil }
+			return blankOffset
+		}
+
+		private func consumeLineBreakBackward(in source: NSString, cursor: inout Int) -> Bool {
+			guard cursor > 0 else { return false }
+			let character = source.character(at: cursor - 1)
+			if character == 0x0A {
+				cursor -= 1
+				if cursor > 0, source.character(at: cursor - 1) == 0x0D { cursor -= 1 }
+				return true
+			}
+			guard character == 0x0D else { return false }
+			cursor -= 1
+			return true
 		}
 
 		func applyLineChanges(to webView: WKWebView, force: Bool = false) {

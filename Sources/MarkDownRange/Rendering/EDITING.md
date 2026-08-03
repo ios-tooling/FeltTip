@@ -86,7 +86,7 @@ pre-restore source — typing the undo straight back out.
 | --- | --- | --- |
 | Typing, delete, forward/word delete | in-place | cross-run variants go structural |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
-| Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix moves down with its text and the caret stays in the new block above |
+| Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix and the caret move down with the text |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
 | Format → inline styles / Link | structural | shared source formatter; inline cross-run selections are blocked |
@@ -106,6 +106,15 @@ non-verbatim inline code (for example a code span whose newlines were folded),
 anything else. A blocked input must leave the source untouched and the page
 usable — `EditBridgeUnmappedInputTests` and `EditBridgeMixedSelectionTests`
 enforce exactly that.
+
+At a block boundary, Backspace/Forward Delete may end at a visible run whose
+opening Markdown syntax is hidden. The page flags that boundary and the host
+snaps the deletion back to the verified source-line start, so the separator is
+removed while an opener such as `**` remains intact.
+
+Markdown rendering normally collapses repeated blank source lines. After Return
+at a visual block start, the page installs a temporary stamped blank row before
+the moved block so the edit is visible while the caret remains with that block.
 
 ### Selection handoff
 

@@ -56,8 +56,8 @@ enum MarkdownEditSplicer {
 		/// splice verifies any source prefix hidden by rendering (`# `, `> `,
 		/// `**`, etc.) and inserts before it so the whole block moves.
 		var blockStartBreak = false
-		/// A non-collapsed DOM range ended at the first visible character of the
-		/// following block (WebKit's paragraph-selection boundary). Its stamped
+		/// A DOM range ended at the first visible character of the following block
+		/// (a paragraph-selection boundary or collapsed block merge). Its stamped
 		/// offset sits after any hidden opening Markdown, so source operations must
 		/// use the verified source line start instead.
 		var endAtBlockStart = false
@@ -94,21 +94,23 @@ enum MarkdownEditSplicer {
 		if !edit.crossRun, plain(actual) != plain(edit.expected) {
 			return .rejected("expected mismatch range=\(reportedRange) expected=\(quoted(edit.expected)) actual=\(quoted(actual))")
 		}
-		if edit.crossRun, edit.wrapMarker == nil, edit.replacement?.isEmpty == true, !edit.selected,
-		   actual.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil {
-			return .rejected("collapsed cross-run delete would remove syntax \(quoted(actual))")
-		}
 		if let reason = contextMismatch(edit, in: text) {
 			return .rejected(reason)
 		}
 		var range = reportedRange
 		if edit.endAtBlockStart {
-			guard edit.selected, edit.end > edit.start,
+			guard edit.end > edit.start,
 				  let blockStart = verifiedBlockStart(in: text, visibleStart: edit.end),
 				  blockStart >= edit.start else {
-				return .rejected("invalid selection end at visual block start \(edit.end)")
+				return .rejected("invalid range end at visual block start \(edit.end)")
 			}
 			range = NSRange(location: edit.start, length: blockStart - edit.start)
+		}
+		if edit.crossRun, edit.wrapMarker == nil, edit.replacement?.isEmpty == true, !edit.selected {
+			let deleted = text.substring(with: range)
+			if deleted.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil {
+				return .rejected("collapsed cross-run delete would remove syntax \(quoted(deleted))")
+			}
 		}
 		if let command = edit.formatCommand {
 			guard !edit.crossRun || command.supportsCrossRunSelection else {
@@ -196,9 +198,9 @@ enum MarkdownEditSplicer {
 				return .rejected("invalid visual block-start break at \(edit.start)")
 			}
 			spliceRange = NSRange(location: lineStart, length: 0)
-			// Return at a block's visual start leaves the insertion point in
-			// the new empty block above; the original prefixed block moves down.
-			caret = lineStart
+			// Return at a block's visual start moves the whole prefixed block
+			// down and keeps the insertion point with its first visible character.
+			caret = lineStart + (replacement as NSString).length
 		}
 		if replacement.isEmpty, edit.selected,
 		   !edit.syntaxStart.isEmpty || !edit.syntaxEnd.isEmpty || !edit.blockPrefixes.isEmpty {

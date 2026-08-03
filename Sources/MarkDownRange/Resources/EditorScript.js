@@ -363,7 +363,22 @@
   });
   // Restore the caret — or, with a length, the full selection (style
   // toggles keep their selection alive) — after a structural re-render.
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax) {
+  function ensureVisualBlankBefore(span, sourceOffset) {
+    if (sourceOffset == null) return;
+    var block = blockOf(span);
+    if (!block || !block.parentNode) return;
+    var previous = block.previousElementSibling;
+    if (previous && previous.getAttribute('data-md-visual-blank') === String(sourceOffset)) return;
+    var spacer = document.createElement('p');
+    spacer.setAttribute('data-md-visual-blank', String(sourceOffset));
+    var holder = document.createElement('span');
+    holder.setAttribute('data-s', String(sourceOffset));
+    holder.appendChild(document.createElement('br'));
+    spacer.appendChild(holder);
+    block.insertAdjacentElement('beforebegin', spacer);
+    if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
+  }
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset) {
     length = length || 0;
     var start = spotFor(offset);
     if (start && length) {
@@ -377,6 +392,7 @@
       return;
     }
     if (start) {
+      ensureVisualBlankBefore(start.span, visualBlankOffset);
       placeCaretIn(start.node, start.offset, start.span);
       return;
     }
@@ -405,6 +421,7 @@
       // synthetic caret home for that case so typing remains formatted.
       if (!!prevOnLine !== !!nextOnLine) {
         if (nextOnLine && (!prevOnLine || nextBase - offset <= offset - prevEnd)) {
+          ensureVisualBlankBefore(next, visualBlankOffset);
           var nextText = firstTextIn(next);
           if (nextText) { placeCaretIn(nextText, 0, next); }
           else { placeCaretIn(next, 0, next); }
@@ -547,7 +564,7 @@
   // headings/quotes, or inline openers such as `**`. Enter at that visual
   // boundary must split before the hidden prefix, not at the first run's
   // data-s offset (which would produce "# \n\nHeading"). Even when no prefix
-  // exists, the caret belongs in the newly-created block above. Lists
+  // exists, the hidden prefix and caret still move down together. Lists
   // deliberately keep their continuation behavior.
   function isVisualBlockStart(node, offset) {
     var el = node.nodeType === 3 ? node.parentNode : node;
@@ -959,12 +976,18 @@
         ? selectedSyntaxBoundaries(range, false) : [];
       var blockPrefixes = selected
         ? selectedBlockPrefixes(range) : [];
+      // A collapsed block merge can end at the first visible character of a
+      // block whose opening Markdown syntax is hidden by rendering. Tell the
+      // host to stop the deletion at the verified source-line start so
+      // Backspace removes only the separator, not an opener such as `**`.
+      var deleteEndAtBlockStart = endAtBlockStart ||
+        (!selected && crossRun && isVisualBlockStart(endPos.node, endPos.offset));
       if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length) {
         e.preventDefault();
         freeze();
         post({ start: start, end: end, text: '', expected: expected,
                crossRun: crossRun, selected: selected, before: before, after: after,
-               endAtBlockStart: endAtBlockStart,
+               endAtBlockStart: deleteEndAtBlockStart,
                syntaxStart: syntaxStart, syntaxEnd: syntaxEnd,
                blockPrefixes: blockPrefixes,
                caret: start, rev: stampRev, seq: seq++ });

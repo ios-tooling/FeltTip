@@ -308,7 +308,7 @@ import Testing
 
 	// MARK: Prefixed block starts
 
-	@Test func headingStartBreakMovesHiddenMarkersAndRestoresTheLeadingCaret() {
+	@Test func headingStartBreakMovesHiddenMarkersAndCaretTogether() {
 		let source = "> ### **Heading**\n"
 		let visible = (source as NSString).range(of: "Heading").location
 		let outcome = MarkdownEditSplicer.apply(
@@ -317,7 +317,7 @@ import Testing
 			to: source)
 		let (text, selection) = try! #require(applied(outcome))
 		#expect(text == "\n\n> ### **Heading**\n")
-		#expect(selection == NSRange(location: 0, length: 0))
+		#expect(selection == NSRange(location: 2, length: 0))
 	}
 
 	@Test func prefixedBreakRejectsAFlagThatDoesNotMatchTheSource() {

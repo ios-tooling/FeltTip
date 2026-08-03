@@ -62,6 +62,22 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func backspaceAtBoldParagraphStartPreservesOpeningSyntax() async throws {
+		let source = "Print the stored authentication token\n\n\n**Examples:**\n\nCommand"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let caret = (source as NSString).range(of: "Examples:").location
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Print the stored authentication token**Examples:**\n\nCommand")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func caretInUnstampedRunVetoesTypingWithoutCorruption() async throws {
 		// An entity reference renders as a run the converter can't map 1:1, so
 		// it carries no data-s stamp; typing inside it must do nothing (veto)

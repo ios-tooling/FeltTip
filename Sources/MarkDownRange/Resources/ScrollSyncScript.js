@@ -98,7 +98,7 @@
   // place the caret. Straight scrollTo at didFinish clamps to zero — the
   // content hasn't laid out yet — so retry until the page is tall enough
   // (or a deadline passes), and only then let the caret nudge the view.
-  window.__mdRestoreScrollThenCaret = function (y, caret, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax) {
+  window.__mdRestoreScrollThenCaret = function (y, caret, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset) {
     var deadline = Date.now() + 1000;
     function attempt() {
       var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
@@ -107,7 +107,7 @@
         driven = { y: target, until: Date.now() + 500 };
         window.scrollTo(0, target);
         if (caret != null && window.__mdPlaceCaret) {
-          window.__mdPlaceCaret(caret, length || 0, sourceLineStart, sourceLineEnd, snapHiddenSyntax);
+          window.__mdPlaceCaret(caret, length || 0, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset);
         }
       } else {
         // setTimeout, not requestAnimationFrame: rAF doesn't run in
