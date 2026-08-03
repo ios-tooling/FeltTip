@@ -64,7 +64,46 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 		InstantAttributedRenderer.render(markdown, theme: theme, fontSize: fontSize)
 	}
 
+	static func renderLaunchForTesting(
+		_ markdown: String, theme: MarkdownTheme = .default, fontSize: CGFloat = 16
+	) -> NSAttributedString {
+		InstantAttributedRenderer.renderLaunch(markdown, theme: theme, fontSize: fontSize)
+	}
+
+	/// Builds the native preview without a SwiftUI hosting controller. Launch-time
+	/// callers can install this directly in an AppKit window, avoiding the cost of
+	/// constructing a second SwiftUI scene before the document scene exists.
+	@MainActor
+	public static func makeAppKitView(
+		text: String,
+		theme: MarkdownTheme,
+		fontSize: CGFloat,
+		onReady: @escaping @MainActor @Sendable () -> Void
+	) -> NSScrollView {
+		let rendered = InstantAttributedRenderer.renderLaunch(
+			text, theme: theme, fontSize: fontSize)
+		let (scrollView, textView) = makeSurface(
+			rendered: rendered, theme: theme)
+		textView.onAttached = onReady
+		return scrollView
+	}
+
 	public func makeNSView(context: Context) -> NSScrollView {
+		let rendered = InstantAttributedRenderer.render(
+			text, theme: theme, fontSize: fontSize)
+		let (scrollView, textView) = Self.makeSurface(
+			rendered: rendered, theme: theme)
+		textView.delegate = context.coordinator
+		textView.onAttached = { [weak coordinator = context.coordinator] in
+			coordinator?.didAttach()
+		}
+		context.coordinator.attach(scrollView: scrollView, textView: textView)
+		return scrollView
+	}
+
+	private static func makeSurface(
+		rendered: NSAttributedString, theme: MarkdownTheme
+	) -> (NSScrollView, InstantPreviewTextView) {
 		let scrollView = NSScrollView()
 		scrollView.hasVerticalScroller = true
 		scrollView.hasHorizontalScroller = false
@@ -93,15 +132,9 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 		textView.textContainer?.containerSize = NSSize(
 			width: 0, height: CGFloat.greatestFiniteMagnitude)
 		textView.layoutManager?.allowsNonContiguousLayout = true
-		textView.delegate = context.coordinator
-		textView.textStorage?.setAttributedString(
-			InstantAttributedRenderer.render(text, theme: theme, fontSize: fontSize))
-		textView.onAttached = { [weak coordinator = context.coordinator] in
-			coordinator?.didAttach()
-		}
+		textView.textStorage?.setAttributedString(rendered)
 		scrollView.documentView = textView
-		context.coordinator.attach(scrollView: scrollView, textView: textView)
-		return scrollView
+		return (scrollView, textView)
 	}
 
 	public func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -237,6 +270,74 @@ private final class InstantPreviewTextView: NSTextView {
 
 @MainActor
 private enum InstantAttributedRenderer {
+	/// A heading-aware, syntax-light rendering path for the launch window. It
+	/// deliberately avoids constructing a swift-markdown syntax tree: that full
+	/// parse follows immediately in the persistent document, while this surface
+	/// only has to be readable and selectable for the first launch frame.
+	static func renderLaunch(
+		_ markdown: String, theme: MarkdownTheme, fontSize: CGFloat
+	) -> NSAttributedString {
+		let output = NSMutableAttributedString()
+		var insideFence = false
+		for rawLine in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
+			var line = String(rawLine)
+			if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+				insideFence.toggle()
+				continue
+			}
+
+			let font: NSFont
+			let color: NSColor
+			let spacingBefore: CGFloat
+			let spacingAfter: CGFloat
+			if insideFence {
+				font = .monospacedSystemFont(ofSize: fontSize * 0.9, weight: .regular)
+				color = NSColor(theme.codeForeground)
+				spacingBefore = 0
+				spacingAfter = 0
+			} else if let heading = launchHeading(in: line) {
+				line = heading.text
+				font = headingFont(heading.level, fontSize)
+				color = NSColor(theme.headingColor)
+				spacingBefore = heading.level <= 2 ? 18 : 10
+				spacingAfter = heading.level <= 2 ? 8 : 4
+			} else {
+				line = launchBodyText(line)
+				font = bodyFont(fontSize, theme)
+				color = NSColor(theme.textColor)
+				spacingBefore = 0
+				spacingAfter = line.isEmpty ? 4 : 2
+			}
+			appendPlain(
+				line, to: output, font: font, color: color,
+				background: insideFence ? NSColor(theme.codeBackground) : nil)
+			terminate(output, spacingBefore: spacingBefore, spacingAfter: spacingAfter)
+		}
+		return output
+	}
+
+	private static func launchHeading(in line: String) -> (level: Int, text: String)? {
+		let hashes = line.prefix { $0 == "#" }.count
+		guard (1...6).contains(hashes) else { return nil }
+		let remainder = line.dropFirst(hashes)
+		guard remainder.first == " " else { return nil }
+		return (hashes, launchBodyText(String(remainder.dropFirst())))
+	}
+
+	private static func launchBodyText(_ source: String) -> String {
+		var text = source
+		let trimmed = text.drop(while: { $0 == " " || $0 == "\t" })
+		if trimmed.hasPrefix("> ") {
+			text = "▎ " + trimmed.dropFirst(2)
+		} else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
+			text = "• " + trimmed.dropFirst(2)
+		}
+		for marker in ["**", "__", "~~", "`"] {
+			text = text.replacingOccurrences(of: marker, with: "")
+		}
+		return text
+	}
+
 	static func render(
 		_ markdown: String, theme: MarkdownTheme, fontSize: CGFloat
 	) -> NSAttributedString {

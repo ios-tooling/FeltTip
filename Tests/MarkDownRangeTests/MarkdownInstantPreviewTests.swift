@@ -49,5 +49,21 @@ struct MarkdownInstantPreviewTests {
 		#expect(rendered.string.contains("let value = 1"))
 		#expect(rendered.string.contains("Diagram"))
 	}
+
+	@Test @MainActor
+	func launchRendererProvidesReadableSelectableTextWithoutFullParse() {
+		let rendered = MarkdownInstantPreview.renderLaunchForTesting(
+			"# Heading\n\n- A **fast** item\n\n```swift\nlet value = 1\n```")
+
+		#expect(rendered.string.contains("Heading"))
+		#expect(rendered.string.contains("• A fast item"))
+		#expect(rendered.string.contains("let value = 1"))
+		#expect(!rendered.string.contains("# Heading"))
+		#expect(!rendered.string.contains("**"))
+		let headingRange = (rendered.string as NSString).range(of: "Heading")
+		let headingFont = rendered.attribute(
+			.font, at: headingRange.location, effectiveRange: nil) as? NSFont
+		#expect(headingFont?.fontDescriptor.symbolicTraits.contains(.bold) == true)
+	}
 }
 #endif
