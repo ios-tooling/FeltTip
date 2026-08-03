@@ -52,7 +52,21 @@ extension MarkdownWebView.Coordinator {
 					if let blockStart = MarkdownEditSplicer.verifiedBlockStart(
 						in: source, visibleStart: range.upperBound),
 					   blockStart >= start {
-						range.length = blockStart - start
+						var selectionEnd = blockStart
+						// WebKit's paragraph range includes the separator before
+						// the following block. The styled selection has no visible
+						// ownership of those blank source lines, so keep them out
+						// of the raw-pane mirror while retaining attached syntax.
+						while selectionEnd > start {
+							let character = source.character(at: selectionEnd - 1)
+							if character == 0x09 || character == 0x0A ||
+							   character == 0x0D || character == 0x20 {
+								selectionEnd -= 1
+							} else {
+								break
+							}
+						}
+						range.length = selectionEnd - start
 					}
 				}
 				if length > 0,

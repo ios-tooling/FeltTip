@@ -363,7 +363,7 @@
   });
   // Restore the caret — or, with a length, the full selection (style
   // toggles keep their selection alive) — after a structural re-render.
-  window.__mdPlaceCaret = function (offset, length) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax) {
     length = length || 0;
     var start = spotFor(offset);
     if (start && length) {
@@ -382,12 +382,39 @@
     }
     if (length) { return; }   // a selection can't restore into a void
     var spans = document.querySelectorAll('[data-s]');
-    var prev = null, next = null;
+    var prev = null, next = null, prevEnd = null, nextBase = null;
     for (var i = 0; i < spans.length; i++) {
       var base = parseInt(spans[i].getAttribute('data-s'), 10);
       var len = textLength(spans[i]);
-      if (base + len < offset) { prev = spans[i]; }
-      if (base > offset && !next) { next = spans[i]; }
+      if (base + len < offset) { prev = spans[i]; prevEnd = base + len; }
+      if (base > offset && !next) { next = spans[i]; nextBase = base; }
+    }
+    var prevBlock = prev ? blockOf(prev) : null;
+    var nextBlock = next ? blockOf(next) : null;
+    // A host-restored caret can address hidden Markdown syntax rather than a
+    // rendered run (undoing a Cut at the start of `**paragraph**`, for
+    // example). If a real run exists on that same source line, snap to its
+    // nearest edge. Treat only a genuinely empty source line as needing the
+    // synthetic paragraph below; otherwise that placeholder becomes a blank
+    // styled-only line even though the raw source is correct.
+    if (snapHiddenSyntax && sourceLineStart != null && sourceLineEnd != null) {
+      var prevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
+      var nextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
+      // With runs on both sides, the caret can intentionally sit inside an
+      // empty inline construct (`Alpha<u>|</u> Tail`). Preserve the existing
+      // synthetic caret home for that case so typing remains formatted.
+      if (!!prevOnLine !== !!nextOnLine) {
+        if (nextOnLine && (!prevOnLine || nextBase - offset <= offset - prevEnd)) {
+          var nextText = firstTextIn(next);
+          if (nextText) { placeCaretIn(nextText, 0, next); }
+          else { placeCaretIn(next, 0, next); }
+        } else {
+          var prevText = lastTextIn(prev);
+          if (prevText) { placeCaretIn(prevText, prevText.nodeValue.length, prev); }
+          else { placeCaretIn(prev, prev.childNodes.length, prev); }
+        }
+        return;
+      }
     }
     // No run covers the offset: the caret sits in markdown the renderer
     // has no text for — the empty paragraph Enter just created. Without a
@@ -397,8 +424,6 @@
     var holder = document.createElement('span');
     holder.setAttribute('data-s', String(offset));
     holder.appendChild(document.createElement('br'));
-    var prevBlock = prev ? blockOf(prev) : null;
-    var nextBlock = next ? blockOf(next) : null;
     var target = null;
     // Prefer an empty block the renderer DID emit between the neighbours
     // (an empty list item renders as a bare <li>).

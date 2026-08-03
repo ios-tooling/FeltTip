@@ -38,8 +38,8 @@ struct EditorSelectionHandoffTests {
 		#expect(harness.lastReportedSelection == selectedWithFormatting)
 	}
 
-	@Test func paragraphSelectionStopsBeforeTheNextBlocksHiddenFormatting() async throws {
-		let source = "Intro\n\n**Chosen paragraph.**\n\n**Next paragraph.**"
+	@Test func paragraphSelectionStopsBeforeTheSeparatorAndNextBlocksFormatting() async throws {
+		let source = "Intro\n\n**Chosen paragraph.**\n \t\n**Next paragraph.**"
 		let harness = try await CoordinatorBridgeHarness(source: source)
 		try await harness.run("document.hasFocus = function () { return true }")
 		let oldCount = harness.sourceSelectionReportCount
@@ -60,11 +60,9 @@ struct EditorSelectionHandoffTests {
 			harness.sourceSelectionReportCount > oldCount
 		}
 
-		let start = (source as NSString).range(of: "**Chosen paragraph.**").location
-		let nextLine = (source as NSString).range(of: "**Next paragraph.**").location
-		let expected = NSRange(location: start, length: nextLine - start)
+		let expected = (source as NSString).range(of: "**Chosen paragraph.**")
 		#expect(harness.lastReportedSourceSelection == expected)
-		#expect((source as NSString).substring(with: expected) == "**Chosen paragraph.**\n\n")
+		#expect((source as NSString).substring(with: expected) == "**Chosen paragraph.**")
 	}
 
 	@Test func wholeFormattedWordSelectionIncludesItsAttachedDelimiters() async throws {

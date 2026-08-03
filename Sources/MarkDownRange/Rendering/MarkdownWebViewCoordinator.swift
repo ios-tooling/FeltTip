@@ -357,7 +357,41 @@ extension MarkdownWebView {
 
 		private func placeCaretAfterUpdate(_ selection: NSRange?, into webView: WKWebView) {
 			guard let selection else { return }
-			webView.evaluateJavaScript("window.__mdPlaceCaret && window.__mdPlaceCaret(\(selection.location), \(selection.length));", completionHandler: nil)
+			webView.evaluateJavaScript(
+				"window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments(selection)));",
+				completionHandler: nil)
+		}
+
+		/// Source-line bounds let the page distinguish a caret in hidden Markdown
+		/// syntax from one in a genuinely empty paragraph. The former snaps to a
+		/// real run on this line; only the latter synthesizes an empty caret home.
+		private func caretPlacementArguments(_ selection: NSRange) -> String {
+			guard selection.length == 0 else {
+				return "\(selection.location), \(selection.length), null, null, false"
+			}
+			let source = (currentSource ?? parent.text) as NSString
+			let offset = min(max(0, selection.location), source.length)
+			var lineStart = offset
+			while lineStart > 0 {
+				let character = source.character(at: lineStart - 1)
+				if character == 0x0A || character == 0x0D { break }
+				lineStart -= 1
+			}
+			var lineEnd = offset
+			while lineEnd < source.length {
+				let character = source.character(at: lineEnd)
+				if character == 0x0A || character == 0x0D { break }
+				lineEnd += 1
+			}
+			let snapHiddenSyntax: Bool
+			if offset < source.length {
+				let character = source.character(at: offset)
+				snapHiddenSyntax = character != 0x09 && character != 0x0A &&
+					character != 0x0D && character != 0x20
+			} else {
+				snapHiddenSyntax = false
+			}
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax)"
 		}
 
 		func applyLineChanges(to webView: WKWebView, force: Bool = false) {
@@ -455,7 +489,9 @@ extension MarkdownWebView {
 				// restored, the caret's own scrollIntoView(nearest) is a
 				// no-op unless the caret would be off-screen (e.g. Return on
 				// the last visible line), which nudges minimally.
-				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), \(selection.location), \(selection.length));", completionHandler: nil)
+				webView.evaluateJavaScript(
+					"window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), \(caretPlacementArguments(selection)));",
+					completionHandler: nil)
 			} else if !didApplyInitialScroll, let initial = parent.initialScrollFraction {
 				didApplyInitialScroll = true
 				log("didFinish: initial scroll fraction \(initial)")

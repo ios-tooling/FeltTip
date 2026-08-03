@@ -68,6 +68,25 @@ import Testing
 		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
 	}
 
+	private func restore(
+		_ text: String,
+		caret: Int,
+		token: Int,
+		in harness: CoordinatorBridgeHarness
+	) {
+		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.coordinator.parent = MarkdownWebView(
+			text: text, theme: .default, fontSize: 14)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: token))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(text)
+	}
+
 	@Test func pastingPlainTextSplicesItAtTheCaret() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
 		try await withPasteboard("PASTED") {
@@ -359,6 +378,49 @@ import Testing
 		try await harness.type("Q")
 		try await harness.waitForSourceEdits(3)
 		#expect(harness.source == pasted + "Q" + afterCut)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func undoingAParagraphCutDoesNotCreateAStyledOnlyBlankParagraph() async throws {
+		let source = "Intro\n\n**Chosen paragraph.**\n\n**Next paragraph.**"
+		let chosenStart = (source as NSString).range(of: "**Chosen paragraph.**").location
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.run("""
+			var paragraphs = document.querySelectorAll('p')
+			var first = paragraphs[1].querySelector('[data-s]').firstChild
+			var next = paragraphs[2].querySelector('[data-s]').firstChild
+			var range = document.createRange()
+			range.setStart(first, 0)
+			range.setEnd(next, 0)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == "Intro\n\n**Next paragraph.**")
+			try await harness.waitQuiescent()
+
+			restore(source, caret: chosenStart, token: 1, in: harness)
+			try await harness.waitQuiescent()
+		}
+
+		#expect(harness.source == source)
+		#expect(try await harness.evaluate("""
+			String(Array.from(document.body.children).filter(function (element) {
+			  return element.tagName === 'P' && element.textContent.trim() === ''
+			}).length)
+			""") == "0")
+		#expect(try await harness.evaluate("""
+			Array.from(document.body.children).filter(function (element) {
+			  return element.tagName === 'P'
+			}).map(function (element) { return element.textContent }).join('|')
+			""") == "Intro|Chosen paragraph.|Next paragraph.")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
