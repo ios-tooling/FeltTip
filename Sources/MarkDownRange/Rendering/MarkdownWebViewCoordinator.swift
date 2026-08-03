@@ -77,6 +77,12 @@ extension MarkdownWebView {
 		private var lastSelectionTargetToken: Int?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
+		private var didStartInitialRender = false
+		private var didFinishInitialRender = false
+		private var initialDocumentNavigation: WKNavigation?
+		/// Production views install bridge scripts through WKUserScript at
+		/// document-end. The test harness keeps exercising the evaluate path.
+		var usesDocumentEndScripts = false
 		/// Renders happen off the main actor; each new render bumps this and a
 		/// finished render only lands while its generation is still current, so
 		/// a slow render of stale text can't overwrite a newer page.
@@ -418,6 +424,8 @@ extension MarkdownWebView {
 		/// (lastRenderedText/currentSource/epoch), so a superseded render just
 		/// never navigates — the newer call's page wins.
 		func loadHTML(for text: String, into webView: WKWebView) {
+			let isInitialRender = !didStartInitialRender
+			startInitialRenderIfNeeded()
 			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
@@ -430,23 +438,44 @@ extension MarkdownWebView {
 			// editing (editing keeps the raw, editable source). The engine
 			// loads through our scheme handler instead of being inlined.
 			let embedMermaid = parent.renderMermaid && !parent.isEditable
+			let preparedRender = isInitialRender ? parent.preparedInitialRender : nil
+			let preparedConfiguration = MarkdownPreparedWebRender.Configuration(
+				markdown: text,
+				theme: theme,
+				fontSize: fontSize,
+				includeSourceOffsets: includeOffsets,
+				interactiveCheckboxes: checkboxes,
+				embedMermaidEngine: embedMermaid,
+				allowRemoteResources: allowRemoteResources)
 			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
+			if let rendered = preparedRender?.completedResult(matching: preparedConfiguration) {
+				lastFragments = rendered.fragments
+				reportInitialRenderProgress(0.25)
+				initialDocumentNavigation = webView.loadHTMLString(rendered.html, baseURL: baseURL)
+				return
+			}
 			let renderService = renderService
 			renderTask = Task { @MainActor [weak self, weak webView] in
-				let rendered = await renderService.documentHTML(
-					markdown: text, theme: theme, fontSize: fontSize,
-					includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
-					embedMermaidEngine: embedMermaid,
-					allowRemoteResources: allowRemoteResources)
+				let rendered: MarkdownRenderService.DocumentHTML
+				if let prepared = await preparedRender?.result(matching: preparedConfiguration) {
+					rendered = prepared
+				} else {
+					rendered = await renderService.documentHTML(
+						markdown: text, theme: theme, fontSize: fontSize,
+						includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
+						embedMermaidEngine: embedMermaid,
+						allowRemoteResources: allowRemoteResources)
+				}
 				guard !Task.isCancelled, let self, let webView,
 				      generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.lastFragments = rendered.fragments
+				self.reportInitialRenderProgress(0.25)
 				// Load under the custom resource scheme (when we have a document
 				// folder) so relative <img> paths resolve to the scheme handler,
 				// which can actually read local files — WKWebView won't load
 				// file:// subresources of an loadHTMLString page.
-				webView.loadHTMLString(rendered.html, baseURL: baseURL)
+				self.initialDocumentNavigation = webView.loadHTMLString(rendered.html, baseURL: baseURL)
 			}
 		}
 
@@ -463,20 +492,33 @@ extension MarkdownWebView {
 
 		// MARK: Navigation
 
+		public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+			guard navigation === initialDocumentNavigation else { return }
+			reportInitialRenderProgress(0.75)
+		}
+
 		public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+			completePageSetup(in: webView)
+		}
+
+		func completePageSetup(in webView: WKWebView) {
 			guard isTrustedDocumentURL(webView.url) else {
 				log("refusing script injection into untrusted navigation \(webView.url?.absoluteString ?? "nil")")
 				return
 			}
-			if parent.onCheckboxToggle != nil {
-				webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
+			if !usesDocumentEndScripts {
+				if parent.onCheckboxToggle != nil {
+					webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
+				}
+				// Always install scroll reporting / control, even for a read-only
+				// preview, so a host can sync its scroll position to this view.
+				webView.evaluateJavaScript(Self.scrollSyncScript, completionHandler: nil)
 			}
-			// Always install scroll reporting / control, even for a read-only
-			// preview, so a host can sync its scroll position to this view.
-			webView.evaluateJavaScript(Self.scrollSyncScript, completionHandler: nil)
 			applyLineChanges(to: webView, force: true)
 			if parent.isEditable {
-				webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
+				if !usesDocumentEndScripts {
+					webView.evaluateJavaScript(Self.editorScript, completionHandler: nil)
+				}
 				// Seed the freshly injected script with the revision this DOM
 				// renders, so its edit messages address the right source state.
 				webView.evaluateJavaScript("window.__mdSetRev && window.__mdSetRev(\(currentRev));", completionHandler: nil)
@@ -503,6 +545,40 @@ extension MarkdownWebView {
 				log("didFinish: restoring scrollY \(lastScrollY)")
 				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null, 0);", completionHandler: nil)
 			}
+			finishInitialRenderIfNeeded()
+		}
+
+		public func webView(
+			_ webView: WKWebView,
+			didFail navigation: WKNavigation!,
+			withError error: any Error
+		) {
+			finishInitialRenderIfNeeded()
+		}
+
+		public func webView(
+			_ webView: WKWebView,
+			didFailProvisionalNavigation navigation: WKNavigation!,
+			withError error: any Error
+		) {
+			finishInitialRenderIfNeeded()
+		}
+
+		private func startInitialRenderIfNeeded() {
+			guard !didStartInitialRender else { return }
+			didStartInitialRender = true
+			parent.onInitialRenderProgress?(0)
+		}
+
+		private func finishInitialRenderIfNeeded() {
+			guard didStartInitialRender, !didFinishInitialRender else { return }
+			didFinishInitialRender = true
+			parent.onInitialRenderProgress?(nil)
+		}
+
+		private func reportInitialRenderProgress(_ progress: Double) {
+			guard didStartInitialRender, !didFinishInitialRender else { return }
+			parent.onInitialRenderProgress?(progress)
 		}
 
 		/// Pick up a token-gated caret-restore request (undo/redo) and arm it as

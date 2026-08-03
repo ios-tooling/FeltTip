@@ -42,6 +42,16 @@ extension MarkdownWebView.Coordinator {
 			log("editor ready (bridge=\(body["bridge"] as? Bool ?? false))")
 			return
 		}
+		if body["type"] as? String == "initialReady" {
+			// User scripts run at document-end, before WKNavigationDelegate's
+			// didFinish callback. At this point the DOM and edit bridge are live,
+			// so the page is genuinely interactive and can satisfy first-render
+			// readiness without waiting on later navigation bookkeeping.
+			if let webView = message.webView, usesDocumentEndScripts {
+				completePageSetup(in: webView)
+			}
+			return
+		}
 		if body["type"] as? String == "selection" {
 			log("selection message start=\(body["start"] ?? "nil") length=\(body["length"] ?? "nil") handler=\(parent.onSelectionChanged != nil || parent.onSourceSelectionChanged != nil)")
 			if let start = body["start"] as? Int, let length = body["length"] as? Int {

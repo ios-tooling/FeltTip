@@ -32,19 +32,37 @@ final class CoordinatorBridgeHarness {
 	let webView: WKWebView
 	private let window: NSWindow
 	private let checkboxToggle: ((Int, Bool) -> Void)?
+	private let initialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
+	private let preparedInitialRender: MarkdownPreparedWebRender?
 	/// When true, the emulated SwiftUI round-trip is suppressed — the page
 	/// never gets the re-render a structural edit expects, which is exactly
 	/// the stuck-freeze condition the frozenTimeout safety net exists for.
 	var suppressRoundTrip = false
 
-	init(source: String, onCheckboxToggle: ((Int, Bool) -> Void)? = nil) async throws {
+	init(
+		source: String,
+		onCheckboxToggle: ((Int, Bool) -> Void)? = nil,
+		preparedInitialRender: MarkdownPreparedWebRender? = nil,
+		onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)? = nil
+	) async throws {
 		self.source = source
 		self.checkboxToggle = onCheckboxToggle
+		self.preparedInitialRender = preparedInitialRender
+		self.initialRenderProgress = onInitialRenderProgress
 		var view = MarkdownWebView(text: source, theme: .default, fontSize: 14).editable(true)
 		if let onCheckboxToggle { view = view.onCheckboxToggle(onCheckboxToggle) }
+		if let onInitialRenderProgress {
+			view = view.onInitialRenderProgress(onInitialRenderProgress)
+		}
+		view = view.preparedInitialRender(preparedInitialRender)
 		coordinator = MarkdownWebView.Coordinator(parent: view)
 		let config = WKWebViewConfiguration()
+		let resourcePolicy = LocalResourceAccessPolicy()
+		coordinator.localResourceAccessPolicy = resourcePolicy
 		config.userContentController.add(WeakScriptMessageHandler(coordinator), name: "mdedit")
+		config.setURLSchemeHandler(
+			LocalResourceSchemeHandler(coordinator: coordinator, accessPolicy: resourcePolicy),
+			forURLScheme: MarkdownWebView.resourceScheme)
 		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
 		webView.navigationDelegate = coordinator
 		coordinator.webView = webView
@@ -84,6 +102,10 @@ final class CoordinatorBridgeHarness {
 				self?.sourceSelectionReportCount += 1
 			}
 		if let checkboxToggle { view = view.onCheckboxToggle(checkboxToggle) }
+		if let initialRenderProgress {
+			view = view.onInitialRenderProgress(initialRenderProgress)
+		}
+		view = view.preparedInitialRender(preparedInitialRender)
 		coordinator.parent = view
 	}
 

@@ -33,6 +33,8 @@ public struct WebSplitMarkdownScreen: View {
 	var selectionTarget: MarkdownSelectionTarget?
 	var onResourceAccessDenied: (() -> Void)?
 	var contentReloadToken: Int
+	var preparedInitialRender: MarkdownPreparedWebRender?
+	var onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
 	/// Forwarded to the web preview so task-list checkboxes stay interactive,
 	/// matching SplitMarkdownScreen (which picks this up from the environment).
 	@Environment(\.onCheckboxToggle) private var onCheckboxToggle
@@ -55,7 +57,9 @@ public struct WebSplitMarkdownScreen: View {
 		caretTarget: MarkdownCaretTarget? = nil,
 		selectionTarget: MarkdownSelectionTarget? = nil,
 		onResourceAccessDenied: (() -> Void)? = nil,
-		contentReloadToken: Int = 0
+		contentReloadToken: Int = 0,
+		preparedInitialRender: MarkdownPreparedWebRender? = nil,
+		onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)? = nil
 	) {
 		self._text = text
 		self._selectedHeadingID = selectedHeadingID
@@ -75,6 +79,8 @@ public struct WebSplitMarkdownScreen: View {
 		self.selectionTarget = selectionTarget
 		self.onResourceAccessDenied = onResourceAccessDenied
 		self.contentReloadToken = contentReloadToken
+		self.preparedInitialRender = preparedInitialRender
+		self.onInitialRenderProgress = onInitialRenderProgress
 	}
 
 	#if os(macOS)
@@ -165,6 +171,8 @@ public struct WebSplitMarkdownScreen: View {
 			.caretTarget(caretTarget)
 			.selectionTarget(selectionTarget)
 			.contentReloadToken(contentReloadToken)
+			.preparedInitialRender(preparedInitialRender)
+			.onInitialRenderProgress { onInitialRenderProgress?($0) }
 			.onSourceSelectionChanged { onSourceSelectionChanged?($0) }
 		if let onResourceAccessDenied {
 			view = view.onResourceAccessDenied(onResourceAccessDenied)

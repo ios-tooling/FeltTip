@@ -15,6 +15,11 @@ import Foundation
 actor MarkdownRenderService {
 	static let shared = MarkdownRenderService()
 
+	struct DocumentHTML: Sendable {
+		let html: String
+		let fragments: [MarkdownBlockFragment]
+	}
+
 	struct BlockResult: Sendable {
 		let fragments: [MarkdownBlockFragment]
 		/// The incremental patch and its JSON payload are planned on the render
@@ -109,19 +114,33 @@ actor MarkdownRenderService {
 		includeSourceOffsets: Bool, interactiveCheckboxes: Bool,
 		embedMermaidEngine: Bool,
 		allowRemoteResources: Bool? = nil
-	) async -> (html: String, fragments: [MarkdownBlockFragment]) {
+	) async -> DocumentHTML {
+		let timingEnabled = UserDefaults.standard.bool(forKey: "MarkerTiming")
+		let startedAt = timingEnabled ? CFAbsoluteTimeGetCurrent() : 0
 		let fragments = MarkdownHTMLRenderer.renderBlockFragments(
 			markdown: markdown, theme: theme, fontSize: fontSize,
 			includeSourceOffsets: includeSourceOffsets,
 			interactiveCheckboxes: interactiveCheckboxes)
-		guard let body = Self.joinedBody(fragments) else { return ("", []) }
+		let fragmentsReadyAt = timingEnabled ? CFAbsoluteTimeGetCurrent() : 0
+		guard let body = Self.joinedBody(fragments) else {
+			return DocumentHTML(html: "", fragments: [])
+		}
 		let html = MarkdownHTMLRenderer.wrapDocument(
 			body: body, theme: theme, fontSize: fontSize,
 			embedMermaidEngine: embedMermaidEngine, mermaidEngineViaScheme: true,
 			contentSecurityPolicy: allowRemoteResources.map {
 				MarkdownHTMLRenderer.webViewContentSecurityPolicy(allowRemoteResources: $0)
 			})
-		guard !Task.isCancelled else { return ("", []) }
-		return (html, fragments)
+		if timingEnabled {
+			let finishedAt = CFAbsoluteTimeGetCurrent()
+			let line = String(
+				format: "[TIMING] styled HTML phases: fragments=%.1f wrap=%.1f total=%.1f ms\n",
+				(fragmentsReadyAt - startedAt) * 1_000,
+				(finishedAt - fragmentsReadyAt) * 1_000,
+				(finishedAt - startedAt) * 1_000)
+			FileHandle.standardError.write(Data(line.utf8))
+		}
+		guard !Task.isCancelled else { return DocumentHTML(html: "", fragments: []) }
+		return DocumentHTML(html: html, fragments: fragments)
 	}
 }

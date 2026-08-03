@@ -80,6 +80,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// Token-gated source selection installed when this view takes over from
 	/// another editor mode.
 	var selectionTarget: MarkdownSelectionTarget?
+	/// Optional first-render work started by the host before this view mounts.
+	/// It is ignored unless every render-affecting input still matches.
+	var preparedInitialRender: MarkdownPreparedWebRender?
+	/// Reports the first render's lifecycle. `0` means HTML generation started,
+	/// `0.25` means HTML is ready and navigation began, `0.75` means WebKit
+	/// committed the navigation, and `nil` means loading finished (or failed). This is a
+	/// deliberately one-shot hook for host loading UI and performance tracing,
+	/// not a callback for ordinary edit-driven re-renders.
+	var onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -221,6 +230,23 @@ public struct MarkdownWebView: NSViewRepresentable {
 		return copy
 	}
 
+	/// Reuse a styled render the host started before SwiftUI mounted WKWebView.
+	public func preparedInitialRender(_ render: MarkdownPreparedWebRender?) -> Self {
+		var copy = self
+		copy.preparedInitialRender = render
+		return copy
+	}
+
+	/// Observe the one-shot initial styled render. Hosts can combine this with
+	/// their own source parsing to define an end-to-end document-ready point.
+	public func onInitialRenderProgress(
+		_ callback: @escaping @MainActor @Sendable (Double?) -> Void
+	) -> Self {
+		var copy = self
+		copy.onInitialRenderProgress = callback
+		return copy
+	}
+
 	/// Custom scheme the page loads under so relative local-image paths resolve
 	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
 	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
@@ -233,6 +259,27 @@ public struct MarkdownWebView: NSViewRepresentable {
 		resourcePolicy.setRoot(baseURL)
 		context.coordinator.localResourceAccessPolicy = resourcePolicy
 		config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "mdedit")
+		// Install the editing bridge as document-end user scripts so the first
+		// page is interactive as soon as its DOM finishes, without waiting for
+		// didFinish followed by several evaluateJavaScript round trips.
+		config.userContentController.addUserScript(WKUserScript(
+			source: Coordinator.scrollSyncScript, injectionTime: .atDocumentEnd,
+			forMainFrameOnly: true))
+		if onCheckboxToggle != nil {
+			config.userContentController.addUserScript(WKUserScript(
+				source: Coordinator.checkboxScript, injectionTime: .atDocumentEnd,
+				forMainFrameOnly: true))
+		}
+		if isEditable {
+			config.userContentController.addUserScript(WKUserScript(
+				source: Coordinator.editorScript, injectionTime: .atDocumentEnd,
+				forMainFrameOnly: true))
+		}
+		config.userContentController.addUserScript(WKUserScript(
+			source: "window.webkit.messageHandlers.mdedit.postMessage({type:'initialReady'});",
+			injectionTime: .atDocumentEnd,
+			forMainFrameOnly: true))
+		context.coordinator.usesDocumentEndScripts = true
 		config.setURLSchemeHandler(
 			LocalResourceSchemeHandler(coordinator: context.coordinator, accessPolicy: resourcePolicy),
 			forURLScheme: Self.resourceScheme)
