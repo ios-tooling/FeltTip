@@ -65,10 +65,12 @@ struct InitialRenderProgressTests {
 
 	@Test func productionDocumentEndScriptsAreInteractiveAtReady() async throws {
 		var events: [Double?] = []
+		var readyCount = 0
 		let root = MarkdownWebView(
 			text: "# Live\n\nEditable body", theme: .default, fontSize: 14)
 			.editable(true)
 			.onInitialRenderProgress { events.append($0) }
+			.onInitialRenderReady { readyCount += 1 }
 		let hosting = NSHostingView(rootView: root)
 		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
 		let window = NSWindow(
@@ -85,6 +87,7 @@ struct InitialRenderProgressTests {
 		}
 		let loadedWebView = try #require(webView)
 		#expect(events == [0, 0.25, 0.75, nil])
+		#expect(readyCount == 1)
 		#expect(try await evaluate(
 			"document.body.contentEditable + '|' + typeof window.__mdSetRev",
 			in: loadedWebView) == "true|function")

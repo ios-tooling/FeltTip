@@ -89,6 +89,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// deliberately one-shot hook for host loading UI and performance tracing,
 	/// not a callback for ordinary edit-driven re-renders.
 	var onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
+	/// Called only after the initial page and its edit bridge are live. Unlike
+	/// the terminal progress callback, this never fires for a failed navigation.
+	var onInitialRenderReady: (@MainActor @Sendable () -> Void)?
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
@@ -244,6 +247,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 	) -> Self {
 		var copy = self
 		copy.onInitialRenderProgress = callback
+		return copy
+	}
+
+	public func onInitialRenderReady(
+		_ callback: @escaping @MainActor @Sendable () -> Void
+	) -> Self {
+		var copy = self
+		copy.onInitialRenderReady = callback
 		return copy
 	}
 

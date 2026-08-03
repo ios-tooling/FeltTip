@@ -79,6 +79,7 @@ extension MarkdownWebView {
 		private var didApplyInitialScroll = false
 		private var didStartInitialRender = false
 		private var didFinishInitialRender = false
+		private var didSignalInitialRenderReady = false
 		private var initialDocumentNavigation: WKNavigation?
 		/// Production views install bridge scripts through WKUserScript at
 		/// document-end. The test harness keeps exercising the evaluate path.
@@ -544,6 +545,10 @@ extension MarkdownWebView {
 			} else if lastScrollY > 0 {
 				log("didFinish: restoring scrollY \(lastScrollY)")
 				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null, 0);", completionHandler: nil)
+			}
+			if didStartInitialRender, !didSignalInitialRenderReady {
+				didSignalInitialRenderReady = true
+				parent.onInitialRenderReady?()
 			}
 			finishInitialRenderIfNeeded()
 		}
