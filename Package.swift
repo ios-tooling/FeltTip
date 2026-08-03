@@ -28,15 +28,15 @@ let package = Package(
 				.product(name: "SharedSettings", package: "SharedSettings"),
 				.product(name: "FunnelVision", package: "FunnelVision"),
 			],
+			exclude: ["Rendering/EDITING.md"],
 			resources: [.copy("Resources")]
 		),
 		.testTarget(
 			name: "MarkDownRangeTests",
 			dependencies: ["MarkDownRange"],
-			// Snapshot bundles are accessed via `#filePath` from the replayer
-			// tests, not as compiled-in resources. Excluding the directory
-			// silences SPM's "unhandled file" warnings for every .markerSnap.
-			exclude: ["Snapshots/Bundles"]
+			// The large sample is accessed by `#filePath`, not bundled as a
+			// compiled test resource.
+			exclude: ["Fixtures/SuperDuper-0.6.0.md"]
 		),
 	]
 )

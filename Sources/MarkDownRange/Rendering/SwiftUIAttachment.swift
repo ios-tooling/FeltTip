@@ -15,9 +15,8 @@ import SwiftUI
 /// NSTextAttachment that builds its hosted view lazily. The builder closure
 /// is @MainActor because SwiftUI views must be constructed on the main
 /// thread; TextKit invokes loadView on the main thread, so this is safe.
-@MainActor
-public final class SwiftUIAttachment: NSTextAttachment {
-	public let viewBuilder: () -> AnyView
+public final class SwiftUIAttachment: NSTextAttachment, @unchecked Sendable {
+	public let viewBuilder: @MainActor () -> AnyView
 
 	/// True when this attachment should re-measure to whatever container
 	/// width the renderer passes in, instead of staying at its initial
@@ -34,7 +33,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// destroys and recreates view providers when attachments leave/re-enter
 	/// the viewport, so re-creating the host each time causes a render flash.
 	/// Caching here keeps the rendered content alive across re-creations.
-	fileprivate var cachedHost: NSHostingView<AnyView>?
+	@MainActor fileprivate var cachedHost: NSHostingView<AnyView>?
 
 	/// Stable fingerprint of the block this attachment renders (theme, font
 	/// size, and the block's content). The renderer uses it to recognize
@@ -44,7 +43,8 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// hosted views and flash the images.
 	let contentKey: String?
 
-	public init(width: CGFloat? = nil, estimatedHeight: CGFloat? = nil, usesContainerWidth: Bool = false, contentKey: String? = nil, _ viewBuilder: @escaping () -> AnyView) {
+	@MainActor
+	public init(width: CGFloat? = nil, estimatedHeight: CGFloat? = nil, usesContainerWidth: Bool = false, contentKey: String? = nil, _ viewBuilder: @escaping @MainActor () -> AnyView) {
 		self.viewBuilder = viewBuilder
 		self.usesContainerWidth = usesContainerWidth
 		self.contentKey = contentKey
@@ -95,7 +95,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// "attachments exist but TextKit hasn't mounted them yet" — a race
 	/// between text-storage setup and the initial viewport-layout pass that
 	/// otherwise leaves visible images hidden on cold open.
-	public var isMounted: Bool { cachedHost != nil }
+	@MainActor public var isMounted: Bool { cachedHost != nil }
 
 	/// Adopt the already-mounted hosting view from a previous attachment at
 	/// the same position, refreshing its rootView with this attachment's
@@ -104,7 +104,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// destroy and recreate them, which otherwise produces a visible flash
 	/// and a viewport-layout race where attachments stay hidden until the
 	/// user scrolls.
-	public func inheritHost(from previous: SwiftUIAttachment) {
+	@MainActor public func inheritHost(from previous: SwiftUIAttachment) {
 		guard let host = previous.cachedHost else { return }
 		previous.cachedHost = nil
 		host.rootView = AnyView(
@@ -119,7 +119,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	/// after the text view's frame changes so an existing attachment can
 	/// fit its new line-fragment width without rebuilding the entire
 	/// textStorage.
-	public func remeasure(at width: CGFloat) {
+	@MainActor public func remeasure(at width: CGFloat) {
 		let measureWidth = max(width, 1)
 		let controller = NSHostingController(
 			rootView: viewBuilder()
@@ -135,7 +135,7 @@ public final class SwiftUIAttachment: NSTextAttachment {
 		self.cachedHost = nil
 	}
 
-	private static func transparentImage(size: CGSize) -> NSImage {
+	@MainActor private static func transparentImage(size: CGSize) -> NSImage {
 		let image = NSImage(size: size)
 		image.lockFocus()
 		NSColor.clear.setFill()
@@ -160,43 +160,51 @@ public final class SwiftUIAttachment: NSTextAttachment {
 	}
 }
 
-@MainActor
 private final class SwiftUIAttachmentViewProvider: NSTextAttachmentViewProvider {
+	/// Explicit bridge for the inherited nonisolated TextKit hooks. TextKit
+	/// invokes them on the main thread, and the wrapped value is only unboxed
+	/// inside a checked `MainActor.assumeIsolated` scope.
+	private struct MainActorAttachment: @unchecked Sendable {
+		let value: SwiftUIAttachment
+	}
+
 	override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
 		// Use the attachment's pre-measured bounds so TextKit always has a
 		// concrete size to lay out, even before loadView runs. Without this,
 		// TextKit can fall back to drawing the broken-attachment glyph.
-		if let attachment = textAttachment as? SwiftUIAttachment {
-			return attachment.bounds
-		}
-		return .zero
+		let attachment = textAttachment as? SwiftUIAttachment
+		guard let attachment else { return .zero }
+		let boxed = MainActorAttachment(value: attachment)
+		return MainActor.assumeIsolated { @Sendable in boxed.value.bounds }
 	}
 
 	override func loadView() {
-		guard let attachment = textAttachment as? SwiftUIAttachment else {
-			view = NSView()
+		let attachment = textAttachment as? SwiftUIAttachment
+		guard let attachment else {
+			view = MainActor.assumeIsolated { NSView() }
 			return
 		}
-		// Inline the cache check + creation to avoid Swift 6 cross-isolation
-		// "sending self/attachment" errors that arise when extracted into a
-		// helper method. TextKit re-creates view providers when an attachment
-		// re-enters the viewport; reusing the same NSHostingView eliminates
-		// the re-render flash.
-		if let cached = attachment.cachedHost {
-			cached.removeFromSuperview()
-			view = cached
-			return
+		let boxed = MainActorAttachment(value: attachment)
+		let hostedView: NSView = MainActor.assumeIsolated { @Sendable in
+			let attachment = boxed.value
+			// TextKit re-creates view providers when an attachment re-enters the
+			// viewport; reusing the same NSHostingView eliminates the render flash.
+			if let cached = attachment.cachedHost {
+				cached.removeFromSuperview()
+				return cached
+			}
+			let wrapped = AnyView(
+				attachment.viewBuilder()
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.fixedSize(horizontal: false, vertical: true)
+			)
+			let host = NSHostingView(rootView: wrapped)
+			host.translatesAutoresizingMaskIntoConstraints = false
+			host.sizingOptions = [.intrinsicContentSize]
+			attachment.cachedHost = host
+			return host
 		}
-		let wrapped = AnyView(
-			attachment.viewBuilder()
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.fixedSize(horizontal: false, vertical: true)
-		)
-		let h = NSHostingView(rootView: wrapped)
-		h.translatesAutoresizingMaskIntoConstraints = false
-		h.sizingOptions = [.intrinsicContentSize]
-		attachment.cachedHost = h
-		view = h
+		view = hostedView
 	}
 }
 #endif

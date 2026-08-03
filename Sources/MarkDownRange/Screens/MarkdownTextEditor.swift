@@ -5,7 +5,7 @@
 
 #if os(macOS)
 import SwiftUI
-import AppKit
+@preconcurrency import AppKit
 
 public struct MarkdownTextEditor: NSViewRepresentable {
 	@Binding var text: String
@@ -131,50 +131,50 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			object: scrollView.contentView,
 			queue: .main
 		) { [weak scrollView, weak textView, weak coordinator = context.coordinator] _ in
-			guard let scrollView, let coordinator, !coordinator.isSyncScroll else { return }
+			MainActor.assumeIsolated {
+				guard let scrollView, let coordinator, !coordinator.isSyncScroll else { return }
 
-			// Coalesce ALL reactions — including the ruler invalidation — to
-			// the end of the runloop turn, and read the SETTLED offset.
-			// Reacting synchronously to every bounds notification fed a
-			// self-sustaining retile loop (invalidate → tile → bounds change →
-			// invalidate …) that stormed at millisecond cadence and eroded the
-			// user's scroll position; transient origins (e.g. 9 → 0 → 7.5 in
-			// one turn) also masqueraded as user scrolls to the split sync.
-			guard !coordinator.scrollReportScheduled else { return }
-			coordinator.scrollReportScheduled = true
-			// RunLoop.perform rather than DispatchQueue.async: the observer
-			// already runs on main, and the plain closure sidesteps Sendable
-			// checking on the AppKit captures.
-			RunLoop.main.perform { [weak scrollView, weak textView, weak coordinator] in
-				guard let scrollView, let coordinator else { return }
-				coordinator.scrollReportScheduled = false
-				(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
-				guard !coordinator.isSyncScroll else { return }
-				let docHeight = scrollView.documentView?.frame.height ?? 0
-				let visibleHeight = scrollView.contentView.bounds.height
-				let offset = scrollView.contentView.bounds.origin.y
-				// Only an actual origin change is a scroll — size/layout churn
-				// at a stable position is not the user scrolling this pane.
-				guard abs(offset - coordinator.lastReportedScrollOffset) > 0.5 else { return }
-				coordinator.lastReportedScrollOffset = offset
-				let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
-				if MarkdownSplitSyncLog.enabled {
-					NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, docHeight, fraction)
-				}
-				coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
+				// Coalesce ALL reactions — including the ruler invalidation — to
+				// the end of the runloop turn, and read the SETTLED offset.
+				// Reacting synchronously to every bounds notification fed a
+				// self-sustaining retile loop (invalidate → tile → bounds change →
+				// invalidate …) that stormed at millisecond cadence and eroded the
+				// user's scroll position; transient origins (e.g. 9 → 0 → 7.5 in
+				// one turn) also masqueraded as user scrolls to the split sync.
+				guard !coordinator.scrollReportScheduled else { return }
+				coordinator.scrollReportScheduled = true
+				RunLoop.main.perform { [weak scrollView, weak textView, weak coordinator] in
+					MainActor.assumeIsolated {
+						guard let scrollView, let coordinator else { return }
+						coordinator.scrollReportScheduled = false
+						(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+						guard !coordinator.isSyncScroll else { return }
+						let docHeight = scrollView.documentView?.frame.height ?? 0
+						let visibleHeight = scrollView.contentView.bounds.height
+						let offset = scrollView.contentView.bounds.origin.y
+						// Only an actual origin change is a scroll — size/layout churn
+						// at a stable position is not the user scrolling this pane.
+						guard abs(offset - coordinator.lastReportedScrollOffset) > 0.5 else { return }
+						coordinator.lastReportedScrollOffset = offset
+						let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
+						if MarkdownSplitSyncLog.enabled {
+							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, docHeight, fraction)
+						}
+						coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
 
-				guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
+						guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
 
-				// Debounce the heading lookup + callback: any new scroll event
-				// cancels the pending timer and re-arms it. The heading therefore
-				// only updates once the user has stopped scrolling for a beat,
-				// keeping the SwiftUI invalidation chain
-				// (session.setCurrentSection → OutlineSidebar.body) entirely off
-				// the active-scroll hot path.
-				coordinator.headingDebounceTimer?.invalidate()
-				coordinator.headingDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak coordinator, weak textView] _ in
-					guard let coordinator, let textView else { return }
-					coordinator.computeAndReportHeading(textView: textView)
+						// Debounce the heading lookup + callback: any new scroll event
+						// cancels the pending timer and re-arms it. The heading therefore
+						// only updates once the user has stopped scrolling for a beat.
+						coordinator.headingDebounceTimer?.invalidate()
+						coordinator.headingDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: false) { [weak coordinator, weak textView] _ in
+							MainActor.assumeIsolated {
+								guard let coordinator, let textView else { return }
+								coordinator.computeAndReportHeading(textView: textView)
+							}
+						}
+					}
 				}
 			}
 		}
@@ -444,7 +444,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		scrollView.backgroundColor = bg
 	}
 
-	public class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
+	@MainActor
+	public class Coordinator: NSObject, NSTextViewDelegate, @preconcurrency NSTextStorageDelegate {
 		var parent: MarkdownTextEditor
 		var lastScrolledID: String?
 		var scrollObserver: Any?
@@ -687,7 +688,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				parent.onVisibleHeadingChanged?(heading?.id)
 			}
 		}
-		deinit {
+		isolated deinit {
 			prelayoutTask?.cancel()
 			headingIndexTask?.cancel()
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
@@ -722,16 +723,18 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard parent.syntaxHighlightingEnabled, parent.theme != nil else { return }
 			highlightDebounceTimer?.invalidate()
 			highlightDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self, weak textView] _ in
-				guard let self, let textView, let theme = self.parent.theme else { return }
-				let edited = self.pendingHighlightRange
-				self.pendingHighlightRange = nil
-				let fences = self.codeFenceRanges
-					?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
-				self.codeFenceRanges = fences
-				MarkdownSyntaxHighlighter.highlight(
-					textView: textView, theme: theme,
-					options: self.parent.markdownOptions, editedRange: edited,
-					codeFenceRanges: fences)
+				MainActor.assumeIsolated {
+					guard let self, let textView, let theme = self.parent.theme else { return }
+					let edited = self.pendingHighlightRange
+					self.pendingHighlightRange = nil
+					let fences = self.codeFenceRanges
+						?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
+					self.codeFenceRanges = fences
+					MarkdownSyntaxHighlighter.highlight(
+						textView: textView, theme: theme,
+						options: self.parent.markdownOptions, editedRange: edited,
+						codeFenceRanges: fences)
+				}
 			}
 		}
 

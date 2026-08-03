@@ -5,7 +5,7 @@ import Testing
 #if os(macOS)
 @Suite struct MarkdownLineIndexTests {
 	@Test func singleCharacterEditShiftsOnlyTheFollowingStarts() {
-		var index = MarkdownLineIndex(text: "one\ntwo\nthree")
+		let index = MarkdownLineIndex(text: "one\ntwo\nthree")
 		let edited = "one\ntXwo\nthree" as NSString
 		index.applyEdit(
 			in: edited, editedRange: NSRange(location: 5, length: 1), delta: 1)
@@ -14,7 +14,7 @@ import Testing
 	}
 
 	@Test func insertingAndDeletingNewlinesSplicesTheIndex() {
-		var index = MarkdownLineIndex(text: "one\ntwo\nthree")
+		let index = MarkdownLineIndex(text: "one\ntwo\nthree")
 		let inserted = "one\nt\nwo\nthree" as NSString
 		index.applyEdit(
 			in: inserted, editedRange: NSRange(location: 5, length: 1), delta: 1)
@@ -28,7 +28,7 @@ import Testing
 	}
 
 	@Test func replacingMultipleLinesKeepsSortedUTF16Offsets() {
-		var index = MarkdownLineIndex(text: "😀 zero\none\ntwo\nthree")
+		let index = MarkdownLineIndex(text: "😀 zero\none\ntwo\nthree")
 		let replacement = "😀 zero\nONE\nAND\nTWO\nthree" as NSString
 		index.applyEdit(
 			in: replacement, editedRange: NSRange(location: 8, length: 12), delta: 4)

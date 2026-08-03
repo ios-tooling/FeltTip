@@ -324,14 +324,17 @@ extension MarkdownWebView {
 					      revision == self.currentRev else { return }
 					self.renderTask = nil
 					self.log("body swap: \(fragments.count) blocks rev=\(revision)")
-					webView.evaluateJavaScript("window.__mdSwapContent && window.__mdSwapContent(\(bodyJSON), \(revision));") {
-						[weak self, weak webView] _, error in
-						guard let self, let webView, error == nil,
-						      generation == self.renderGeneration, revision == self.currentRev else { return }
-						self.lastFragments = fragments
-						self.placeCaretAfterUpdate(selection, into: webView)
-						self.applyLineChanges(to: webView, force: true)
+					do {
+						_ = try await webView.evaluateJavaScript(
+							"window.__mdSwapContent && window.__mdSwapContent(\(bodyJSON), \(revision));")
+					} catch {
+						return
 					}
+					guard generation == self.renderGeneration,
+					      revision == self.currentRev else { return }
+					self.lastFragments = fragments
+					self.placeCaretAfterUpdate(selection, into: webView)
+					self.applyLineChanges(to: webView, force: true)
 				}
 			}
 			guard let patch = rendered.patch,

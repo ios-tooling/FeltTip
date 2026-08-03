@@ -5,7 +5,7 @@ import SwiftUI
 @Suite struct ThemeTests {
 	@Test func defaultThemeExists() {
 		let theme = MarkdownTheme.default
-		#expect(theme.textColor != nil)
+		#expect(theme == MarkdownTheme())
 	}
 
 	@Test func githubTheme() {
@@ -25,11 +25,10 @@ import SwiftUI
 
 	@Test func headingFontScaling() {
 		let theme = MarkdownTheme.default
-		let h1 = theme.headingFont(level: 1, base: 16)
-		let h6 = theme.headingFont(level: 6, base: 16)
-		// Can't directly compare Font values, but verify they don't crash
-		#expect(h1 != nil)
-		#expect(h6 != nil)
+		// Font is intentionally not Equatable; this is a smoke test for both
+		// ends of the supported heading-level scale.
+		_ = theme.headingFont(level: 1, base: 16)
+		_ = theme.headingFont(level: 6, base: 16)
 	}
 
 	@Test func customTheme() {

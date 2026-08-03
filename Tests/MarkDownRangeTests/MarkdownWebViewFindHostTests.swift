@@ -166,7 +166,7 @@ struct MarkdownWebViewFindHostTests {
 
 		override func evaluateJavaScript(
 			_ javaScriptString: String,
-			completionHandler: ((Any?, (any Error)?) -> Void)? = nil
+			completionHandler: (@MainActor @Sendable (Any?, (any Error)?) -> Void)? = nil
 		) {
 			scripts.append(javaScriptString)
 			completionHandler?(nil, nil)
