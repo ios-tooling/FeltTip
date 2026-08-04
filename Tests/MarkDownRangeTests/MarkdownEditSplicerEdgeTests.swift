@@ -122,6 +122,85 @@ import Testing
 		#expect(applied(outcome)?.0 == "ab")
 	}
 
+	@Test func collapsedBlockMergePreservesOnlyWhitespaceBeforeTheFirstNewline() {
+		let cases: [(source: String, start: Int, end: Int, expected: String, caret: Int)] = [
+			("a \n\nb", 1, 4, "a b", 2),
+			("a   \n\nb", 1, 6, "a   b", 4),
+			("a\t\n\nb", 1, 4, "a\tb", 2),
+			("a \t \r\n\r\nb", 1, 8, "a \t b", 4),
+			// Whitespace on a separator line is part of the separator, not the
+			// preceding content, so it is removed with the line breaks.
+			("a\n \t\nb", 1, 5, "ab", 1),
+		]
+
+		for item in cases {
+			let outcome = MarkdownEditSplicer.apply(
+				edit(
+					item.start, item.end, text: "", caret: item.start,
+					crossRun: true, selected: false),
+				to: item.source)
+			#expect(applied(outcome)?.0 == item.expected, "source=\(String(reflecting: item.source))")
+			#expect(applied(outcome)?.1 == NSRange(location: item.caret, length: 0))
+		}
+	}
+
+	@Test func selectedWhitespaceDeletionConsumesTheWholeSelection() {
+		let source = "a \t \n \n b"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(1, 8, text: "", caret: 1, crossRun: true, selected: true),
+			to: source)
+		#expect(applied(outcome)?.0 == "ab")
+		#expect(applied(outcome)?.1 == NSRange(location: 1, length: 0))
+	}
+
+	@Test func collapsedSingleSpaceDeletionStillDeletesTheSpace() {
+		let outcome = MarkdownEditSplicer.apply(
+			edit(1, 2, text: "", caret: 1, crossRun: true, selected: false),
+			to: "a b")
+		#expect(applied(outcome)?.0 == "ab")
+		#expect(applied(outcome)?.1 == NSRange(location: 1, length: 0))
+	}
+
+	@Test func insertionsAtEveryWhitespaceAndNewlineEdgeAreExact() {
+		let source = "a \n\n b"
+		let cases: [(offset: Int, expected: String)] = [
+			(1, "aX \n\n b"),       // before trailing space
+			(2, "a X\n\n b"),       // after trailing space
+			(3, "a \nX\n b"),       // between separator newlines
+			(4, "a \n\nX b"),       // before next line's leading space
+			(5, "a \n\n Xb"),       // after next line's leading space
+		]
+
+		for item in cases {
+			let outcome = MarkdownEditSplicer.apply(
+				edit(item.offset, item.offset, text: "X", caret: item.offset + 1),
+				to: source)
+			#expect(applied(outcome)?.0 == item.expected, "offset=\(item.offset)")
+			#expect(applied(outcome)?.1 == NSRange(location: item.offset + 1, length: 0))
+		}
+	}
+
+	@Test func deletionsAtEveryWhitespaceAndNewlineEdgeAreExact() {
+		let source = "a \n\n b"
+		let cases: [(start: Int, end: Int, expected: String)] = [
+			(1, 2, "a\n\n b"),       // trailing space only
+			(2, 3, "a \n b"),        // first separator newline
+			(2, 4, "a  b"),          // complete separator
+			(4, 5, "a \n\nb"),       // next line's leading space
+		]
+
+		for item in cases {
+			let outcome = MarkdownEditSplicer.apply(
+				edit(
+					item.start, item.end, text: "",
+					expected: (source as NSString).substring(
+						with: NSRange(location: item.start, length: item.end - item.start)),
+					caret: item.start),
+				to: source)
+			#expect(applied(outcome)?.0 == item.expected, "range=\(item.start)..<\(item.end)")
+		}
+	}
+
 	@Test func cutConsumesNestedInlineAndLinkSyntax() {
 		let source = "[**Alpha**](https://example.com) Tail"
 		let outcome = MarkdownEditSplicer.apply(

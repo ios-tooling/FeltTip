@@ -190,6 +190,32 @@ enum MarkdownEditSplicer {
 		// renderer strips that whitespace, and a stamped run whose text has lost
 		// characters the source still has no longer addresses its own offset.
 		var spliceRange = range
+		if edit.crossRun, replacement.isEmpty, !edit.selected,
+		   range.length > 0 {
+			let deleted = text.substring(with: range) as NSString
+			let containsLineBreak = (0..<deleted.length).contains {
+				let unit = deleted.character(at: $0)
+				return unit == 0x0A || unit == 0x0D
+			}
+			if containsLineBreak {
+				var preservedPrefix = 0
+				while preservedPrefix < deleted.length {
+					let unit = deleted.character(at: preservedPrefix)
+					guard unit == 0x20 || unit == 0x09 else { break }
+					preservedPrefix += 1
+				}
+				if preservedPrefix > 0 {
+					// A trailing space before a soft wrap is not represented by a
+					// stamped DOM run. Backspace at the following visual line start
+					// therefore reports it together with the paragraph separator.
+					// Keep that pre-existing whitespace and remove only the break.
+					spliceRange = NSRange(
+						location: range.location + preservedPrefix,
+						length: range.length - preservedPrefix)
+					caret = spliceRange.location
+				}
+			}
+		}
 		if edit.blockStartBreak {
 			guard range.length == 0, replacement == "\n\n",
 				  let lineStart = verifiedBlockStart(

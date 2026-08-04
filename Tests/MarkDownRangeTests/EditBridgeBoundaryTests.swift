@@ -32,6 +32,30 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
+	@Test func backspaceAfterEnterAtSoftWrapBoundaryPreservesTheSpace() async throws {
+		let source = "Alpha Beta\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		// Force the first paragraph to wrap at its existing space, matching the
+		// user route: the caret sits before "Beta" at the start of a visual line.
+		try await harness.run("document.querySelector('p').style.width = '60px'")
+		try await harness.batch([
+			"window.__mdPlaceCaret(6)",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "Alpha \n\nBeta\n\nTail")
+
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('delete')")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == source)
+		try await harness.waitQuiescent()
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches.isEmpty, "stamp mismatches: \(mismatches)")
+	}
+
 	@Test func boldToggleAtRunBoundaryKeepsNeighbors() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "plain **bold** tail")
 		// Select "plain" (offsets 0-5) and bold it; the existing bold run
