@@ -135,15 +135,27 @@ public enum MarkdownBlockParser {
 		// any document that opens with `---` followed by prose is silently
 		// devoured as "frontmatter" up to the next `---`.
 		var pairs: [(key: String, value: String)] = []
-		for i in 1..<end {
+		var i = 1
+		while i < end {
 			let line = lines[i]
 			let stripped = line.trimmingCharacters(in: .whitespaces)
-			if stripped.isEmpty { continue }
-			if line.first?.isWhitespace == true, !pairs.isEmpty { continue }
+			if stripped.isEmpty { i += 1; continue }
+			if line.first?.isWhitespace == true, !pairs.isEmpty { i += 1; continue }
 			guard let colonIdx = line.firstIndex(of: ":") else { return (nil, markdown, 0, nil) }
 			let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
 			guard isValidFrontmatterKey(key) else { return (nil, markdown, 0, nil) }
-			let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+			var value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+			i += 1
+			if let scalar = FrontmatterBlockScalar(indicator: value) {
+				let contentStart = i
+				while i < end {
+					let continuation = lines[i]
+					if !continuation.trimmingCharacters(in: .whitespaces).isEmpty,
+					   continuation.first?.isWhitespace != true { break }
+					i += 1
+				}
+				value = scalar.render(Array(lines[contentStart..<i]))
+			}
 			pairs.append((key, value))
 		}
 		guard !pairs.isEmpty else { return (nil, markdown, 0, nil) }

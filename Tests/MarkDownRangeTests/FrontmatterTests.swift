@@ -96,6 +96,41 @@ import Testing
 		#expect(pairs[1].key == "title")
 	}
 
+	@Test func foldedBlockScalarIsParsed() {
+		let md = """
+		---
+		description: >-
+		  First line
+		  continues here.
+
+		  Second paragraph.
+		title: Post
+		---
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .frontmatter(let pairs, _)? = blocks.first else {
+			Issue.record("Expected frontmatter"); return
+		}
+		#expect(pairs[0].key == "description")
+		#expect(pairs[0].value == "First line continues here.\nSecond paragraph.")
+		#expect(pairs[1].value == "Post")
+	}
+
+	@Test func literalBlockScalarPreservesLineBreaksAndClips() {
+		let md = """
+		---
+		note: |
+		  First line
+		  Second line
+		---
+		"""
+		let blocks = MarkdownBlockParser.parse(md)
+		guard case .frontmatter(let pairs, _)? = blocks.first else {
+			Issue.record("Expected frontmatter"); return
+		}
+		#expect(pairs[0].value == "First line\nSecond line\n")
+	}
+
 	@Test func emptyFenceRejected() {
 		let blocks = MarkdownBlockParser.parse("---\n\n---")
 		let hasFrontmatter = blocks.contains { if case .frontmatter = $0 { return true }; return false }

@@ -255,17 +255,20 @@ extension MarkdownWebView.Coordinator {
 		requestID: Int,
 		to webView: WKWebView
 	) {
-		let object: Any = preview.map {
-			[
-				"filename": $0.filename,
-				"pairs": $0.pairs.map { ["key": $0.key, "value": $0.value] }
-			]
-		} ?? NSNull()
-		guard let data = try? JSONSerialization.data(withJSONObject: object),
-		      let json = String(data: data, encoding: .utf8) else { return }
+		guard let json = Self.linkPreviewJSON(preview) else { return }
 		webView.evaluateJavaScript(
 			"window.__mdShowLinkPreview && window.__mdShowLinkPreview(\(requestID), \(json));",
 			completionHandler: nil)
+	}
+
+	static func linkPreviewJSON(_ preview: MarkdownLinkPreview?) -> String? {
+		guard let preview else { return "null" }
+		let object: [String: Any] = [
+			"filename": preview.filename,
+			"pairs": preview.pairs.map { ["key": $0.key, "value": $0.value] }
+		]
+		guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+		return String(data: data, encoding: .utf8)
 	}
 
 	/// The clipboard's plain text, with line endings normalized. Nil when there

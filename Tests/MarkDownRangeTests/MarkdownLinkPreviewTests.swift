@@ -13,7 +13,7 @@ struct MarkdownLinkPreviewTests {
 		try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 		defer { try? FileManager.default.removeItem(at: folder) }
 		let file = folder.appending(path: "linked note.md")
-		try "---\ntitle: Linked note\ntags: [swift, macOS]\n---\n\n# Body".write(to: file, atomically: true, encoding: .utf8)
+		try "---\ntitle: Linked note\ndescription: >-\n  A folded\n  description.\ntags: [swift, macOS]\n---\n\n# Body".write(to: file, atomically: true, encoding: .utf8)
 
 		let policy = LocalResourceAccessPolicy()
 		policy.setRoot(folder)
@@ -21,8 +21,8 @@ struct MarkdownLinkPreviewTests {
 		let preview = await MarkdownLinkPreviewLoader.load(requestURL: request, accessPolicy: policy)
 
 		#expect(preview?.filename == "linked note.md")
-		#expect(preview?.pairs.map(\.key) == ["title", "tags"])
-		#expect(preview?.pairs.map(\.value) == ["Linked note", "[swift, macOS]"])
+		#expect(preview?.pairs.map(\.key) == ["title", "description", "tags"])
+		#expect(preview?.pairs.map(\.value) == ["Linked note", "A folded description.", "[swift, macOS]"])
 	}
 
 	@Test("Returns no preview when frontmatter is absent")
@@ -78,6 +78,11 @@ struct MarkdownLinkPreviewTests {
 
 @Suite(.serialized) @MainActor
 struct MarkdownLinkPreviewIntegrationTests {
+	@Test("Missing frontmatter serializes as JavaScript null")
+	func missingFrontmatterResponse() {
+		#expect(MarkdownWebView.Coordinator.linkPreviewJSON(nil) == "null")
+	}
+
 	@Test("Hovering a rendered local link displays its frontmatter card")
 	func hoverDisplaysCard() async throws {
 		let folder = FileManager.default.temporaryDirectory
