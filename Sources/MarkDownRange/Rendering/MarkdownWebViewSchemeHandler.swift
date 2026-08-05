@@ -24,7 +24,28 @@ final class LocalResourceAccessPolicy: @unchecked Sendable {
 	}
 
 	func authorizedFileURL(for requestURL: URL) -> URL? {
-		guard requestURL.host == "res" else { return nil }
+		guard let candidate = authorizedCandidate(for: requestURL) else { return nil }
+		guard let type = UTType(filenameExtension: candidate.pathExtension),
+			  type.conforms(to: .image)
+				|| type.conforms(to: .audiovisualContent)
+				|| type.conforms(to: .font)
+		else { return nil }
+		guard let size = try? candidate.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+			  size <= Self.maximumResourceBytes else { return nil }
+		return candidate
+	}
+
+	func authorizedMarkdownURL(for requestURL: URL) -> URL? {
+		guard let candidate = authorizedCandidate(for: requestURL),
+		      MarkdownLinkExtensions.all.contains(candidate.pathExtension.lowercased())
+		else { return nil }
+		return candidate
+	}
+
+	private func authorizedCandidate(for requestURL: URL) -> URL? {
+		let isResourceURL = requestURL.scheme == MarkdownWebView.resourceScheme
+			&& requestURL.host == "res"
+		guard isResourceURL || requestURL.isFileURL else { return nil }
 		lock.lock()
 		let root = root
 		lock.unlock()
@@ -35,13 +56,6 @@ final class LocalResourceAccessPolicy: @unchecked Sendable {
 		guard candidate.path == rootPath
 			|| candidate.path.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/")
 		else { return nil }
-		guard let type = UTType(filenameExtension: candidate.pathExtension),
-			  type.conforms(to: .image)
-				|| type.conforms(to: .audiovisualContent)
-				|| type.conforms(to: .font)
-		else { return nil }
-		guard let size = try? candidate.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-			  size <= Self.maximumResourceBytes else { return nil }
 		return candidate
 	}
 }

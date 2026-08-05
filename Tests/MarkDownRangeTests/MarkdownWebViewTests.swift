@@ -3,6 +3,18 @@ import Testing
 
 #if os(macOS)
 @Suite struct MarkdownWebViewTests {
+	@Test @MainActor func linkPreviewScriptTargetsOnlyLocalMarkdown() {
+		let script = MarkdownWebView.Coordinator.linkPreviewScript
+		#expect(script.contains("type: 'previewLink'"))
+		#expect(script.contains("url.protocol !== 'markerlocalres:' && url.protocol !== 'file:'"))
+		#expect(script.contains("window.__mdShowLinkPreview"))
+		#expect(script.contains("model.pairs.slice(0, 8)"))
+		#expect(!script.contains("{{MARKDOWN_EXTENSIONS}}"))
+		for ext in MarkdownLinkExtensions.all {
+			#expect(script.contains("\"\(ext)\""))
+		}
+	}
+
 	@Test @MainActor func editorScriptAddsOpenButtonsForLinks() {
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("installLinkOpenButtons();"))

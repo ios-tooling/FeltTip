@@ -101,6 +101,21 @@ extension MarkdownWebView.Coordinator {
 			}
 			return
 		}
+		if body["type"] as? String == "previewLink" {
+			guard let href = body["href"] as? String,
+			      let requestURL = URL(string: href),
+			      let requestID = body["requestID"] as? Int,
+			      let accessPolicy = localResourceAccessPolicy else { return }
+			linkPreviewTask?.cancel()
+			linkPreviewTask = Task { @MainActor [weak self, weak webView] in
+				let preview = await MarkdownLinkPreviewLoader.load(
+					requestURL: requestURL, accessPolicy: accessPolicy)
+				guard let self, let webView, !Task.isCancelled else { return }
+				self.linkPreviewTask = nil
+				self.sendLinkPreview(preview, requestID: requestID, to: webView)
+			}
+			return
+		}
 		// Task-list checkbox click (QuickLook): map index → source and write.
 		if body["type"] as? String == "checkbox" {
 			guard let index = body["index"] as? Int,
@@ -233,6 +248,24 @@ extension MarkdownWebView.Coordinator {
 			log("REJECTED at matching rev \(currentRev): \(reason)")
 			resync(caretAt: min(max(0, edit.start), (source as NSString).length))
 		}
+	}
+
+	private func sendLinkPreview(
+		_ preview: MarkdownLinkPreview?,
+		requestID: Int,
+		to webView: WKWebView
+	) {
+		let object: Any = preview.map {
+			[
+				"filename": $0.filename,
+				"pairs": $0.pairs.map { ["key": $0.key, "value": $0.value] }
+			]
+		} ?? NSNull()
+		guard let data = try? JSONSerialization.data(withJSONObject: object),
+		      let json = String(data: data, encoding: .utf8) else { return }
+		webView.evaluateJavaScript(
+			"window.__mdShowLinkPreview && window.__mdShowLinkPreview(\(requestID), \(json));",
+			completionHandler: nil)
 	}
 
 	/// The clipboard's plain text, with line endings normalized. Nil when there

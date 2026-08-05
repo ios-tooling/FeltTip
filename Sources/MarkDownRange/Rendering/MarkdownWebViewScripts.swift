@@ -11,6 +11,10 @@
 import AppKit
 
 extension MarkdownWebView.Coordinator {
+	/// Installed for every rendered page. Local Markdown links ask the host for
+	/// bounded frontmatter metadata and render it beside the hovered link.
+	static let linkPreviewScript = MarkdownWebViewScripts.linkPreviewScript
+
 	/// Injected when a checkbox-toggle callback is wired (QuickLook). Reports a
 	/// task-list checkbox click — by its `data-cb` document-wide index — so the
 	/// host can rewrite the source. Works whether or not the page is editable.
@@ -41,6 +45,12 @@ enum MarkdownWebViewScripts {
 		.replacingOccurrences(of: "{{LINK_ICON_CSS}}", with: linkOpenButtonIconCSS)
 		.replacingOccurrences(of: "{{LINK_ICON_DATA_URI}}", with: linkOpenButtonIconDataURI ?? "")
 		.replacingOccurrences(of: "{{LINK_ICON_CLASS}}", with: linkOpenButtonHasIcon ? " has-symbol-icon" : "")
+
+	static let linkPreviewScript: String = load("LinkPreviewScript")
+		.replacingOccurrences(
+			of: "{{MARKDOWN_EXTENSIONS}}",
+			with: (try? String(data: JSONSerialization.data(
+				withJSONObject: MarkdownLinkExtensions.all.sorted()), encoding: .utf8)) ?? "[]")
 
 	private static var linkOpenButtonHasIcon: Bool {
 		linkOpenButtonIconDataURI != nil

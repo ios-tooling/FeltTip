@@ -92,6 +92,7 @@ extension MarkdownWebView {
 		/// the task as well as advancing the generation, so cancellable render
 		/// stages can stop consuming CPU instead of merely dropping their result.
 		var renderTask: Task<Void, Never>?
+		var linkPreviewTask: Task<Void, Never>?
 		/// Serialize renders for this document without forcing unrelated
 		/// windows through one process-wide queue. A huge background document
 		/// must not head-of-line block a small edit in the active window.
@@ -126,6 +127,7 @@ extension MarkdownWebView {
 		deinit {
 			pendingSwap?.cancel()
 			renderTask?.cancel()
+			linkPreviewTask?.cancel()
 			for scope in openedLinkAccessScopes {
 				scope.stopAccessingSecurityScopedResource()
 			}

@@ -262,7 +262,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// to it; `LocalResourceSchemeHandler` reads the files and serves the bytes.
 	/// `WKWebView.loadHTMLString` refuses to load `file://` subresources, so a
 	/// scheme handler is the supported way to show local images.
-	static let resourceScheme = "markerlocalres"
+	nonisolated static let resourceScheme = "markerlocalres"
 
 	public func makeNSView(context: Context) -> MarkdownWebViewFindHost {
 		let config = WKWebViewConfiguration()
@@ -275,6 +275,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 		// didFinish followed by several evaluateJavaScript round trips.
 		config.userContentController.addUserScript(WKUserScript(
 			source: Coordinator.scrollSyncScript, injectionTime: .atDocumentEnd,
+			forMainFrameOnly: true))
+		config.userContentController.addUserScript(WKUserScript(
+			source: Coordinator.linkPreviewScript, injectionTime: .atDocumentEnd,
 			forMainFrameOnly: true))
 		if onCheckboxToggle != nil {
 			config.userContentController.addUserScript(WKUserScript(
