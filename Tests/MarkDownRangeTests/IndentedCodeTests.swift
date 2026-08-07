@@ -7,7 +7,7 @@ import Testing
 		let blocks = MarkdownBlockParser.parse(md)
 		let codeBlocks = blocks.filter { if case .codeBlock = $0 { return true }; return false }
 		#expect(codeBlocks.count == 1)
-		if case .codeBlock(let code, let lang, _) = codeBlocks.first {
+		if case .codeBlock(let code, let lang, _, _) = codeBlocks.first {
 			#expect(code.contains("code line 1"))
 			#expect(code.contains("code line 2"))
 			#expect(lang == nil, "Indented code blocks have no language")
@@ -28,7 +28,7 @@ import Testing
 		```
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, let lang, _) = blocks.first else {
+		guard case .codeBlock(let code, let lang, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(code.contains("let x = 1"))
@@ -40,7 +40,7 @@ import Testing
 		let blocks = MarkdownBlockParser.parse(md)
 		let codeBlocks = blocks.filter { if case .codeBlock = $0 { return true }; return false }
 		#expect(codeBlocks.count == 1)
-		if case .codeBlock(let code, _, _) = codeBlocks.first {
+		if case .codeBlock(let code, _, _, _) = codeBlocks.first {
 			#expect(code.contains("  line 2 indented"), "Extra indentation should be preserved")
 		}
 	}

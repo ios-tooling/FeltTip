@@ -76,22 +76,40 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
-	@Test func typingInsideAFencedCodeBlockIsRefusedByTheReadOnlyIsland() async throws {
-		// Code blocks are contentEditable=false islands: the caret can't land
-		// inside, so no keystroke can splice into text whose DOM form isn't
-		// verbatim source.
+	@Test func typingInsideAFencedCodeBlockSplicesTheVerbatimSource() async throws {
 		let fenced = "text\n\n```\nlet x = 1\n```\n"
 		let harness = try await CoordinatorBridgeHarness(source: fenced)
-		#expect(try await harness.evaluate("document.querySelector('pre').contentEditable") == "false")
-		try await harness.run("""
-			var pre = document.querySelector('pre');
-			var sel = window.getSelection(), r = document.createRange();
-			r.selectNodeContents(pre); r.collapse(true);
-			sel.removeAllRanges(); sel.addRange(r);
-			document.execCommand('insertText', false, 'Z');
-			""")
-		try await Task.sleep(for: .milliseconds(250))
-		#expect(harness.source == fenced)
+		#expect(try await harness.evaluate("document.querySelector('pre').contentEditable") != "false")
+		try await harness.type("Z", at: 13)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "text\n\n```\nletZ x = 1\n```\n")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func typingIntoAnEmptyFencedCodeBlockCreatesItsFirstCharacter() async throws {
+		let fenced = "```\n\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: fenced)
+		try await harness.type("X", at: 4)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "```\nX\n```\n")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func returnInsideAFencedCodeBlockInsertsASourceNewline() async throws {
+		let fenced = "```swift\nlet value = 1\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: fenced)
+		try await harness.batch([
+			"window.__mdPlaceCaret(14)",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "```swift\nlet v\nalue = 1\n```\n")
+		try await harness.waitQuiescent()
+		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
 		#expect(try await harness.stampMismatches() == [])
 	}

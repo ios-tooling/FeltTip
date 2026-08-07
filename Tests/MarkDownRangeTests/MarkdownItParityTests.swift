@@ -55,7 +55,7 @@ import Testing
 
 	@Test func commonMark_fencedCodeBlock() {
 		let blocks = MarkdownBlockParser.parse("```swift\nlet x = 1\n```")
-		guard case .codeBlock(let code, let language, _) = blocks.first else {
+		guard case .codeBlock(let code, let language, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(language == "swift")
@@ -64,7 +64,7 @@ import Testing
 
 	@Test func commonMark_indentedCodeBlock() {
 		let blocks = MarkdownBlockParser.parse("    let x = 1\n    let y = 2")
-		guard case .codeBlock(let code, _, _) = blocks.first else {
+		guard case .codeBlock(let code, _, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(code.contains("let x = 1"))

@@ -17,7 +17,7 @@ extension MarkdownHTMLRenderer {
 		case .paragraph(let content, _, _):
 			return "<p>\(renderInline(content))</p>"
 
-		case .codeBlock(let code, let language, _):
+		case .codeBlock(let code, let language, let sourceOffset, _):
 			let isMermaid = language?.lowercased() == "mermaid"
 			// Export pre-renders mermaid to self-contained diagram markup (inline
 			// SVG, or an <img> for DOCX/rich text); emit that instead of the raw
@@ -29,7 +29,11 @@ extension MarkdownHTMLRenderer {
 			// Syntax-highlight server-side so the webview / QuickLook / export
 			// paths get colored code without bundling a JS highlighter. Mermaid
 			// keeps its raw source untouched (a diagram engine consumes it).
-			let body = isMermaid ? escape(code) : Tokenizer.highlightedHTML(code, escape: { escape($0) })
+			var body = isMermaid ? escape(code) : Tokenizer.highlightedHTML(code, escape: { escape($0) })
+			if emitSourceOffsets, let sourceOffset {
+				if body.isEmpty { body = "<br>" }
+				body = "<span data-s=\"\(sourceOffset)\">\(body)</span>"
+			}
 			return "<pre><code\(classAttr)>\(body)</code></pre>"
 
 		case .blockquote(let children, _):

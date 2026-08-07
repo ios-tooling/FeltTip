@@ -170,6 +170,51 @@ struct SourceOffsetConverter {
 		return verbatimSourceOffset(processedOffset: paddedStart, length: renderedUTF16.count)
 	}
 
+	/// Fenced code nodes report a range that includes their opening and closing
+	/// fences. Locate the rendered code inside that range, and stamp it only
+	/// when it is one exact, unambiguous source slice. Indented fences whose
+	/// content is normalized therefore remain deliberately unmapped.
+	func verbatimBlockCodeUTF16Offset(
+		lowerLine: Int,
+		lowerColumn: Int,
+		upperLine: Int,
+		upperColumn: Int,
+		rendered: String
+	) -> Int? {
+		guard let pLow = processedUTF16(line: lowerLine, column: lowerColumn),
+			  let pUp = processedUTF16(line: upperLine, column: upperColumn),
+			  pLow >= 0, pUp <= processedUTF16.count, pUp >= pLow else { return nil }
+		let renderedUTF16 = Array(rendered.utf16)
+		// The ordinary fenced form begins verbatim immediately after its opener.
+		// Prefer that deterministic boundary, which also handles blank code whose
+		// lone newline occurs elsewhere in the node's closing syntax.
+		if let openerEnd = processedUTF16[pLow..<pUp].firstIndex(of: 0x0A) {
+			let contentStart = openerEnd + 1
+			let contentEnd = contentStart + renderedUTF16.count
+			if contentEnd <= pUp,
+			   processedUTF16[contentStart..<contentEnd].elementsEqual(renderedUTF16),
+			   let offset = verbatimSourceOffset(processedOffset: contentStart, length: renderedUTF16.count) {
+				return offset
+			}
+		}
+		if renderedUTF16.isEmpty {
+			guard let newline = processedUTF16[pLow..<pUp].firstIndex(of: 0x0A) else { return nil }
+			return verbatimSourceOffset(processedOffset: newline + 1, length: 0)
+		}
+		guard pUp - pLow >= renderedUTF16.count else { return nil }
+		var match: Int?
+		for candidate in pLow...(pUp - renderedUTF16.count) {
+			guard processedUTF16[candidate..<(candidate + renderedUTF16.count)]
+				.elementsEqual(renderedUTF16),
+				  verbatimSourceOffset(processedOffset: candidate, length: renderedUTF16.count) != nil else { continue }
+			if match != nil { return nil }
+			match = candidate
+		}
+		return match.flatMap {
+			verbatimSourceOffset(processedOffset: $0, length: renderedUTF16.count)
+		}
+	}
+
 	private func verbatimSourceOffset(processedOffset: Int, length: Int) -> Int? {
 		if let map {
 			guard processedOffset + length <= map.count else { return nil }

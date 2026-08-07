@@ -76,7 +76,7 @@ import Foundation
 		```
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, _, _) = blocks.first else {
+		guard case .codeBlock(let code, _, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock, got \(blocks)"); return
 		}
 		#expect(code.contains("www.example.com"))

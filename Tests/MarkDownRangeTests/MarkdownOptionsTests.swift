@@ -66,7 +66,7 @@ import Testing
 		let blocks = MarkdownBlockParser.parse(input, options: options)
 		// The code block must keep `##Inside` verbatim — only the outside line
 		// becomes a heading.
-		guard case .codeBlock(let code, _, _) = blocks.first else {
+		guard case .codeBlock(let code, _, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock first"); return
 		}
 		#expect(code.contains("##Inside"))

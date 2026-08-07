@@ -109,6 +109,137 @@ import Testing
 			sourceLocation: sourceLocation)
 	}
 
+	@Test func backspaceDeletesASelectionInsideAFencedCodeBlock() async throws {
+		let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+		let selected = "value = 1"
+		let range = (source as NSString).range(of: selected)
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("window.__mdPlaceCaret(\(range.location), \(range.length))")
+		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "```swift\nlet \nprint(value)\n```\n")
+		try await assertHealthy(harness)
+	}
+
+	@Test func backspaceDeletesAWholeCodeDOMSelection() async throws {
+		let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			var code = document.querySelector('pre code')
+			var range = document.createRange()
+			range.selectNodeContents(code)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "```swift\n```\n")
+		try await assertHealthy(harness)
+	}
+
+	@Test func backspaceUsesTheLiveCodeSelectionWhenWebKitReportsACollapsedTarget() async throws {
+		let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			var code = document.querySelector('pre code')
+			var selected = document.createRange()
+			selected.selectNodeContents(code)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(selected)
+			var target = selected.cloneRange()
+			target.collapse(true)
+			var event = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentBackward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(event, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(event)
+			if (allowed) {
+			  selected.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentBackward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "```swift\n```\n")
+		try await assertHealthy(harness)
+	}
+
+	@Test func physicalDeleteKeysClearAWholeFencedCodeSelectionWithoutBeeping() async throws {
+		for key in ["Backspace", "Delete"] {
+			let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.run("""
+				var code = document.querySelector('pre code')
+				var range = document.createRange()
+				range.selectNodeContents(code)
+				var selection = window.getSelection()
+				selection.removeAllRanges()
+				selection.addRange(range)
+				var keyEvent = new KeyboardEvent('keydown', {
+				  key: '\(key)', bubbles: true, cancelable: true
+				})
+				window.__deleteKeyHandled = !document.dispatchEvent(keyEvent)
+				""")
+			#expect(try await harness.evaluate("window.__deleteKeyHandled ? 'yes' : 'no'") == "yes", "key=\(key)")
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == "```swift\n```\n", "key=\(key)")
+			try await assertHealthy(harness)
+		}
+	}
+
+	@Test func physicalDeleteStillWorksAfterHostUndoRestoresTheCodeBlock() async throws {
+		let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		func selectAndDelete() async throws {
+			try await harness.run("""
+				var code = document.querySelector('pre code')
+				var range = document.createRange()
+				range.selectNodeContents(code)
+				var selection = window.getSelection()
+				selection.removeAllRanges()
+				selection.addRange(range)
+				document.dispatchEvent(new KeyboardEvent('keydown', {
+				  key: 'Backspace', bubbles: true, cancelable: true
+				}))
+				""")
+		}
+
+		try await selectAndDelete()
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "```swift\n```\n")
+		try await harness.waitQuiescent()
+
+		// Emulate Marker undo: restore the prior source with a token-gated caret,
+		// re-render, then make a fresh mouse-like selection and delete again.
+		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.coordinator.parent = MarkdownWebView(text: source, theme: .default, fontSize: 14)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 9, token: 1))
+			.onSourceEdit { [weak harness] newText, _ in harness?.recordExternalEdit(newText) }
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		harness.rewireRoundTrip()
+		let resyncsAfterUndo = harness.coordinator.resyncCount
+		let rejectionsAfterUndo = harness.coordinator.hardRejections
+
+		try await selectAndDelete()
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "```swift\n```\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == resyncsAfterUndo)
+		#expect(harness.coordinator.hardRejections == rejectionsAfterUndo)
+	}
+
 	@Test func replacingSelectionsWorksInBothDirectionsAcrossEveryMajorGeometry() async throws {
 		let cases = [
 			EditCase(

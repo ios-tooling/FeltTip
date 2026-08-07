@@ -369,7 +369,7 @@ private enum InstantAttributedRenderer {
 			appendList(items, ordered: true, start: start, to: output, theme: theme, fontSize: fontSize, depth: depth)
 		case .unorderedList(let items, _):
 			appendList(items, ordered: false, start: 1, to: output, theme: theme, fontSize: fontSize, depth: depth)
-		case .codeBlock(let code, let language, _):
+		case .codeBlock(let code, let language, _, _):
 			appendPlain((language.map { "\($0)\n" } ?? "") + code, to: output, font: .monospacedSystemFont(ofSize: fontSize * 0.9, weight: .regular), color: NSColor(theme.codeForeground), background: NSColor(theme.codeBackground))
 			terminate(output, spacingBefore: 10, spacingAfter: 12)
 		case .table(let header, let rows, _, _):

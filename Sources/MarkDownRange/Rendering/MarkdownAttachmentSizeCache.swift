@@ -47,7 +47,7 @@ public final class MarkdownAttachmentSizeCache {
 
 	private static func structuralKind(for block: MarkdownBlock) -> String? {
 		switch block {
-		case .codeBlock(let code, let lang, _):
+		case .codeBlock(let code, let lang, _, _):
 			let lineCount = code.split(separator: "\n", omittingEmptySubsequences: false).count
 			// Hash the content, not just the shape: two blocks with the same line
 			// count can still wrap to different heights, so keying on shape alone

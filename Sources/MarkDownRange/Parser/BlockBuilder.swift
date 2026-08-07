@@ -233,7 +233,17 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitCodeBlock(_ codeBlock: CodeBlock) {
-		blocks.append(.codeBlock(code: codeBlock.code, language: codeBlock.language, id: nextID()))
+		let sourceOffset: Int?
+		if let converter = sourceConverter, let range = codeBlock.range {
+			sourceOffset = converter.verbatimBlockCodeUTF16Offset(
+				lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
+				upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
+				rendered: codeBlock.code)
+		} else {
+			sourceOffset = nil
+		}
+		blocks.append(.codeBlock(code: codeBlock.code, language: codeBlock.language,
+							 sourceOffset: sourceOffset, id: nextID()))
 	}
 
 	mutating func visitBlockQuote(_ blockQuote: BlockQuote) {

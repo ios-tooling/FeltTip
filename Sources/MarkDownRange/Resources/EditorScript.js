@@ -16,6 +16,7 @@
   // in-place cell edits splice normally — only the structural hazards
   // (Enter mid-row; deletes that would eat a pipe) are vetoed downstream.
   document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+    if (el.tagName === 'PRE' && el.querySelector('[data-s]')) return;
     el.contentEditable = 'false';
   });
   // Edits awaiting their `input` event, oldest first. A QUEUE, not a slot:
@@ -578,8 +579,10 @@
   }
   function readOnlyIslandOf(node) {
     var el = node && node.nodeType === 3 ? node.parentNode : node;
-    return el && el.closest
+    var island = el && el.closest
       ? el.closest('pre, .alert, details, .frontmatter, img, hr') : null;
+    return island && island.tagName === 'PRE' && island.querySelector('[data-s]')
+      ? null : island;
   }
   function selectionTouchesReadOnlyIsland() {
     var selection = window.getSelection();
@@ -587,9 +590,39 @@
     var range = selection.getRangeAt(0);
     var islands = document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr');
     for (var i = 0; i < islands.length; i++) {
+      if (islands[i].tagName === 'PRE' && islands[i].querySelector('[data-s]')) {
+        // A stamped code block is editable internally, but its hidden fences
+        // still make a selection crossing the PRE boundary structurally
+        // unmappable. Only a selection wholly inside this PRE may proceed.
+        if (islands[i].contains(range.startContainer) &&
+            islands[i].contains(range.endContainer)) continue;
+      }
       try { if (range.intersectsNode(islands[i])) return true; } catch (e) {}
     }
     return false;
+  }
+  function deleteSelectedCodeRange(range) {
+    var startPos = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPos = normalizePosition(range.endContainer, range.endOffset, false);
+    var start = sourceOffsetOf(startPos.node, startPos.offset);
+    var end = sourceOffsetOf(endPos.node, endPos.offset);
+    if (start == null || end == null || end < start) return false;
+    var startSpan = spanOf(startPos.node, startPos.offset);
+    var endSpan = spanOf(endPos.node, endPos.offset);
+    var ownsStampedRun = startSpan &&
+      (!startSpan.contains(range.startContainer) ||
+       !startSpan.contains(range.endContainer));
+    var crossRun = startSpan !== endSpan || !!ownsStampedRun;
+    freeze();
+    post({ start: start, end: end, text: '', expected: plain(rangeText(range)),
+           crossRun: crossRun, selected: true,
+           before: contextBefore(startPos.node, startPos.offset),
+           after: contextAfter(endPos.node, endPos.offset),
+           syntaxStart: selectedSyntaxBoundaries(range, true),
+           syntaxEnd: selectedSyntaxBoundaries(range, false),
+           blockPrefixes: selectedBlockPrefixes(range),
+           caret: start, rev: stampRev, seq: seq++ });
+    return true;
   }
   function post(msg) { window.webkit.messageHandlers.mdedit.postMessage(msg); }
   function installLinkOpenButtons() {
@@ -782,9 +815,10 @@
     var tags = [];
     while (element && element !== document.body) {
       var tag = element.tagName ? element.tagName.toLowerCase() : '';
+      var isInlineCode = tag === 'code' && !element.closest('pre');
       if (tag === 'strong' || tag === 'em' || tag === 'u' || tag === 'del' ||
           tag === 'mark' || tag === 'sup' || tag === 'sub' ||
-          tag === 'code' || tag === 'a') {
+          isInlineCode || tag === 'a') {
         var relative = textOffsetWithin(element, node, offset);
         if (relative != null &&
             (atStart ? relative === 0 : relative === textLength(element))) {
@@ -868,6 +902,29 @@
   };
 
   document.addEventListener('keydown', function (event) {
+    // WebKit can decline the native Delete command (and AppKit emits the
+    // system beep) when a mouse selection owns PRE/CODE element boundaries,
+    // even though the block is content-editable. Route either physical delete
+    // key through execCommand while the live selection is wholly contained in
+    // one source-stamped code block. Its beforeinput event then follows the
+    // same verified source splice as every other selected deletion.
+    if ((event.key === 'Backspace' || event.key === 'Delete') && !event.isComposing) {
+      var deleteSelection = window.getSelection();
+      if (deleteSelection && deleteSelection.rangeCount && !deleteSelection.isCollapsed) {
+        var deleteRange = deleteSelection.getRangeAt(0);
+        var deleteStart = deleteRange.startContainer.nodeType === 1
+          ? deleteRange.startContainer : deleteRange.startContainer.parentNode;
+        var deletePre = deleteStart && deleteStart.closest ? deleteStart.closest('pre') : null;
+        if (deletePre && deletePre.querySelector('[data-s]') &&
+            deletePre.contains(deleteRange.endContainer)) {
+          if (deleteSelectedCodeRange(deleteRange)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+        }
+      }
+    }
     if (event.key !== 'Enter' || !event.metaKey ||
         event.shiftKey || event.altKey || event.ctrlKey) return;
     if (window.__mdInsertListItem()) {
@@ -902,6 +959,20 @@
       if (commandSel && commandSel.rangeCount) { range = commandSel.getRangeAt(0); }
     }
     if (!range) { e.preventDefault(); return; }
+    // Physical Backspace can expose a collapsed StaticRange even though the
+    // live selection is extended (notably at PRE/CODE element boundaries).
+    // A selected deletion acts on that live selection, just like Cut; using
+    // the collapsed target would mirror a no-op while WebKit removes the DOM.
+    var deleting = e.inputType === 'deleteContentBackward' ||
+      e.inputType === 'deleteContentForward' ||
+      e.inputType === 'deleteWordBackward' ||
+      e.inputType === 'deleteWordForward' ||
+      e.inputType === 'deleteByCut';
+    var liveDeletionSelection = window.getSelection();
+    if (deleting && liveDeletionSelection && liveDeletionSelection.rangeCount &&
+        !liveDeletionSelection.isCollapsed) {
+      range = liveDeletionSelection.getRangeAt(0);
+    }
     // WebKit truncates a beforeinput target range at contentEditable=false
     // even when the actual selection continues into that island. Inspect the
     // live selection before trusting the shortened target range.
@@ -930,11 +1001,19 @@
     }
     var type = e.inputType, expected = plain(rangeText(range));
     var startSpan = spanOf(startPos.node, startPos.offset);
-    var crossRun = startSpan !== spanOf(endPos.node, endPos.offset);
     // A real selection means the user chose the range — hidden syntax
     // inside it may go. A collapsed caret (block merge) may only remove
     // whitespace; the Swift side enforces the distinction.
     var selected = !window.getSelection().isCollapsed;
+    var endSpan = spanOf(endPos.node, endPos.offset);
+    // Element-boundary selections can own the stamped run itself (for
+    // example selectNodeContents(<code>)). WebKit then removes that wrapper,
+    // so the in-place route cannot keep its data-s stamp alive. Treat it like
+    // a cross-run structural edit and rebuild the stamped DOM from source.
+    var ownsStampedRun = selected && startSpan &&
+      (!startSpan.contains(range.startContainer) ||
+       !startSpan.contains(range.endContainer));
+    var crossRun = startSpan !== endSpan || ownsStampedRun;
     // beforeinput target ranges are non-collapsed for Backspace/Delete even
     // when the live selection is only a caret. Only a real selection gets
     // paragraph-end snapping; otherwise a block merge must keep its native
@@ -1032,9 +1111,12 @@
       // In a list the continuation marker needs the item's own indentation,
       // which only the source knows (the DOM shows nesting as structure, not
       // as leading spaces) — flag it and let the splice prefix it.
+      var enterPre = enterHost && enterHost.closest ? enterHost.closest('pre') : null;
+      var inEditableCode = !!(enterPre && enterPre.querySelector('[data-s]'));
       var listMarker = listItemMarker(range.startContainer);
-      var marker = listMarker || '\n\n';
+      var marker = inEditableCode ? '\n' : (listMarker || '\n\n');
       var blockStartBreak = !listMarker
+        && !inEditableCode
         && isVisualBlockStart(startPos.node, startPos.offset);
       freeze();
       post({ start: start, end: end, text: marker, expected: expected,

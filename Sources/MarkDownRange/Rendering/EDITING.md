@@ -85,6 +85,7 @@ pre-restore source — typing the undo straight back out.
 | Input | Route | Notes |
 | --- | --- | --- |
 | Typing, delete, forward/word delete | in-place | cross-run variants go structural |
+| Typing / Return in fenced code | in-place / structural | mapped only when the rendered code is one exact source slice; Return inserts one source newline and syntax highlighting is preserved after re-render |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
 | Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix and the caret move down with the text |
 | Enter in a table cell | caret move | last row asks the host to append a row |
@@ -101,7 +102,8 @@ pre-restore source — typing the undo straight back out.
 **Not mapped** (blocked, no-ops): drag-and-drop text, list indent/outdent,
 formatting a cross-run selection that intersects hidden inline Markdown syntax,
 selections spanning table cells (their source interval owns pipe delimiters),
-selections whose endpoint touches a declared read-only island,
+selections whose endpoint touches a declared read-only island (including code
+blocks whose rendered content cannot be proven to be a verbatim source slice),
 non-verbatim inline code (for example a code span whose newlines were folded),
 anything else. A blocked input must leave the source untouched and the page
 usable — `EditBridgeUnmappedInputTests` and `EditBridgeMixedSelectionTests`
@@ -185,3 +187,15 @@ metadata that does not match the source is vetoed; it is never used as
 permission to guess. Nested rendered traits may expose a different DOM ancestry
 order than their authored delimiters; the splicer therefore verifies the exact
 declared delimiter set against the source boundary without relying on tag order.
+For a selected deletion the live DOM selection is authoritative: physical
+Backspace may report a collapsed WebKit target range even while that selection
+is extended. Element-boundary selections that own a stamped wrapper take the
+structural route so WebKit cannot delete the `data-s` element out from under the
+fast path. When AppKit/WebKit declines a physical Backspace or Forward Delete at
+a `PRE`/`CODE` boundary (which otherwise produces the system beep), the page's
+keydown handler posts the contained code selection directly through the same
+verified structural deletion route. It does not invoke WebKit's native delete
+command, whose internal undo state can stop dispatching after a host-level undo.
+The `<code>` inside a fenced `<pre>` is excluded from inline-code delimiter
+metadata: its fences are block syntax, not adjacent backticks, and selections
+contained within the stamped code content edit only that content.

@@ -226,6 +226,29 @@ import Testing
 		}
 	}
 
+	@Test func commandXDeletesASelectionInsideAFencedCodeBlock() async throws {
+		let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			var code = document.querySelector('pre code')
+			var range = document.createRange()
+			range.selectNodeContents(code)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+		try await withClearedPasteboard {
+			performResponderCommand("cut", in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(NSPasteboard.general.string(forType: .string)?.contains("let value = 1") == true)
+		}
+		#expect(harness.source == "```swift\n```\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func appKitCutAcrossLazyContinuationAndHTMLBreakUsesTheRealPasteboardRoute() async throws {
 		let source = """
 		2. **Timeline** - route<br />

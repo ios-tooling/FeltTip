@@ -5,7 +5,7 @@ import Testing
 	@Test func fencedCodeBlock() {
 		let md = "```\ncode here\n```"
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, let lang, _) = blocks.first else {
+		guard case .codeBlock(let code, let lang, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(code.contains("code here"))
@@ -15,7 +15,7 @@ import Testing
 	@Test func fencedWithLanguage() {
 		let md = "```swift\nlet x = 1\n```"
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, let lang, _) = blocks.first else {
+		guard case .codeBlock(let code, let lang, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(code.contains("let x = 1"))
@@ -25,7 +25,7 @@ import Testing
 	@Test func fencedWithTildes() {
 		let md = "~~~python\nprint('hi')\n~~~"
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(_, let lang, _) = blocks.first else {
+		guard case .codeBlock(_, let lang, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(lang == "python")
@@ -34,7 +34,7 @@ import Testing
 	@Test func codeBlockPreservesWhitespace() {
 		let md = "```\n  indented\n    more\n```"
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, _, _) = blocks.first else {
+		guard case .codeBlock(let code, _, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(code.contains("  indented"))
@@ -44,7 +44,7 @@ import Testing
 	@Test func codeBlockPreservesBlankLines() {
 		let md = "```\nline1\n\nline3\n```"
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, _, _) = blocks.first else {
+		guard case .codeBlock(let code, _, _, _) = blocks.first else {
 			Issue.record("Expected codeBlock"); return
 		}
 		#expect(code.contains("\n\n"))

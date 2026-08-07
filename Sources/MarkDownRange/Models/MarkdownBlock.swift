@@ -65,7 +65,7 @@ public struct ImageRowItem: Sendable {
 public enum MarkdownBlock: Identifiable, Sendable {
 	case heading(level: Int, content: AttributedString, id: String)
 	case paragraph(content: AttributedString, links: [LinkInfo], id: String)
-	case codeBlock(code: String, language: String?, id: String)
+	case codeBlock(code: String, language: String?, sourceOffset: Int? = nil, id: String)
 	case blockquote(children: [MarkdownBlock], id: String)
 	case orderedList(items: [ListItemContent], start: Int, id: String)
 	case unorderedList(items: [ListItemContent], id: String)
@@ -83,7 +83,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 
 	public var id: String {
 		switch self {
-		case .heading(_, _, let id), .paragraph(_, _, let id), .codeBlock(_, _, let id),
+		case .heading(_, _, let id), .paragraph(_, _, let id), .codeBlock(_, _, _, let id),
 			  .blockquote(_, let id), .orderedList(_, _, let id), .unorderedList(_, let id),
 			  .table(_, _, _, let id), .thematicBreak(let id), .image(_, _, _, _, let id),
 			  .imageRow(_, let id), .figure(_, _, let id), .htmlBlock(_, let id),

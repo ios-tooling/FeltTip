@@ -98,6 +98,12 @@ import Testing
 			minimumRuns: 6)
 	}
 
+	@Test func fencedCodeContentStampsVerbatim() {
+		expectStampsVerbatim(
+			in: "before\n\n```swift\nlet value = 42\nprint(value)\n```\n\nafter",
+			minimumRuns: 3)
+	}
+
 	@Test func sampleReleaseNotesDocumentStampsVerbatim() throws {
 		// A real document: curly quotes and em dashes as literal source
 		// characters, bold runs mid-paragraph, and an emoji (surrogate pair).

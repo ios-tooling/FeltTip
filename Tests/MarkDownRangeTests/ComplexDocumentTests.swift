@@ -111,7 +111,7 @@ import Foundation
 	@Test func specialCharactersInCode() {
 		let md = "```\n<script>alert('xss')</script>\n```"
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .codeBlock(let code, _, _) = blocks.first else { Issue.record("not code"); return }
+		guard case .codeBlock(let code, _, _, _) = blocks.first else { Issue.record("not code"); return }
 		#expect(code.contains("<script>"), "Code blocks should preserve HTML-like content")
 	}
 

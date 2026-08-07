@@ -26,7 +26,7 @@ struct MarkdownMetaWalker {
 		case .paragraph(let content, _, _):
 			collectLinks(in: content)
 
-		case .codeBlock(let code, let language, _):
+		case .codeBlock(let code, let language, _, _):
 			let trimmed = code.trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
 			let lines = trimmed.isEmpty ? 0 : trimmed.components(separatedBy: .newlines).count
 			codeBlocks.append(.init(language: language, lineCount: lines))

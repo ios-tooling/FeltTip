@@ -47,7 +47,7 @@ public enum MarkdownMermaidPrerender {
 		var sources: [String] = []
 		for block in blocks {
 			switch block {
-			case .codeBlock(let code, let language, _):
+			case .codeBlock(let code, let language, _, _):
 				if language?.lowercased() == "mermaid" { sources.append(code) }
 			case .blockquote(let children, _), .details(_, let children, _), .alert(_, let children, _):
 				sources += mermaidSources(in: children)
