@@ -101,6 +101,13 @@ extension MarkdownWebView.Coordinator {
 			}
 			return
 		}
+		if body["type"] as? String == "openImage" {
+			guard let source = body["source"] as? String,
+			      let request = imageRequest(source: source, altText: body["alt"] as? String ?? "")
+			else { return }
+			parent.onOpenImage?(request)
+			return
+		}
 		if body["type"] as? String == "previewLink" {
 			guard let href = body["href"] as? String,
 			      let requestURL = URL(string: href),
@@ -370,6 +377,27 @@ extension MarkdownWebView.Coordinator {
 		lastConfigSignature = configSignature()
 		bumpEpoch()
 		loadHTML(for: source, into: webView)
+	}
+
+	private func imageRequest(source: String, altText: String) -> MarkdownImageRequest? {
+		guard let url = URL(string: source), let scheme = url.scheme?.lowercased() else { return nil }
+		let resolved: URL
+		switch scheme {
+		case MarkdownWebView.resourceScheme, "file":
+			guard let local = localResourceAccessPolicy?.authorizedFileURL(for: url) else { return nil }
+			resolved = local
+		case "http", "https":
+			guard parent.allowsRemoteResources else { return nil }
+			resolved = url
+		case "data":
+			let lower = source.lowercased()
+			guard lower.hasPrefix("data:image/"),
+			      source.utf8.count <= LocalResourceAccessPolicy.maximumResourceBytes * 2 else { return nil }
+			resolved = url
+		default:
+			return nil
+		}
+		return MarkdownImageRequest(url: resolved, altText: String(altText.prefix(512)))
 	}
 }
 #endif

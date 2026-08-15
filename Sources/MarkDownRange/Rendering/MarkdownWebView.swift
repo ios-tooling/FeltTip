@@ -37,6 +37,9 @@ public struct MarkdownWebView: NSViewRepresentable {
 	var isEditable = false
 	var onSourceEdit: ((String, Int?) -> Void)?
 	var onCheckboxToggle: ((Int, Bool) -> Void)?
+	/// Called when the user asks to inspect a sufficiently large rendered image.
+	/// The renderer validates local/remote/data URLs before crossing this seam.
+	var onOpenImage: ((MarkdownImageRequest) -> Void)?
 	/// When true (and not editing), the ~3 MB mermaid engine is embedded inline
 	/// so mermaid code blocks render as diagrams. Off by default — the QuickLook
 	/// extension's sandbox can't load a payload that large (it crashes the
@@ -125,6 +128,14 @@ public struct MarkdownWebView: NSViewRepresentable {
 	public func onCheckboxToggle(_ callback: @escaping (Int, Bool) -> Void) -> Self {
 		var copy = self
 		copy.onCheckboxToggle = callback
+		return copy
+	}
+
+	/// Adds an accessible expand button to large rendered images and enables a
+	/// pinch-out gesture over them. The host decides how to present the image.
+	public func onOpenImage(_ callback: @escaping (MarkdownImageRequest) -> Void) -> Self {
+		var copy = self
+		copy.onOpenImage = callback
 		return copy
 	}
 
@@ -282,6 +293,15 @@ public struct MarkdownWebView: NSViewRepresentable {
 		if onCheckboxToggle != nil {
 			config.userContentController.addUserScript(WKUserScript(
 				source: Coordinator.checkboxScript, injectionTime: .atDocumentEnd,
+				forMainFrameOnly: true))
+		}
+		config.userContentController.addUserScript(WKUserScript(
+			source: Coordinator.imagePresentationScript, injectionTime: .atDocumentEnd,
+			forMainFrameOnly: true))
+		if onOpenImage != nil {
+			config.userContentController.addUserScript(WKUserScript(
+				source: "window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(true);",
+				injectionTime: .atDocumentEnd,
 				forMainFrameOnly: true))
 		}
 		if isEditable {

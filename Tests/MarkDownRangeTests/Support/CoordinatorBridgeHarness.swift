@@ -32,6 +32,7 @@ final class CoordinatorBridgeHarness {
 	let webView: WKWebView
 	private let window: NSWindow
 	private let checkboxToggle: ((Int, Bool) -> Void)?
+	private let openImage: ((MarkdownImageRequest) -> Void)?
 	private let initialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
 	private let preparedInitialRender: MarkdownPreparedWebRender?
 	/// When true, the emulated SwiftUI round-trip is suppressed — the page
@@ -42,15 +43,18 @@ final class CoordinatorBridgeHarness {
 	init(
 		source: String,
 		onCheckboxToggle: ((Int, Bool) -> Void)? = nil,
+		onOpenImage: ((MarkdownImageRequest) -> Void)? = nil,
 		preparedInitialRender: MarkdownPreparedWebRender? = nil,
 		onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)? = nil
 	) async throws {
 		self.source = source
 		self.checkboxToggle = onCheckboxToggle
+		self.openImage = onOpenImage
 		self.preparedInitialRender = preparedInitialRender
 		self.initialRenderProgress = onInitialRenderProgress
 		var view = MarkdownWebView(text: source, theme: .default, fontSize: 14).editable(true)
 		if let onCheckboxToggle { view = view.onCheckboxToggle(onCheckboxToggle) }
+		if let onOpenImage { view = view.onOpenImage(onOpenImage) }
 		if let onInitialRenderProgress {
 			view = view.onInitialRenderProgress(onInitialRenderProgress)
 		}
@@ -102,6 +106,7 @@ final class CoordinatorBridgeHarness {
 				self?.sourceSelectionReportCount += 1
 			}
 		if let checkboxToggle { view = view.onCheckboxToggle(checkboxToggle) }
+		if let openImage { view = view.onOpenImage(openImage) }
 		if let initialRenderProgress {
 			view = view.onInitialRenderProgress(initialRenderProgress)
 		}

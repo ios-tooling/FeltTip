@@ -134,7 +134,7 @@ extension MarkdownWebView {
 		}
 
 		func configSignature() -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.onOpenImage != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
 		}
 
 		/// Advance to a fresh revision epoch. Called whenever the page's DOM is
@@ -543,9 +543,17 @@ extension MarkdownWebView {
 				if parent.onCheckboxToggle != nil {
 					webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
 				}
+				webView.evaluateJavaScript(Self.imagePresentationScript, completionHandler: nil)
 				// Always install scroll reporting / control, even for a read-only
 				// preview, so a host can sync its scroll position to this view.
 				webView.evaluateJavaScript(Self.scrollSyncScript, completionHandler: nil)
+			}
+			let imagePresentationEnabled = parent.onOpenImage != nil ? "true" : "false"
+			webView.evaluateJavaScript(
+				"window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(\(imagePresentationEnabled));"
+			) { [weak self] _, error in
+				if let error { self?.log("image presentation setup failed: \(error)") }
+				else { self?.log("image presentation enabled: \(imagePresentationEnabled)") }
 			}
 			applyLineChanges(to: webView, force: true)
 			if parent.isEditable {

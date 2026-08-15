@@ -35,6 +35,7 @@ public struct WebSplitMarkdownScreen: View {
 	var contentReloadToken: Int
 	var preparedInitialRender: MarkdownPreparedWebRender?
 	var onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
+	var onOpenImage: ((MarkdownImageRequest) -> Void)?
 	/// Forwarded to the web preview so task-list checkboxes stay interactive,
 	/// matching SplitMarkdownScreen (which picks this up from the environment).
 	@Environment(\.onCheckboxToggle) private var onCheckboxToggle
@@ -81,6 +82,13 @@ public struct WebSplitMarkdownScreen: View {
 		self.contentReloadToken = contentReloadToken
 		self.preparedInitialRender = preparedInitialRender
 		self.onInitialRenderProgress = onInitialRenderProgress
+	}
+
+	/// Forwards large-image presentation requests from the rendered pane.
+	public func onOpenImage(_ callback: @escaping (MarkdownImageRequest) -> Void) -> Self {
+		var copy = self
+		copy.onOpenImage = callback
+		return copy
 	}
 
 	#if os(macOS)
@@ -179,6 +187,9 @@ public struct WebSplitMarkdownScreen: View {
 		}
 		if let onCheckboxToggle {
 			view = view.onCheckboxToggle(onCheckboxToggle)
+		}
+		if let onOpenImage {
+			view = view.onOpenImage(onOpenImage)
 		}
 		if editablePreview {
 			view = view.editable(true).onSourceEdit { new, caret in

@@ -26,6 +26,9 @@ extension MarkdownWebView.Coordinator {
 	/// calls. Idempotent so repeated injection is harmless.
 	static let scrollSyncScript = MarkdownWebViewScripts.load("ScrollSyncScript")
 
+	/// Installed dormant in every view; hosts opt in before it decorates images.
+	static let imagePresentationScript = MarkdownWebViewScripts.load("ImagePresentationScript")
+
 	/// Injected after each editable load. Maps contentEditable edits to source
 	/// splices via `data-s` offsets, vetoing anything it can't map.
 	static var editorScript: String { MarkdownWebViewScripts.editorScript }

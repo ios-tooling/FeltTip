@@ -10,6 +10,19 @@
 import CoreGraphics
 import Foundation
 
+/// An image selected from a rendered Markdown document for presentation by the
+/// host app. Local references have already crossed the renderer's sandbox
+/// boundary check and arrive as authorized file URLs.
+public struct MarkdownImageRequest: Equatable, Sendable {
+	public let url: URL
+	public let altText: String
+
+	public init(url: URL, altText: String) {
+		self.url = url
+		self.altText = altText
+	}
+}
+
 /// A scroll request expressed as a fraction of the document's rendered height,
 /// paired with a token. The token is what makes the request distinct across
 /// state-driven callers — two updates with the same `topFraction` but different

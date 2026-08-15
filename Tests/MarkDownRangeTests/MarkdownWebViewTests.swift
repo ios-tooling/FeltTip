@@ -3,6 +3,27 @@ import Testing
 
 #if os(macOS)
 @Suite struct MarkdownWebViewTests {
+	@Test @MainActor func imagePresentationScriptAddsAccessibleControlsAndPinchGesture() {
+		let script = MarkdownWebView.Coordinator.imagePresentationScript
+		#expect(script.contains("md-image-open-button"))
+		#expect(script.contains("Open image in zoomable window"))
+		#expect(script.contains("type: 'openImage'"))
+		#expect(script.contains("gesturestart"))
+		#expect(script.contains("gesturechange"))
+		#expect(script.contains("event.scale >= 1.2"))
+		#expect(script.contains("rect.width >= 320"))
+		#expect(script.contains("rect.height >= 240"))
+	}
+
+	@Test @MainActor func imagePresentationIsExplicitlyOptedIn() {
+		let plain = MarkdownWebView(text: "", theme: .default, fontSize: 16)
+		#expect(plain.onOpenImage == nil)
+
+		let interactive = plain.onOpenImage { _ in }
+		#expect(interactive.onOpenImage != nil)
+		#expect(plain.makeCoordinator().configSignature() != interactive.makeCoordinator().configSignature())
+	}
+
 	@Test @MainActor func linkPreviewScriptTargetsOnlyLocalMarkdown() {
 		let script = MarkdownWebView.Coordinator.linkPreviewScript
 		#expect(script.contains("type: 'previewLink'"))
