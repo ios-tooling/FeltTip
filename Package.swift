@@ -31,7 +31,19 @@ let package = Package(
 				.product(name: "CrossPlatformKit", package: "CrossPlatformKit"),
 			],
 			exclude: ["Rendering/EDITING.md"],
-			resources: [.copy("Resources")]
+			// Each file is copied individually rather than `.copy("Resources")`.
+			// A directory copy nests them inside a `Resources/` subfolder, and
+			// codesign rejects that layout in an iOS bundle ("bundle format
+			// unrecognized"), which blocks every signed iOS build.
+			resources: [
+				.copy("Resources/CheckboxScript.js"),
+				.copy("Resources/EditorScript.js"),
+				.copy("Resources/ImagePresentationScript.js"),
+				.copy("Resources/LinkPreviewScript.js"),
+				.copy("Resources/ScrollSyncScript.js"),
+				.copy("Resources/mermaid-template.html"),
+				.copy("Resources/mermaid.min.js"),
+			]
 		),
 		.testTarget(
 			name: "MarkDownRangeTests",

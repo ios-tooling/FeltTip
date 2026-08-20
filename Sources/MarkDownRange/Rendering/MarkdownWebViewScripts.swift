@@ -39,8 +39,8 @@ extension MarkdownWebView.Coordinator {
 
 enum MarkdownWebViewScripts {
 	static func load(_ name: String) -> String {
-		guard let dir = Bundle.module.url(forResource: "Resources", withExtension: nil),
-		      let script = try? String(contentsOf: dir.appendingPathComponent("\(name).js"), encoding: .utf8) else {
+		guard let url = Bundle.module.url(forResource: name, withExtension: "js"),
+		      let script = try? String(contentsOf: url, encoding: .utf8) else {
 			assertionFailure("Missing bundled script \(name).js")
 			return ""
 		}

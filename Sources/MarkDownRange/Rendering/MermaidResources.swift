@@ -15,18 +15,15 @@ public enum MermaidResources: Sendable {
 	/// Renders can begin concurrently, so mutable unsynchronized caches here
 	/// would race and could repeat the multi-megabyte resource load.
 	private static let cachedEngineJS: String? = {
-		guard let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil) else { return nil }
-		return try? String(
-			contentsOf: resourceURL.appendingPathComponent("mermaid.min.js"),
-			encoding: .utf8)
+		guard let url = Bundle.module.url(forResource: "mermaid.min", withExtension: "js")
+		else { return nil }
+		return try? String(contentsOf: url, encoding: .utf8)
 	}()
 
 	private static let cachedTemplate: String? = {
 		guard let js = cachedEngineJS,
-			  let resourceURL = Bundle.module.url(forResource: "Resources", withExtension: nil),
-			  let template = try? String(
-				contentsOf: resourceURL.appendingPathComponent("mermaid-template.html"),
-				encoding: .utf8)
+			  let url = Bundle.module.url(forResource: "mermaid-template", withExtension: "html"),
+			  let template = try? String(contentsOf: url, encoding: .utf8)
 		else { return nil }
 		return template.replacingOccurrences(of: "MERMAID_JS_PLACEHOLDER", with: js)
 	}()
