@@ -7,7 +7,6 @@
 //  matches; otherwise it uses its normal per-document renderer.
 //
 
-#if os(macOS)
 import SwiftUI
 
 public final class MarkdownPreparedWebRender: @unchecked Sendable {
@@ -106,4 +105,3 @@ public final class MarkdownPreparedWebRender: @unchecked Sendable {
 		task.cancel()
 	}
 }
-#endif

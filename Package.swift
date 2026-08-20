@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
 	name: "MarkDownRange",
-	platforms: [.macOS(.v14), .iOS(.v17)],
+	platforms: [.macOS("26.0"), .iOS(.v18)],
 	products: [
 		.library(name: "MarkDownRange", targets: ["MarkDownRange"]),
 		.library(name: "MarkdownSyntaxHighlighting", targets: ["MarkdownSyntaxHighlighting"]),
@@ -15,6 +15,7 @@ let package = Package(
 		.package(url: "https://github.com/ios-tooling/JohnnyCache.git", from: "1.0.14"),
 		.package(url: "https://github.com/ios-tooling/SharedSettings", from: "1.0.10"),
 		.package(url: "https://github.com/ios-tooling/FunnelVision", branch: "main"),
+		.package(url: "https://github.com/ios-tooling/CrossPlatformKit", from: "1.1.4"),
 	],
 	targets: [
 		.target(name: "MarkdownSyntaxHighlighting"),
@@ -27,6 +28,7 @@ let package = Package(
 				.product(name: "JohnnyCache", package: "JohnnyCache"),
 				.product(name: "SharedSettings", package: "SharedSettings"),
 				.product(name: "FunnelVision", package: "FunnelVision"),
+				.product(name: "CrossPlatformKit", package: "CrossPlatformKit"),
 			],
 			exclude: ["Rendering/EDITING.md"],
 			resources: [.copy("Resources")]

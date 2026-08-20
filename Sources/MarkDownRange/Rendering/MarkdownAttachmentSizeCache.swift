@@ -11,7 +11,6 @@
 //  shape, this collapses 400 measurements down to 2.
 //
 
-#if os(macOS)
 import Foundation
 
 public struct MarkdownAttachmentSizeKey: Hashable, Sendable {
@@ -83,4 +82,3 @@ public final class MarkdownAttachmentSizeCache {
 		return hasher.finalize()
 	}
 }
-#endif

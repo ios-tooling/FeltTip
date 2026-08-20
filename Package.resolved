@@ -1,5 +1,5 @@
 {
-  "originHash" : "c54008711ca12a7a1a97b1721b3c4d6c8ce095a23b50b7980df41666295336b7",
+  "originHash" : "ff8fb694aeaf97b41abdf50c8832e63da36bdfb4da443596824fdc86ded736cb",
   "pins" : [
     {
       "identity" : "chronicle",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "3bf3ad51c27f87c56ce1f4836379a34dab10982b",
         "version" : "3.2.6"
+      }
+    },
+    {
+      "identity" : "crossplatformkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ios-tooling/CrossPlatformKit",
+      "state" : {
+        "revision" : "c1848d1e9c8832e66f013159e7f055ea8dc413e5",
+        "version" : "1.1.4"
       }
     },
     {

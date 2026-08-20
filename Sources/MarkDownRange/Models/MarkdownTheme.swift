@@ -5,7 +5,9 @@
 
 import SwiftUI
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
 #endif
 
 public enum MarkdownFontFamily: String, Codable, CaseIterable, Sendable {
@@ -56,13 +58,25 @@ public struct MarkdownTheme: Equatable, Sendable {
 	/// the link color so they remain distinguishable.
 	public var underlineLinks: Bool
 
+	/// The page background a theme uses when the caller doesn't pick one.
+	/// macOS's `textBackgroundColor` (the white editing surface) has no iOS
+	/// counterpart, and `UXColor.defaultBackground` maps to
+	/// `windowBackgroundColor` there — too gray for a document page.
+	public static var defaultBackgroundColor: Color {
+		#if os(macOS)
+			Color(nsColor: .textBackgroundColor)
+		#else
+			Color(uiColor: .systemBackground)
+		#endif
+	}
+
 	public init(
 		textColor: Color = .primary,
 		linkColor: Color = .blue,
 		codeBackground: Color = Color(.secondarySystemFill),
 		codeForeground: Color = .primary,
 		secondaryColor: Color = .secondary,
-		backgroundColor: Color = Color(.textBackgroundColor),
+		backgroundColor: Color = MarkdownTheme.defaultBackgroundColor,
 		headingColor: Color? = nil,
 		alternateRowBackground: Color? = nil,
 		mirrorHighlightColor: Color? = nil,
