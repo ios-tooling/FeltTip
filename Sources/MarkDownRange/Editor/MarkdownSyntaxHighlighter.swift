@@ -3,8 +3,12 @@
 //  MarkDownRange
 //
 
+import CrossPlatformKit
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 
 enum MarkdownSyntaxHighlighter {
 	/// Apply (or refresh) syntax styling for the editor.
@@ -17,15 +21,15 @@ enum MarkdownSyntaxHighlighter {
 	/// boundary the meaning of distant text could change, so we transparently
 	/// fall back to a full-document highlight.
 	@MainActor static func highlight(
-		textView: NSTextView,
+		textView: UXTextView,
 		theme: MarkdownTheme,
 		options: MarkdownOptions = .default,
 		editedRange: NSRange? = nil,
 		codeFenceRanges cachedFenceRanges: [NSRange]? = nil
 	) {
-		guard let layoutManager = textView.layoutManager,
-			  let textStorage = textView.textStorage else { return }
-		let string = textView.string
+		guard let sink = textView.highlightSink,
+			  let textStorage = textView.uxTextStorage else { return }
+		let string = textView.sourceString
 		let nsString = string as NSString
 		let fullRange = NSRange(location: 0, length: nsString.length)
 		guard fullRange.length > 0 else { return }
@@ -33,15 +37,15 @@ enum MarkdownSyntaxHighlighter {
 		let scope = highlightScope(for: editedRange, in: nsString, string: string, fullRange: fullRange)
 
 		let basePointSize = textView.font?.pointSize ?? 13
-		let regularFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .regular)
-		let headingFont = NSFont.monospacedSystemFont(ofSize: basePointSize, weight: .bold)
+		let regularFont = UXFont.monospacedSystemFont(ofSize: basePointSize, weight: .regular)
+		let headingFont = UXFont.monospacedSystemFont(ofSize: basePointSize, weight: .bold)
 
 		// Font has to live in textStorage (it affects layout, so it's not a
 		// valid NSLayoutManager temporary attribute key). Wrap in begin/end
 		// to coalesce the per-range updates into a single layout pass.
 		textStorage.beginEditing()
 		textStorage.addAttribute(.font, value: regularFont, range: scope)
-		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: scope)
+		sink.resetColor(in: scope, base: UXColor(theme.textColor))
 
 		// Code fences must always be scanned over the whole document because a
 		// fence may begin outside `scope` but reach into it.
@@ -49,7 +53,7 @@ enum MarkdownSyntaxHighlighter {
 		for fence in codeFenceRanges {
 			let inter = NSIntersectionRange(fence, scope)
 			if inter.length > 0 {
-				layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.codeForeground), forCharacterRange: inter)
+				sink.setColor(UXColor(theme.codeForeground), in: inter)
 			}
 		}
 
@@ -60,7 +64,7 @@ enum MarkdownSyntaxHighlighter {
 		let markerRegex = headingMarkerPattern(for: options)
 		for range in matches(for: lineRegex, in: string, in: scope) {
 			guard !intersects(range, codeFenceRanges) else { continue }
-			layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(theme.headingColor), forCharacterRange: range)
+			sink.setColor(UXColor(theme.headingColor), in: range)
 			textStorage.addAttribute(.font, value: headingFont, range: range)
 		}
 
@@ -79,7 +83,7 @@ enum MarkdownSyntaxHighlighter {
 		for (pattern, color) in patterns {
 			for range in matches(for: pattern, in: string, in: scope) {
 				guard !intersects(range, codeFenceRanges) else { continue }
-				layoutManager.addTemporaryAttribute(.foregroundColor, value: NSColor(color), forCharacterRange: range)
+				sink.setColor(UXColor(color), in: range)
 			}
 		}
 
@@ -94,16 +98,16 @@ enum MarkdownSyntaxHighlighter {
 
 	/// Clear any styling this highlighter added. Used when syntax highlighting
 	/// is toggled off so the heading weight + colors don't linger.
-	@MainActor static func clearHighlighting(textView: NSTextView) {
-		guard let layoutManager = textView.layoutManager,
-			  let textStorage = textView.textStorage else { return }
-		let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+	@MainActor static func clearHighlighting(textView: UXTextView, theme: MarkdownTheme? = nil) {
+		guard let sink = textView.highlightSink,
+			  let textStorage = textView.uxTextStorage else { return }
+		let fullRange = NSRange(location: 0, length: (textView.sourceString as NSString).length)
 		guard fullRange.length > 0 else { return }
-		let regularFont = NSFont.monospacedSystemFont(ofSize: textView.font?.pointSize ?? 13, weight: .regular)
+		let regularFont = UXFont.monospacedSystemFont(ofSize: textView.font?.pointSize ?? 13, weight: .regular)
 		textStorage.beginEditing()
 		textStorage.addAttribute(.font, value: regularFont, range: fullRange)
 		textStorage.endEditing()
-		layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: fullRange)
+		sink.resetColor(in: fullRange, base: UXColor(theme?.textColor ?? .primary))
 	}
 
 	// MARK: - Scope selection
@@ -147,10 +151,10 @@ enum MarkdownSyntaxHighlighter {
 		return NSRange(location: start, length: end - start)
 	}
 
-	private static func apply(_ ranges: [NSRange], color: Color, layoutManager: NSLayoutManager) {
-		let nsColor = NSColor(color)
+	private static func apply(_ ranges: [NSRange], color: Color, sink: MarkdownHighlightSink) {
+		let uxColor = UXColor(color)
 		for range in ranges {
-			layoutManager.addTemporaryAttribute(.foregroundColor, value: nsColor, forCharacterRange: range)
+			sink.setColor(uxColor, in: range)
 		}
 	}
 
@@ -253,4 +257,3 @@ enum MarkdownSyntaxHighlighter {
 	private static let hrPattern = try! NSRegularExpression(
 		pattern: "^(---+|\\*\\*\\*+|___+)$", options: .anchorsMatchLines)
 }
-#endif

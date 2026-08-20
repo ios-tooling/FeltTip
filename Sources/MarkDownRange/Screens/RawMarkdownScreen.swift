@@ -6,6 +6,7 @@
 import SwiftUI
 
 public struct RawMarkdownScreen: View {
+	@Environment(\.syntaxHighlightingEnabled) private var syntaxHighlightingEnabled
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
 	var fontSize: CGFloat
@@ -80,12 +81,23 @@ public struct RawMarkdownScreen: View {
 			selectionTarget: selectionTarget
 		)
 		#else
-		TextEditor(text: $text)
-			.font(.system(size: fontSize, design: .monospaced))
-			.foregroundStyle(theme?.textColor ?? .primary)
-			.scrollContentBackground(.hidden)
-			.background(theme?.backgroundColor ?? Color(.systemBackground))
-			.padding()
+		MarkdownUITextEditor(
+			text: $text,
+			fontSize: fontSize,
+			theme: theme,
+			typewriterMode: typewriterMode,
+			syntaxHighlightingEnabled: syntaxHighlightingEnabled,
+			onScrollFractionChanged: onScrollFractionChanged,
+			syncScrollFraction: syncScrollFraction,
+			onCursorPositionChanged: onCursorPositionChanged,
+			onSourceEdit: onSourceEdit,
+			onSelectionChanged: onSelectionChanged,
+			onSourceSelectionChanged: onSourceSelectionChanged,
+			mirroredSelection: mirroredSelection,
+			caretTarget: caretTarget,
+			selectionTarget: selectionTarget
+		)
+		.ignoresSafeArea(.container, edges: .bottom)
 		#endif
 	}
 }

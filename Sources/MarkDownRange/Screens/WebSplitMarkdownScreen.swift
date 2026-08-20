@@ -246,17 +246,25 @@ public struct WebSplitMarkdownScreen: View {
 	}
 	#else
 	public var body: some View {
-		// MarkdownWebView is macOS-only; until the iOS port wires up a WebView
-		// renderer, the non-macOS split simply shows the raw source editor.
-		RawMarkdownScreen(
+		AdaptiveMarkdownPanes(
 			text: $text,
 			selectedHeadingID: $selectedHeadingID,
-			fontSize: fontSize,
-			syncScrollFraction: initialScrollFraction,
-			typewriterMode: typewriterMode,
-			theme: theme,
-			onCursorPositionChanged: onCursorPositionChanged
-		)
+			context: MarkdownPaneContext(
+				theme: theme,
+				fontSize: fontSize,
+				typewriterMode: typewriterMode,
+				baseURL: baseURL,
+				editablePreview: editablePreview,
+				contentReloadToken: contentReloadToken,
+				onCursorPositionChanged: onCursorPositionChanged,
+				onSourceEdit: onSourceEdit,
+				onSourceSelectionChanged: onSourceSelectionChanged,
+				onResourceAccessDenied: onResourceAccessDenied,
+				onCheckboxToggle: onCheckboxToggle,
+				caretTarget: caretTarget,
+				selectionTarget: selectionTarget),
+			initialScrollFraction: initialScrollFraction,
+			onScrollFractionChanged: onScrollFractionChanged)
 	}
 	#endif
 }
