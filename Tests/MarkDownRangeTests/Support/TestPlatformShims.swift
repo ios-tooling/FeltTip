@@ -30,6 +30,13 @@ extension CoordinatorBridgeHarness {
 
 /// The system pasteboard, in the shape the paste tests need: read the current
 /// string, replace it, and restore what was there when the test finishes.
+///
+/// Reading is macOS-only, and that is the whole point. iOS gates a read of
+/// content this process did not write behind paste authorization, and an
+/// xctest host has no UI to show the prompt on — the request never resolves,
+/// and the suite hangs rather than fails. What the read buys is restoring the
+/// user's clipboard afterwards, which matters on a Mac and means nothing on a
+/// simulator, so iOS reports an empty pasteboard and skips the courtesy.
 enum TestPasteboard {
 	@MainActor
 	static var string: String? {
@@ -37,7 +44,7 @@ enum TestPasteboard {
 			#if os(macOS)
 				NSPasteboard.general.string(forType: .string)
 			#else
-				UIPasteboard.general.string
+				nil
 			#endif
 		}
 		set {

@@ -23,11 +23,17 @@ fi
 # work should say so, or the green result means less than it looks like.
 #
 #   EditBridgePasteTests   – the paste tests drive `paste:` through the responder
-#                            chain. iOS WKWebView doesn't answer that selector the
-#                            way AppKit does, so the harness waits forever rather
-#                            than failing. Paste on iOS needs its own driving
-#                            mechanism before these can run here.
-#   EditBridgeFuzzTests    – contains cut/paste fuzz cases, same hang.
+#                            chain, and a library test bundle has no UIApplication
+#                            ("This process does not have a UIApplication object
+#                            and will not receive events"), so the action never
+#                            reaches the web view and the harness waits rather
+#                            than failing. Driving paste on iOS means dispatching
+#                            `insertFromPaste` from the page instead, which is
+#                            the contract the bridge actually implements.
+#                            (A second cause, iOS gating a pasteboard read behind
+#                            paste authorization the test host can't answer, is
+#                            fixed — see TestPasteboard.)
+#   EditBridgeFuzzTests    – contains cut/paste fuzz cases, same cause.
 #   EditBridgeSoakTests    – long-running; the coverage is exhaustiveness, which
 #   BlockPatchBenchmark…   – macOS already provides far faster.
 #   EditingLatencyBenchmark– wall-clock budgets, meaningless on a simulator.
