@@ -13,16 +13,12 @@ public enum MarkdownMermaidPrerender {
 	/// Parses `markdown`, renders its mermaid blocks to inline SVG, and returns a
 	/// `source → svg` map suitable for `MarkdownHTMLRenderer.renderDocument(…,
 	/// mermaidDiagrams:)`. Use for HTML/PDF export. Empty when there are no
-	/// mermaid blocks (or off macOS).
+	/// mermaid blocks.
 	@MainActor
 	public static func svgMap(markdown: String, theme: MarkdownTheme = .default, fontSize: CGFloat = 16) async -> [String: String] {
-		#if os(macOS)
 		let sources = sources(in: markdown, theme: theme, fontSize: fontSize)
 		guard !sources.isEmpty else { return [:] }
 		return await MermaidSVGRenderer().renderSVGs(for: sources, theme: theme.mermaidTheme)
-		#else
-		return [:]
-		#endif
 	}
 
 	#if os(macOS)

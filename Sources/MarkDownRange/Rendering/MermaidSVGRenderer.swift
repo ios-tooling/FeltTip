@@ -14,10 +14,14 @@
 //     neither inline SVG nor `data:` images.
 //
 
-#if os(macOS)
-import AppKit
+import CoreGraphics
 import Foundation
 import WebKit
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
 
 @MainActor
 public final class MermaidSVGRenderer {
@@ -31,7 +35,7 @@ public final class MermaidSVGRenderer {
 	private static let javaScriptTimeout: Duration = .seconds(5)
 
 	public init() {
-		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+		webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1200, height: 800))
 		webView.navigationDelegate = loader
 	}
 
@@ -145,10 +149,10 @@ public final class MermaidSVGRenderer {
 		// Render to PDF — `createPDF` works on a detached, off-screen webview
 		// (`takeSnapshot` needs an on-screen window), then rasterize the vector
 		// PDF to a crisp PNG at `scale`×.
-		webView.frame = NSRect(x: 0, y: 0, width: max(w + x, 1), height: max(h + y, 1))
+		webView.frame = CGRect(x: 0, y: 0, width: max(w + x, 1), height: max(h + y, 1))
 		try? await Task.sleep(nanoseconds: 50_000_000)  // let the resize lay out
 		let pdfConfig = WKPDFConfiguration()
-		pdfConfig.rect = NSRect(x: x, y: y, width: w, height: h)
+		pdfConfig.rect = CGRect(x: x, y: y, width: w, height: h)
 		guard let pdf = try? await webView.pdf(configuration: pdfConfig),
 			  let png = Self.rasterize(pdf: pdf, size: CGSize(width: w, height: h), scale: scale) else { return nil }
 		// The caller embeds these PNG bytes via an attachment file wrapper (an
@@ -204,7 +208,7 @@ public final class MermaidSVGRenderer {
 		webView.stopLoading()
 		webView.navigationDelegate = nil
 		loader = WebViewLoadWaiter()
-		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+		webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1200, height: 800))
 		webView.navigationDelegate = loader
 		initialized = false
 	}
@@ -213,20 +217,44 @@ public final class MermaidSVGRenderer {
 		guard scale.isFinite, scale > 0, scale <= 4,
 			  size.width.isFinite, size.height.isFinite,
 			  size.width <= maximumDimension, size.height <= maximumDimension,
-			  size.width * size.height * scale * scale <= maximumPixels,
-			  let pdfImage = NSImage(data: pdf) else { return nil }
-		let pixelsWide = Int((size.width * scale).rounded())
-		let pixelsHigh = Int((size.height * scale).rounded())
-		guard pixelsWide > 0, pixelsHigh > 0,
-			  let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
-										 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-										 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-		rep.size = size
-		NSGraphicsContext.saveGraphicsState()
-		NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-		pdfImage.draw(in: NSRect(origin: .zero, size: size))
-		NSGraphicsContext.restoreGraphicsState()
-		return rep.representation(using: .png, properties: [:])
+			  size.width * size.height * scale * scale <= maximumPixels else { return nil }
+		#if os(macOS)
+			guard let pdfImage = NSImage(data: pdf) else { return nil }
+			let pixelsWide = Int((size.width * scale).rounded())
+			let pixelsHigh = Int((size.height * scale).rounded())
+			guard pixelsWide > 0, pixelsHigh > 0,
+				  let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
+											 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+											 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+			rep.size = size
+			NSGraphicsContext.saveGraphicsState()
+			NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+			pdfImage.draw(in: NSRect(origin: .zero, size: size))
+			NSGraphicsContext.restoreGraphicsState()
+			return rep.representation(using: .png, properties: [:])
+		#else
+			// UIImage can't decode PDF data the way NSImage can, so go through
+			// CGPDFDocument directly.
+			guard size.width > 0, size.height > 0,
+				  let provider = CGDataProvider(data: pdf as CFData),
+				  let document = CGPDFDocument(provider),
+				  let page = document.page(at: 1) else { return nil }
+			let format = UIGraphicsImageRendererFormat()
+			format.scale = scale
+			format.opaque = false
+			let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+				let cg = context.cgContext
+				// PDF pages are y-up; the UIKit drawing context is y-down.
+				cg.translateBy(x: 0, y: size.height)
+				cg.scaleBy(x: 1, y: -1)
+				let box = page.getBoxRect(.mediaBox)
+				if box.width > 0, box.height > 0 {
+					cg.scaleBy(x: size.width / box.width, y: size.height / box.height)
+				}
+				cg.drawPDFPage(page)
+			}
+			return image.pngData()
+		#endif
 	}
 }
 
@@ -236,5 +264,3 @@ public struct RenderedDiagram: Sendable {
 	public let png: Data
 	public let size: CGSize
 }
-
-#endif

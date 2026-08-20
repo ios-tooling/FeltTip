@@ -3,11 +3,14 @@
 //  MarkDownRange
 //
 
-#if os(macOS)
-import AppKit
 import CoreGraphics
 import Foundation
 import WebKit
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
 
 /// Renders a markdown HTML document into a paginated, letter-sized PDF entirely
 /// off-screen — no visible window required.
@@ -32,7 +35,7 @@ public enum MarkdownPDFRenderer {
 		allowRemoteResources: Bool = false
 	) async -> Data? {
 		let printW = pageWidth - 2 * margin
-		let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: printW, height: pageHeight))
+		let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: printW, height: pageHeight))
 		let loader = WebViewLoadWaiter()
 		webView.navigationDelegate = loader
 		let securedHTML = securingForWebView(
@@ -47,7 +50,8 @@ public enum MarkdownPDFRenderer {
 		if let raw = try? await webView.evaluateJavaScript("document.documentElement.scrollHeight"),
 		   let h = (raw as? Double).map({ CGFloat($0) }), h > 0 {
 			cssHeight = h
-			webView.setFrameSize(NSSize(width: printW, height: h))
+			webView.frame = CGRect(origin: webView.frame.origin,
+			                       size: CGSize(width: printW, height: h))
 			// Force a re-layout at the new size before snapshotting.
 			_ = try? await webView.evaluateJavaScript("window.getComputedStyle(document.body).height")
 		}
@@ -140,5 +144,3 @@ public enum MarkdownPDFRenderer {
 		return Task.isCancelled ? [] : boxes
 	}
 }
-
-#endif

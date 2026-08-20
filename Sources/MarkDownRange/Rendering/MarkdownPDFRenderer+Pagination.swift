@@ -3,7 +3,6 @@
 //  MarkDownRange
 //
 
-#if os(macOS)
 import CoreGraphics
 import Foundation
 import WebKit
@@ -172,4 +171,3 @@ extension MarkdownPDFRenderer {
 		return lower
 	}
 }
-#endif
