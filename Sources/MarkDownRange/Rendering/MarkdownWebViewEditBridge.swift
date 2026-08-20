@@ -158,7 +158,10 @@ extension MarkdownWebView.Coordinator {
 		// composition outside a stamped run); re-render so it can't drift.
 		if body["type"] as? String == "desync" {
 			log("desync reported by page")
-			resync(caretAt: nil)
+			// A drift-triggered resync knows where the caret belongs, because
+			// the edit that caused it said so. Without that the caret would
+			// land wherever the rebuilt DOM happens to put it.
+			resync(caretAt: body["caret"] as? Int)
 			return
 		}
 		// The page froze for a structural edit but the re-render that should

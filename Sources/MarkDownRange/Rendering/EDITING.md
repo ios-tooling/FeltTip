@@ -143,6 +143,40 @@ from `NSPasteboard`. WebKit sanitizes the plain-text flavor of a paste's
 stripped — so the pasteboard is the only faithful source. Plain text only:
 markdown *is* the rich form. Inside a table cell newlines fold to spaces.
 
+## iOS
+
+The bridge is one implementation; the two platforms differ in what WebKit does
+underneath it, not in what the page asks for.
+
+- **WebKit rebalances whitespace on iOS.** Delete a selection that leaves a
+  space touching a space and iOS collapses the run to one, while the source
+  keeps both. That breaks the invariant silently: every later offset in the run
+  is short by the difference, and the *next* keystroke lands in the wrong place
+  rather than the delete looking wrong. The `input` drain therefore checks each
+  run against what the edit said it would hold, and when they disagree the edits
+  still go out — they describe what the user asked for — followed by a resync
+  that rebuilds the DOM from the spliced source. The resync carries the caret,
+  because the edit knows where it belongs and the rebuilt DOM does not.
+- The check is held to the same standard as the invariant itself: a run may show
+  **less** than the source from its stamp (typing into an empty fenced block
+  consumes the blank line's newline), but never something else and never more.
+- **Text substitution** — autocorrect, predictive text, dictation — arrives as
+  `insertReplacementText` and is mapped like any other in-run edit, including
+  the retroactive kind that rewrites a word already typed. iOS is more
+  aggressive about it than macOS. This path has no test coverage on either
+  platform: the suites drive `beforeinput` directly, not the software keyboard.
+  The **raw** editor turns substitution off wholesale because it edits markdown
+  source, where a curled quote changes meaning; the styled view edits prose, so
+  it leaves substitution on and relies on the mapping.
+- **Responder-chain routes don't cross over.** The tests drive Cut and Paste
+  with `perform(NSSelectorFromString("paste:"))`, which AppKit answers and iOS
+  WKWebView does not — the harness waits forever instead of failing.
+  `Scripts/test-ios.sh` skips those suites and records why. The bridge's own
+  clipboard read is platform-neutral; it is the test driving that is missing.
+- **Find** is `NSTextFinder` on macOS and `UIFindInteraction` on iOS; the
+  formatting bar above the keyboard exists only on iOS, where there is no
+  Format menu.
+
 ## Rendering side
 
 - Blocks render as **fragments**; a fragment's `signature` normalizes stamps

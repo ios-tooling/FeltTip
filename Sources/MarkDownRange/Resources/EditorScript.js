@@ -1179,6 +1179,19 @@
   function queueFastEdit(msg, start, delta, span) {
     msg.rev = stampRev;
     msg.seq = seq++;
+    // What this run's text must read once WebKit applies the edit. The browser
+    // is trusted to mutate the DOM on the fast path, and it does not always
+    // mutate it the way the edit described: iOS WebKit rebalances whitespace
+    // around a deletion, so deleting "alpha bravo" out of "Zero alpha bravo
+    // omega" leaves the source with two spaces and the DOM with one. That
+    // silently breaks the stamp invariant, and every later offset in the run
+    // is short by the difference. Captured before shiftStamps, which rewrites
+    // the base this is measured from.
+    var base = parseInt(span.getAttribute('data-s'), 10);
+    var current = span.textContent;
+    msg.__span = span;
+    msg.__expect = current.slice(0, msg.start - base) + msg.text +
+                   current.slice(msg.end - base);
     pendingEdits.push(msg);
     shiftStamps(start, delta, span);
     stampRev += 1;
@@ -1202,8 +1215,43 @@
       clearTimeout(pendingEditWatchdog);
       pendingEditWatchdog = null;
     }
+    if (!pendingEdits.length) return;
+    // Only the last edit per run describes the DOM as it now stands; earlier
+    // ones in a batch describe intermediate states that have already been
+    // superseded.
+    var finalText = new Map();
+    for (var i = 0; i < pendingEdits.length; i++) {
+      finalText.set(pendingEdits[i].__span, pendingEdits[i].__expect);
+    }
+    var drifted = false;
+    finalText.forEach(function (expect, span) {
+      // Exact, deliberately. A looser rule that let the run show a prefix of
+      // what was asked for was tried and is wrong: deleting up to a trailing
+      // space leaves the DOM one character short of the source *before* the
+      // caret, so the next keystroke lands early — the DOM looks like a
+      // healthy prefix while the mapping is already broken. plain() keeps
+      // WebKit's routine &nbsp;-for-space substitution out of it; a dropped
+      // character survives that normalization, which is the point.
+      if (!span.isConnected || plain(span.textContent) !== plain(expect)) {
+        drifted = true;
+      }
+    });
+    // The edits themselves are still correct — they describe what the user
+    // asked for, and the host verifies each against the source before
+    // splicing. It is only the DOM that can no longer be trusted, so the
+    // edits go out as usual and a re-render follows to rebuild it from the
+    // spliced source. Dropping them instead would lose the user's edit.
+    var caret = null;
     while (pendingEdits.length) {
-      post(pendingEdits.shift());
+      var edit = pendingEdits.shift();
+      caret = edit.start + edit.text.length;
+      delete edit.__span;
+      delete edit.__expect;
+      post(edit);
+    }
+    if (drifted) {
+      freeze();
+      post({ type: 'desync', caret: caret });
     }
   });
   // Composition (IME, dead keys, macOS inline predictive text) can't be
