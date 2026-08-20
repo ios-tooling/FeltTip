@@ -153,8 +153,6 @@ public struct MarkdownWebView: UXViewRepresentable {
 		return copy
 	}
 
-	/// Opt in to rendering mermaid code blocks as diagrams (embeds the engine).
-	/// Not safe in the QuickLook extension — see `renderMermaid`.
 	/// Show a formatting row above the keyboard while the styled view is being
 	/// edited. No effect on macOS, which has the Format menu.
 	public func formattingBar(_ flag: Bool) -> Self {
@@ -163,6 +161,9 @@ public struct MarkdownWebView: UXViewRepresentable {
 		return copy
 	}
 
+	/// Opt in to rendering mermaid code blocks as diagrams (embeds the engine).
+	/// Only takes effect when the view is not editable — editing keeps the raw,
+	/// editable source. Not safe in the QuickLook extension.
 	public func renderMermaid(_ flag: Bool) -> Self {
 		var copy = self
 		copy.renderMermaid = flag
