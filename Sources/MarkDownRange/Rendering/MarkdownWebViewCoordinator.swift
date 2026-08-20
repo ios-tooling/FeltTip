@@ -137,7 +137,7 @@ extension MarkdownWebView {
 		}
 
 		func configSignature() -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.onOpenImage != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\(parent.theme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.onOpenImage != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\(parent.resolvedTheme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
 		}
 
 		/// Advance to a fresh revision epoch. Called whenever the page's DOM is
@@ -246,7 +246,7 @@ extension MarkdownWebView {
 			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
-			let theme = parent.theme
+			let theme = parent.resolvedTheme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
@@ -291,7 +291,7 @@ extension MarkdownWebView {
 			renderGeneration += 1
 			let generation = renderGeneration
 			let selection = pendingSelection
-			let theme = parent.theme
+			let theme = parent.resolvedTheme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
@@ -465,7 +465,7 @@ extension MarkdownWebView {
 			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
-			let theme = parent.theme
+			let theme = parent.resolvedTheme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil

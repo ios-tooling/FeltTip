@@ -142,3 +142,39 @@ public struct MarkdownTheme: Equatable, Sendable {
 		alternateRowBackground: Color(red: 0.17, green: 0.17, blue: 0.19)
 	)
 }
+
+public extension MarkdownTheme {
+	/// A copy with every dynamic color flattened against `scheme`.
+	///
+	/// The HTML renderer turns each `Color` into a concrete `rgba()` string,
+	/// and it runs on `MarkdownRenderService` — an actor, off the main thread.
+	/// On iOS a dynamic color (`.primary`, `.secondary`, anything from an asset
+	/// catalog) resolves through `UITraitCollection.current`, which off the
+	/// main actor is the light-mode default. In dark mode that baked black
+	/// body text into a dark page. Callers resolve on the main actor, where the
+	/// real scheme is known, before handing the theme to the renderer.
+	///
+	/// macOS resolves through `NSColor(_:).usingColorSpace(.sRGB)` against the
+	/// drawing appearance and doesn't need this, so it's the identity there.
+	func resolved(for scheme: ColorScheme) -> MarkdownTheme {
+		#if os(macOS)
+			self
+		#else
+			let traits = UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
+			func flatten(_ color: Color) -> Color {
+				Color(UIColor(color).resolvedColor(with: traits))
+			}
+			var copy = self
+			copy.textColor = flatten(textColor)
+			copy.linkColor = flatten(linkColor)
+			copy.codeBackground = flatten(codeBackground)
+			copy.codeForeground = flatten(codeForeground)
+			copy.secondaryColor = flatten(secondaryColor)
+			copy.backgroundColor = flatten(backgroundColor)
+			copy.headingColor = flatten(headingColor)
+			copy.alternateRowBackground = alternateRowBackground.map(flatten)
+			copy.mirrorHighlightColor = flatten(mirrorHighlightColor)
+			return copy
+		#endif
+	}
+}

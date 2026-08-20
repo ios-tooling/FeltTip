@@ -34,6 +34,12 @@ import WebKit
 
 public struct MarkdownWebView: UXViewRepresentable {
 	@Environment(\.markdownLinkAccessScope) var linkAccessScope
+	@Environment(\.colorScheme) private var colorScheme
+
+	/// The theme with dynamic colors flattened against the live color scheme.
+	/// Resolved here, on the main actor, because the renderer runs on an actor
+	/// where iOS would resolve them against the light-mode default.
+	var resolvedTheme: MarkdownTheme { theme.resolved(for: colorScheme) }
 	@Environment(\.markdownLinkHandler) private var hostLinkHandler
 
 	/// The host's handler, or the platform default when none was supplied.
