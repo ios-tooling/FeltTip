@@ -7,7 +7,6 @@
 //  restore, and the next edit against the patched stamps.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -80,4 +79,3 @@ import Testing
 		}
 	}
 }
-#endif

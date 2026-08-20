@@ -1,8 +1,11 @@
 #if os(macOS)
 	import AppKit
-	import Testing
-	import WebKit
-	@testable import MarkDownRange
+#else
+	import UIKit
+#endif
+import Testing
+import WebKit
+@testable import MarkDownRange
 
 /// Drives the change-marker script in a live WKWebView: the host sends git
 /// diff ranges keyed to `data-s` source offsets and the page must grow (and
@@ -55,10 +58,8 @@
 	// MARK: Plumbing
 
 	private func makeWebView(source: String) async throws -> WKWebView {
-		let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-		let window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-		window.contentView = webView
-		window.orderFront(nil)
+		let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+		_ = TestWindowHost(view: webView)
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: source, includeSourceOffsets: true)
 		webView.loadHTMLString(html, baseURL: nil)
 		try await waitUntil("stamped content") {
@@ -92,4 +93,3 @@
 		Issue.record("timed out waiting for \(label)")
 	}
 }
-#endif

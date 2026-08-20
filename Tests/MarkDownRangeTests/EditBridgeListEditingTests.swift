@@ -9,7 +9,6 @@
 //  item to the top level, which reflows the whole list.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -290,4 +289,3 @@ import Testing
 		let bottomInset: Int
 	}
 }
-#endif

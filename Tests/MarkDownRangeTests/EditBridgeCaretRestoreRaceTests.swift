@@ -10,7 +10,6 @@
 //  scheduled makes those stragglers pre-reseed: dropped, never applied.
 //
 
-#if os(macOS)
 import Testing
 import WebKit
 @testable import MarkDownRange
@@ -19,7 +18,7 @@ import WebKit
 	/// Emulates the host restoring `text` (an undo) with a caret target, exactly
 	/// as updateNSView does: swap the parent, arm the caret, then load.
 	private func restore(_ text: String, caret: Int, token: Int, in harness: CoordinatorBridgeHarness) {
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.coordinator.parent = MarkdownWebView(text: text, theme: .default, fontSize: 14)
 			.editable(true)
 			.caretTarget(MarkdownCaretTarget(offset: caret, token: token))
@@ -82,4 +81,3 @@ import WebKit
 		#expect(try await harness.stampMismatches() == [])
 	}
 }
-#endif

@@ -8,7 +8,6 @@
 //  real coordinator and WKWebView.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -115,7 +114,7 @@ import Testing
 		let range = (source as NSString).range(of: selected)
 		let harness = try await CoordinatorBridgeHarness(source: source)
 		try await harness.run("window.__mdPlaceCaret(\(range.location), \(range.length))")
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "```swift\nlet \nprint(value)\n```\n")
@@ -133,7 +132,7 @@ import Testing
 			selection.removeAllRanges()
 			selection.addRange(range)
 			""")
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "```swift\n```\n")
@@ -218,7 +217,7 @@ import Testing
 
 		// Emulate Marker undo: restore the prior source with a token-gated caret,
 		// re-render, then make a fresh mouse-like selection and delete again.
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.coordinator.parent = MarkdownWebView(text: source, theme: .default, fontSize: 14)
 			.editable(true)
 			.caretTarget(MarkdownCaretTarget(offset: 9, token: 1))
@@ -443,4 +442,3 @@ import Testing
 		}
 	}
 }
-#endif

@@ -7,7 +7,6 @@
 //  frozenTimeout safety net for a re-render that never arrives).
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -90,4 +89,3 @@ import Testing
 		#expect(harness.source == "ZAlpha\n\nBeta", "typing must work after the resync")
 	}
 }
-#endif

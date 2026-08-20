@@ -1,4 +1,3 @@
-#if os(macOS)
 import Testing
 import WebKit
 @testable import MarkDownRange
@@ -23,4 +22,3 @@ import WebKit
 		}
 	}
 }
-#endif

@@ -7,7 +7,6 @@
 //  invariants — zero incidents, source↔DOM convergence, honest stamps.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -62,4 +61,3 @@ import Testing
 		#expect(live == rendered, "source and DOM diverged after \(script)")
 	}
 }
-#endif

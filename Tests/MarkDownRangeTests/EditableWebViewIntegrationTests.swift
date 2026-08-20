@@ -1,8 +1,11 @@
 #if os(macOS)
 	import AppKit
-	import Testing
-	import WebKit
-	@testable import MarkDownRange
+#else
+	import UIKit
+#endif
+import Testing
+import WebKit
+@testable import MarkDownRange
 
 /// Drives the real editor script in a live WKWebView: `execCommand` fires the
 /// same `beforeinput`/`input` pipeline as typing, and the harness plays the
@@ -191,10 +194,9 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 	private func makeEditableWebView(harness: EditBridgeHarness) async throws -> WKWebView {
 		let config = WKWebViewConfiguration()
 		config.userContentController.add(harness, name: "mdedit")
-		let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
-		let window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-		window.contentView = webView
-		window.orderFront(nil)
+		let webView = WKWebView(
+			frame: CGRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
+		let host = TestWindowHost(view: webView)
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: harness.source, includeSourceOffsets: true)
 		webView.loadHTMLString(html, baseURL: nil)
 		// readyState alone is useless here: the initial about:blank page is
@@ -233,4 +235,3 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		Issue.record("timed out waiting for \(label)")
 	}
 }
-#endif

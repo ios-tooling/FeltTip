@@ -8,7 +8,6 @@
 //  revision gate, whole batches must apply cleanly — zero resyncs.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -81,4 +80,3 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 }
-#endif

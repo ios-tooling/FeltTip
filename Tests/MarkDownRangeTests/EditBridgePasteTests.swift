@@ -9,7 +9,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Testing
 @testable import MarkDownRange
 
@@ -17,25 +20,20 @@ import Testing
 	/// Puts `text` on the pasteboard for the duration of `body`, restoring
 	/// whatever the user had there.
 	private func withPasteboard(_ text: String, _ body: () async throws -> Void) async throws {
-		let pasteboard = NSPasteboard.general
-		let saved = pasteboard.string(forType: .string)
+		let saved = TestPasteboard.string
 		defer {
-			pasteboard.clearContents()
-			if let saved { pasteboard.setString(saved, forType: .string) }
+			TestPasteboard.string = saved
 		}
-		pasteboard.clearContents()
-		pasteboard.setString(text, forType: .string)
+		TestPasteboard.string = text
 		try await body()
 	}
 
 	private func withClearedPasteboard(_ body: () async throws -> Void) async throws {
-		let pasteboard = NSPasteboard.general
-		let saved = pasteboard.string(forType: .string)
+		let saved = TestPasteboard.string
 		defer {
-			pasteboard.clearContents()
-			if let saved { pasteboard.setString(saved, forType: .string) }
+			TestPasteboard.string = saved
 		}
-		pasteboard.clearContents()
+		TestPasteboard.string = nil
 		try await body()
 	}
 
@@ -56,7 +54,7 @@ import Testing
 
 	private func paste(into harness: CoordinatorBridgeHarness, at offset: Int) async throws {
 		try await harness.placeCaret(offset)
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("paste:"), with: nil)
 	}
 
@@ -64,7 +62,7 @@ import Testing
 		_ command: String,
 		in harness: CoordinatorBridgeHarness
 	) {
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
 	}
 
@@ -74,7 +72,7 @@ import Testing
 		token: Int,
 		in harness: CoordinatorBridgeHarness
 	) {
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.coordinator.parent = MarkdownWebView(
 			text: text, theme: .default, fontSize: 14)
 			.editable(true)
@@ -135,7 +133,7 @@ import Testing
 				var s = window.getSelection(); var r = s.getRangeAt(0).cloneRange();
 				r.setEnd(r.startContainer, r.startOffset + 5); s.removeAllRanges(); s.addRange(r);
 				""")
-			harness.webView.window?.makeFirstResponder(harness.webView)
+			harness.focusWebView()
 			harness.webView.perform(NSSelectorFromString("paste:"))
 			try await harness.waitForSourceEdits(1)
 		}
@@ -177,17 +175,15 @@ import Testing
 		// The page freezes before posting, so a paste the host can't fulfil must
 		// still thaw it — otherwise typing stays silently dead until the
 		// frozen-timeout safety net fires seconds later.
-		let pasteboard = NSPasteboard.general
-		let saved = pasteboard.string(forType: .string)
+		let saved = TestPasteboard.string
 		defer {
-			pasteboard.clearContents()
-			if let saved { pasteboard.setString(saved, forType: .string) }
+			TestPasteboard.string = saved
 		}
-		pasteboard.clearContents()   // declares no types at all
+		TestPasteboard.string = nil   // an empty pasteboard: nothing to paste
 
 		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
 		try await harness.placeCaret(5)
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("paste:"), with: nil)
 		try await Task.sleep(for: .milliseconds(300))
 		#expect(harness.source == "alpha beta\n")
@@ -208,10 +204,10 @@ import Testing
 			let harness = try await CoordinatorBridgeHarness(source: source)
 			try await select(harness, start: range.location, length: range.length, backward: backward)
 			try await withClearedPasteboard {
-				harness.webView.window?.makeFirstResponder(harness.webView)
+				harness.focusWebView()
 				harness.webView.perform(NSSelectorFromString("cut:"), with: nil)
 				try await harness.waitForSourceEdits(1)
-				let copied = NSPasteboard.general.string(forType: .string) ?? ""
+				let copied = TestPasteboard.string ?? ""
 				#expect(copied.contains("Before linked and bold after"))
 			}
 			#expect(harness.source == expected, "backward=\(backward)")
@@ -240,7 +236,7 @@ import Testing
 		try await withClearedPasteboard {
 			performResponderCommand("cut", in: harness)
 			try await harness.waitForSourceEdits(1)
-			#expect(NSPasteboard.general.string(forType: .string)?.contains("let value = 1") == true)
+			#expect(TestPasteboard.string?.contains("let value = 1") == true)
 		}
 		#expect(harness.source == "```swift\n```\n")
 		try await harness.waitQuiescent()
@@ -266,10 +262,10 @@ import Testing
 		let harness = try await CoordinatorBridgeHarness(source: source)
 		try await select(harness, start: range.location, length: range.length)
 		try await withClearedPasteboard {
-			harness.webView.window?.makeFirstResponder(harness.webView)
+			harness.focusWebView()
 			harness.webView.perform(NSSelectorFromString("cut:"), with: nil)
 			try await harness.waitForSourceEdits(1)
-			let copied = NSPasteboard.general.string(forType: .string) ?? ""
+			let copied = TestPasteboard.string ?? ""
 			#expect(copied.contains("This view is displayed"))
 			#expect(copied.contains("the user can access the"))
 		}
@@ -294,7 +290,7 @@ import Testing
 			try await Task.sleep(for: .milliseconds(80))
 			#expect(harness.source == source)
 			#expect(harness.sourceEditCount == 0)
-			let copied = try #require(NSPasteboard.general.string(forType: .string))
+			let copied = try #require(TestPasteboard.string)
 			#expect(copied == "alpha bold and link")
 
 			try await paste(into: harness, at: destination)
@@ -321,7 +317,7 @@ import Testing
 			performResponderCommand("cut", in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == afterCut)
-			#expect(NSPasteboard.general.string(forType: .string) == moved)
+			#expect(TestPasteboard.string == moved)
 			try await harness.waitQuiescent()
 
 			let destination = (afterCut as NSString).range(of: "omega").location
@@ -351,7 +347,7 @@ import Testing
 			performResponderCommand("cut", in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == afterCut)
-			#expect(NSPasteboard.general.string(forType: .string) == "Alice")
+			#expect(TestPasteboard.string == "Alice")
 			try await harness.waitQuiescent()
 
 			let bob = (afterCut as NSString).range(of: "Bob")
@@ -387,7 +383,7 @@ import Testing
 			performResponderCommand("cut", in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == afterCut)
-			let copied = try #require(NSPasteboard.general.string(forType: .string))
+			let copied = try #require(TestPasteboard.string)
 			pasted = copied
 			#expect(copied.contains("Second paragraph"))
 			#expect(copied.contains("Third paragraph"))
@@ -458,7 +454,7 @@ import Testing
 			performResponderCommand("cut", in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source.isEmpty)
-			let copied = try #require(NSPasteboard.general.string(forType: .string))
+			let copied = try #require(TestPasteboard.string)
 			#expect(copied.contains("Heading"))
 			#expect(copied.contains("Alpha bold text."))
 			#expect(copied.contains("one"))
@@ -493,7 +489,7 @@ import Testing
 			try await Task.sleep(for: .milliseconds(150))
 			#expect(harness.source == afterCut)
 			#expect(harness.sourceEditCount == 1)
-			#expect(NSPasteboard.general.string(forType: .string) == "move-this")
+			#expect(TestPasteboard.string == "move-this")
 			try await harness.waitQuiescent()
 
 			let omega = (afterCut as NSString).range(of: "omega").location
@@ -518,7 +514,7 @@ import Testing
 			performResponderCommand("paste", in: harness)
 			try await harness.waitForSourceEdits(2)
 			#expect(harness.source == source)
-			#expect(NSPasteboard.general.string(forType: .string) == "move-this ")
+			#expect(TestPasteboard.string == "move-this ")
 		}
 		try await harness.waitQuiescent()
 		try await harness.type("Q")
@@ -542,4 +538,3 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 }
-#endif

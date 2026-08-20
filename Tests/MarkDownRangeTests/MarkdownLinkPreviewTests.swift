@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 import Testing
 import WebKit
@@ -107,7 +106,7 @@ struct MarkdownLinkPreviewIntegrationTests {
 		config.setURLSchemeHandler(
 			LocalResourceSchemeHandler(coordinator: coordinator, accessPolicy: policy),
 			forURLScheme: MarkdownWebView.resourceScheme)
-		let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
+		let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
 		coordinator.webView = webView
 		webView.navigationDelegate = coordinator
 		coordinator.load(into: webView)
@@ -145,4 +144,3 @@ struct MarkdownLinkPreviewIntegrationTests {
 		Issue.record("Timed out waiting for \(label)")
 	}
 }
-#endif

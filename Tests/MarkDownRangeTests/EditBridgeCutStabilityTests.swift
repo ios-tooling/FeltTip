@@ -8,7 +8,6 @@
 //  editable inline run shape.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -247,4 +246,3 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 }
-#endif

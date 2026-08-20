@@ -9,7 +9,6 @@
 //  around it, and blind when a replacement leaves the text unchanged.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -59,4 +58,3 @@ import Testing
 		#expect(harness.lastCaretHint == 3)
 	}
 }
-#endif

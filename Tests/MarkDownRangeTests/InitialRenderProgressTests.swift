@@ -1,5 +1,8 @@
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import SwiftUI
 import Testing
 import WebKit
@@ -71,17 +74,11 @@ struct InitialRenderProgressTests {
 			.editable(true)
 			.onInitialRenderProgress { events.append($0) }
 			.onInitialRenderReady { readyCount += 1 }
-		let hosting = NSHostingView(rootView: root)
-		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
-		let window = NSWindow(
-			contentRect: hosting.frame, styleMask: [.borderless],
-			backing: .buffered, defer: false)
-		window.contentView = hosting
-		window.orderFront(nil)
+		let host = TestWindowHost(root)
 
 		var webView: WKWebView?
 		for _ in 0..<100 {
-			webView = findWebView(in: hosting)
+			webView = findWebView(in: host.view)
 			if events.last.map({ $0 == nil }) == true, webView != nil { break }
 			try await Task.sleep(for: .milliseconds(25))
 		}
@@ -93,7 +90,7 @@ struct InitialRenderProgressTests {
 			in: loadedWebView) == "true|function")
 	}
 
-	private func findWebView(in view: NSView) -> WKWebView? {
+	private func findWebView(in view: TestPlatformView) -> WKWebView? {
 		if let webView = view as? WKWebView { return webView }
 		for child in view.subviews {
 			if let found = findWebView(in: child) { return found }
@@ -110,4 +107,3 @@ struct InitialRenderProgressTests {
 		}
 	}
 }
-#endif

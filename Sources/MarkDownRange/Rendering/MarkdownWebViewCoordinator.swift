@@ -64,6 +64,12 @@ extension MarkdownWebView {
 		/// structural re-render. Style toggles restore the full selection so
 		/// repeated ⌘B/⌘I keep operating on the same text.
 		var pendingSelection: NSRange?
+		/// The parent's theme with dynamic colors already flattened against the
+		/// live color scheme. Set from `makeUXView`/`updateUXView`, because
+		/// `@Environment` is only readable while SwiftUI is evaluating the view
+		/// — reading it from the async render paths here is undefined, and on
+		/// iOS it tripped an observation-tracking feedback loop.
+		var resolvedTheme: MarkdownTheme?
 		/// The source the DOM currently reflects. Advanced synchronously on every
 		/// edit so rapid edits chain off the right base — `parent.text` lags
 		/// because the SwiftUI round-trip back into `updateNSView` is async.
@@ -137,7 +143,7 @@ extension MarkdownWebView {
 		}
 
 		func configSignature() -> String {
-			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.onOpenImage != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\(parent.resolvedTheme.signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
+			"\(parent.isEditable)|\(parent.onCheckboxToggle != nil)|\(parent.onOpenImage != nil)|\(parent.renderMermaid)|\(parent.allowsRemoteResources)|\((resolvedTheme ?? parent.theme).signature)|\(parent.fontSize)|\(parent.baseURL?.absoluteString ?? "")|\(parent.contentReloadToken)"
 		}
 
 		/// Advance to a fresh revision epoch. Called whenever the page's DOM is
@@ -246,7 +252,7 @@ extension MarkdownWebView {
 			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
-			let theme = parent.resolvedTheme
+			let theme = resolvedTheme ?? parent.theme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
@@ -291,7 +297,7 @@ extension MarkdownWebView {
 			renderGeneration += 1
 			let generation = renderGeneration
 			let selection = pendingSelection
-			let theme = parent.resolvedTheme
+			let theme = resolvedTheme ?? parent.theme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
@@ -465,7 +471,7 @@ extension MarkdownWebView {
 			renderTask?.cancel()
 			renderGeneration += 1
 			let generation = renderGeneration
-			let theme = parent.resolvedTheme
+			let theme = resolvedTheme ?? parent.theme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil

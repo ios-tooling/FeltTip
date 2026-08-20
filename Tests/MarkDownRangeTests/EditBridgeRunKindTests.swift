@@ -10,7 +10,6 @@
 //  still fails.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -233,4 +232,3 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 }
-#endif

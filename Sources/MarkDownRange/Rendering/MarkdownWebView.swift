@@ -35,11 +35,6 @@ import WebKit
 public struct MarkdownWebView: UXViewRepresentable {
 	@Environment(\.markdownLinkAccessScope) var linkAccessScope
 	@Environment(\.colorScheme) private var colorScheme
-
-	/// The theme with dynamic colors flattened against the live color scheme.
-	/// Resolved here, on the main actor, because the renderer runs on an actor
-	/// where iOS would resolve them against the light-mode default.
-	var resolvedTheme: MarkdownTheme { theme.resolved(for: colorScheme) }
 	@Environment(\.markdownLinkHandler) private var hostLinkHandler
 
 	/// The host's handler, or the platform default when none was supplied.
@@ -330,6 +325,7 @@ public struct MarkdownWebView: UXViewRepresentable {
 			injectionTime: .atDocumentEnd,
 			forMainFrameOnly: true))
 		context.coordinator.usesDocumentEndScripts = true
+		context.coordinator.resolvedTheme = theme.resolved(for: colorScheme)
 		config.setURLSchemeHandler(
 			LocalResourceSchemeHandler(coordinator: context.coordinator, accessPolicy: resourcePolicy),
 			forURLScheme: Self.resourceScheme)
@@ -351,6 +347,7 @@ public struct MarkdownWebView: UXViewRepresentable {
 	public func updateUXView(_ host: MarkdownWebViewFindHost, context: Context) {
 		let webView = host.webView
 		context.coordinator.parent = self
+		context.coordinator.resolvedTheme = theme.resolved(for: colorScheme)
 		context.coordinator.localResourceAccessPolicy?.setRoot(baseURL)
 		// Pick up pending restores before the text-driven reload runs, so
 		// `didFinish` places them on the freshly stamped DOM.

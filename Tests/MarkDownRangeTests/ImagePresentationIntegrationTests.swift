@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -69,4 +68,3 @@ import Testing
 		#expect(request?.altText == "Pinch target")
 	}
 }
-#endif

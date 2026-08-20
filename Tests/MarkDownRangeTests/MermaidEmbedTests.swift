@@ -1,4 +1,3 @@
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -50,4 +49,3 @@ import Testing
 		#expect(Set(snapshots.map(\.templateCount)).count == 1)
 	}
 }
-#endif

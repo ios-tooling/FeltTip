@@ -1,7 +1,6 @@
 import Testing
 @testable import MarkDownRange
 
-#if os(macOS)
 @Suite struct MarkdownWebViewTests {
 	@Test @MainActor func imagePresentationScriptAddsAccessibleControlsAndPinchGesture() {
 		let script = MarkdownWebView.Coordinator.imagePresentationScript
@@ -162,4 +161,3 @@ import Testing
 		#expect(script.components(separatedBy: "invalidateDimensions();").count >= 3)
 	}
 }
-#endif

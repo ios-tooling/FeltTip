@@ -9,7 +9,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -399,7 +402,7 @@ import Testing
 		let selected = "First continuation line.<br/>\nSecond"
 		let range = (source as NSString).range(of: selected)
 		let harness = try await CoordinatorBridgeHarness(source: source)
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		// The test runner is not the active macOS application, so its
 		// offscreen WKWebView reports document.hasFocus() == false. Override
 		// only that focus oracle; the real debounce and range mapping remain.
@@ -429,4 +432,3 @@ import Testing
 		#expect(harness.source == source)
 	}
 }
-#endif

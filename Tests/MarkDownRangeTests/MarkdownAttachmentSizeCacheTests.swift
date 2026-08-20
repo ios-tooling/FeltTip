@@ -1,4 +1,3 @@
-#if os(macOS)
 import Testing
 import Foundation
 @testable import MarkDownRange
@@ -45,4 +44,3 @@ import Foundation
 			!= MarkdownAttachmentSizeCache.key(for: long, fontSize: 16, width: 400))
 	}
 }
-#endif

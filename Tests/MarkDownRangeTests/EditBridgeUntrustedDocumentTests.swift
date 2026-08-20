@@ -9,7 +9,6 @@
 //  what stands between an untrusted .md file and all of that.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -92,4 +91,3 @@ import Testing
 		#expect(try await harness.evaluate("document.body.textContent.includes('trusted body') ? 'yes' : 'no'") == "yes")
 	}
 }
-#endif

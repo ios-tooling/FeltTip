@@ -1,4 +1,3 @@
-#if os(macOS)
 import CoreGraphics
 import Testing
 @testable import MarkDownRange
@@ -134,4 +133,3 @@ import Testing
 		return tops
 	}
 }
-#endif

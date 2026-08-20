@@ -3,7 +3,6 @@
 //  MarkDownRangeTests
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -77,4 +76,3 @@ import Testing
 		return components.url!
 	}
 }
-#endif

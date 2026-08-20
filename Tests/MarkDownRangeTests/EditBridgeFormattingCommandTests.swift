@@ -8,7 +8,6 @@
 //  patch left stamps, revision state, and the page usable.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -233,4 +232,3 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 }
-#endif

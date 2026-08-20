@@ -7,7 +7,6 @@
 //  it byte-for-byte, including spaces and tabs that HTML layout does not show.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -125,4 +124,3 @@ struct EditBridgeWhitespaceBoundaryTests {
 		try await assertHealthy(harness)
 	}
 }
-#endif

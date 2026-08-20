@@ -1,5 +1,8 @@
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -23,7 +26,7 @@ struct EditBridgeAdversarialWorkflowTests {
 		_ selector: String,
 		in harness: CoordinatorBridgeHarness
 	) {
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("\(selector):"), with: nil)
 	}
 
@@ -250,4 +253,3 @@ struct EditBridgeAdversarialWorkflowTests {
 		}
 	}
 }
-#endif

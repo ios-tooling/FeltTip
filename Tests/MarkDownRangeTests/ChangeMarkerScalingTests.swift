@@ -9,7 +9,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Testing
 import WebKit
 @testable import MarkDownRange
@@ -60,4 +63,3 @@ import WebKit
 		}
 	}
 }
-#endif

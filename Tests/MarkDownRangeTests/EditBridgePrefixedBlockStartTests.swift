@@ -3,7 +3,6 @@
 //  MarkDownRangeTests
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -124,4 +123,3 @@ struct EditBridgePrefixedBlockStartTests {
 		#expect(try await harness.stampMismatches().isEmpty)
 	}
 }
-#endif

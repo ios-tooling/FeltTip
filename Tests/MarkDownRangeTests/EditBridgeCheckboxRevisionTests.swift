@@ -3,7 +3,6 @@
 //  MarkDownRangeTests
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -75,4 +74,3 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 }
-#endif

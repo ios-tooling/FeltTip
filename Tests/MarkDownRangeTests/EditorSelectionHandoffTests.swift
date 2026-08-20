@@ -1,8 +1,16 @@
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import SwiftUI
 import Testing
 @testable import MarkDownRange
+
+// The styled/raw handoff is tested against the macOS NSTextView editor,
+// which has no iOS counterpart — the iOS raw editor is MarkdownUITextEditor,
+// with its own coverage. Keep this suite macOS-only.
+#if os(macOS)
 
 @Suite("Editor selection handoff", .serialized)
 @MainActor

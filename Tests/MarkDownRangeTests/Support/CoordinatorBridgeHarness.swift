@@ -6,12 +6,15 @@
 //  same message handler, revision gate, selfEdit skip, freeze lifecycle, and
 //  resync paths the app runs — only the SwiftUI round-trip is emulated (an
 //  onSourceEdit callback that updates the parent and calls load(into:) on the
-//  next main-actor turn, like updateNSView would). This is the deterministic
+//  next main-actor turn, like updateUXView would). This is the deterministic
 //  seam between the pure splicer tests and the full-app UI tests.
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Testing
 import WebKit
 @testable import MarkDownRange
@@ -30,7 +33,14 @@ final class CoordinatorBridgeHarness {
 	private(set) var sourceSelectionReportCount = 0
 	let coordinator: MarkdownWebView.Coordinator
 	let webView: WKWebView
-	private let window: NSWindow
+	/// The web view has to live in a real window: WebKit throttles or skips
+	/// layout for a view outside a hierarchy, and every stamp the bridge relies
+	/// on comes from the page actually laying out.
+	#if os(macOS)
+		private let window: NSWindow
+	#else
+		private let window: UIWindow
+	#endif
 	private let checkboxToggle: ((Int, Bool) -> Void)?
 	private let openImage: ((MarkdownImageRequest) -> Void)?
 	private let initialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
@@ -67,12 +77,22 @@ final class CoordinatorBridgeHarness {
 		config.setURLSchemeHandler(
 			LocalResourceSchemeHandler(coordinator: coordinator, accessPolicy: resourcePolicy),
 			forURLScheme: MarkdownWebView.resourceScheme)
-		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
+		webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
 		webView.navigationDelegate = coordinator
 		coordinator.webView = webView
-		window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-		window.contentView = webView
-		window.orderFront(nil)
+		#if os(macOS)
+			window = NSWindow(
+				contentRect: webView.frame, styleMask: [.borderless],
+				backing: .buffered, defer: false)
+			window.contentView = webView
+			window.orderFront(nil)
+		#else
+			window = UIWindow(frame: webView.frame)
+			let host = UIViewController()
+			host.view.addSubview(webView)
+			window.rootViewController = host
+			window.isHidden = false
+		#endif
 		wireRoundTrip(text: source)
 		coordinator.load(into: webView)
 		try await waitUntil("initial stamped content") {
@@ -80,7 +100,7 @@ final class CoordinatorBridgeHarness {
 		}
 	}
 
-	/// Rebuild the parent view the way updateNSView sees a fresh one after a
+	/// Rebuild the parent view the way updateUXView sees a fresh one after a
 	/// state change, keeping the onSourceEdit wiring alive.
 	private func wireRoundTrip(text: String) {
 		var view = MarkdownWebView(text: text, theme: .default, fontSize: 14)
@@ -246,4 +266,3 @@ final class CoordinatorBridgeHarness {
 		Issue.record("timed out waiting for \(label)")
 	}
 }
-#endif

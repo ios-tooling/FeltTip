@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import MarkDownRange
 
-#if os(macOS)
 @Suite struct MarkdownLineIndexTests {
 	@Test func singleCharacterEditShiftsOnlyTheFollowingStarts() {
 		let index = MarkdownLineIndex(text: "one\ntwo\nthree")
@@ -36,4 +35,3 @@ import Testing
 		#expect(index.position(at: 20) == (5, 1))
 	}
 }
-#endif

@@ -6,7 +6,6 @@
 //  full-body swap — with the caret restored and typing working immediately.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -190,4 +189,3 @@ import Testing
 		#expect(harness.source.hasPrefix("QParagraph 0"))
 	}
 }
-#endif

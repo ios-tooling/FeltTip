@@ -10,7 +10,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -235,11 +238,9 @@ struct SeededRNG: RandomNumberGenerator {
 			.map { "paragraph \($0) alpha bravo charlie delta" }
 			.joined(separator: "\n\n")
 		let harness = try await CoordinatorBridgeHarness(source: expected)
-		let pasteboard = NSPasteboard.general
-		let saved = pasteboard.string(forType: .string)
+		let saved = TestPasteboard.string
 		defer {
-			pasteboard.clearContents()
-			if let saved { pasteboard.setString(saved, forType: .string) }
+			TestPasteboard.string = saved
 		}
 		var edits = 0
 		var log: [String] = []
@@ -257,12 +258,12 @@ struct SeededRNG: RandomNumberGenerator {
 			let removed = NSRange(location: start, length: end - start)
 			let afterCut = (expected as NSString).replacingCharacters(in: removed, with: "")
 
-			pasteboard.clearContents()
+			TestPasteboard.string = nil
 			try await harness.run("window.__mdPlaceCaret(\(start), \(end - start))")
 			Self.performResponderCommand("cut", in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
-			let copied = try #require(pasteboard.string(forType: .string))
+			let copied = try #require(TestPasteboard.string)
 			log.append("cut \(start)..<\(end), copied \(copied.debugDescription)")
 			expected = afterCut
 			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
@@ -274,8 +275,7 @@ struct SeededRNG: RandomNumberGenerator {
 			// sharing the process-wide pasteboard. Reassert this case's payload
 			// immediately before the synchronous responder command so another
 			// seed's Cut cannot turn this move into unrelated text.
-			pasteboard.clearContents()
-			pasteboard.setString(copied, forType: .string)
+			TestPasteboard.string = copied
 			Self.performResponderCommand("paste", in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
@@ -306,11 +306,9 @@ struct SeededRNG: RandomNumberGenerator {
 			| Carol | Tester | FiftyTwo |
 			"""
 		let harness = try await CoordinatorBridgeHarness(source: expected)
-		let pasteboard = NSPasteboard.general
-		let saved = pasteboard.string(forType: .string)
+		let saved = TestPasteboard.string
 		defer {
-			pasteboard.clearContents()
-			if let saved { pasteboard.setString(saved, forType: .string) }
+			TestPasteboard.string = saved
 		}
 		var edits = 0
 		var log: [String] = []
@@ -326,12 +324,12 @@ struct SeededRNG: RandomNumberGenerator {
 				in: NSRange(location: start, length: length),
 				with: "")
 
-			pasteboard.clearContents()
+			TestPasteboard.string = nil
 			try await harness.run("window.__mdPlaceCaret(\(start), \(length))")
 			Self.performResponderCommand("cut", in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
-			let copied = try #require(pasteboard.string(forType: .string))
+			let copied = try #require(TestPasteboard.string)
 			expected = afterCut
 			log.append("cut \(start)..<\(start + length) → \(copied.debugDescription)")
 			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
@@ -344,8 +342,7 @@ struct SeededRNG: RandomNumberGenerator {
 			try await harness.placeCaret(destination)
 			// Keep concurrently scheduled argument cases from borrowing one
 			// another's process-wide pasteboard contents.
-			pasteboard.clearContents()
-			pasteboard.setString(copied, forType: .string)
+			TestPasteboard.string = copied
 			Self.performResponderCommand("paste", in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
@@ -458,8 +455,7 @@ struct SeededRNG: RandomNumberGenerator {
 		_ command: String,
 		in harness: CoordinatorBridgeHarness
 	) {
-		harness.webView.window?.makeFirstResponder(harness.webView)
+		harness.focusWebView()
 		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
 	}
 }
-#endif

@@ -6,7 +6,6 @@
 //  splice boundary must never sit between an emoji's surrogate halves.
 //
 
-#if os(macOS)
 import Foundation
 import Testing
 @testable import MarkDownRange
@@ -69,4 +68,3 @@ struct SurrogateBoundaryEditingTests {
 		#expect(try await harness.stampMismatches() == [])
 	}
 }
-#endif

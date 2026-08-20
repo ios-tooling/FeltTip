@@ -11,7 +11,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import Testing
 @testable import MarkDownRange
 
@@ -114,4 +117,3 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 }
-#endif

@@ -1,5 +1,9 @@
 #if os(macOS)
-import AppKit
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
 import Testing
 import WebKit
 @testable import MarkDownRange

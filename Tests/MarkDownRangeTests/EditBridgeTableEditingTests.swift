@@ -8,7 +8,6 @@
 //  backspace at a cell boundary must never eat the pipe syntax.
 //
 
-#if os(macOS)
 import Testing
 @testable import MarkDownRange
 
@@ -127,4 +126,3 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 }
-#endif

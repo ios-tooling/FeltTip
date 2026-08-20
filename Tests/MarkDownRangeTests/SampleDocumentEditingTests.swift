@@ -1,8 +1,11 @@
 #if os(macOS)
 	import AppKit
-	import Testing
-	import WebKit
-	@testable import MarkDownRange
+#else
+	import UIKit
+#endif
+import Testing
+import WebKit
+@testable import MarkDownRange
 
 /// Full-pipeline editing tests over a real release-notes document
 /// (curly quotes, em dashes, bold runs, an emoji): a live WKWebView runs the
@@ -16,20 +19,18 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	private(set) var text: String
 	let webView: WKWebView
 	let coordinator: MarkdownWebView.Coordinator
-	private let window: NSWindow
+	private let host: TestWindowHost
 
 	init(text: String) {
 		self.text = text
 		let config = WKWebViewConfiguration()
-		webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 700, height: 900), configuration: config)
+		webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 700, height: 900), configuration: config)
 		coordinator = MarkdownWebView.Coordinator(parent: MarkdownWebView(text: text, theme: .default, fontSize: 16).editable(true))
-		window = NSWindow(contentRect: webView.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+		host = TestWindowHost(view: webView)
 		super.init()
 		config.userContentController.add(self, name: "mdedit")
 		webView.navigationDelegate = coordinator
 		coordinator.webView = webView
-		window.contentView = webView
-		window.orderFront(nil)
 		updateParent()
 		coordinator.load(into: webView)
 	}
@@ -454,4 +455,3 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		return "diverges at utf16 offset \(mismatch)\nactual:   …\(aCtx)…\nexpected: …\(eCtx)…"
 	}
 }
-#endif
