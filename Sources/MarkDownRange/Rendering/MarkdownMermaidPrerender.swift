@@ -21,9 +21,8 @@ public enum MarkdownMermaidPrerender {
 		return await MermaidSVGRenderer().renderSVGs(for: sources, theme: theme.mermaidTheme)
 	}
 
-	#if os(macOS)
 	/// Maps each mermaid source to a rendered diagram (PNG + size). Use for the
-	/// DOCX / rich-text paths, which embed a native `NSTextAttachment` — their
+	/// DOCX / rich-text paths, which embed a native text attachment — their
 	/// `NSAttributedString` HTML import can't carry inline SVG or `data:` images.
 	@MainActor
 	public static func imageMap(markdown: String, theme: MarkdownTheme = .default, fontSize: CGFloat = 16) async -> [String: RenderedDiagram] {
@@ -31,7 +30,6 @@ public enum MarkdownMermaidPrerender {
 		guard !sources.isEmpty else { return [:] }
 		return await MermaidSVGRenderer().renderImages(for: sources, theme: theme.mermaidTheme)
 	}
-	#endif
 
 	private static func sources(in markdown: String, theme: MarkdownTheme, fontSize: CGFloat) -> [String] {
 		mermaidSources(in: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize))
