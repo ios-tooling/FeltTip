@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 import WebKit
 
@@ -51,4 +50,3 @@ final class WebViewLoadWaiter: NSObject, WKNavigationDelegate {
 		finish(.failure(URLError(.networkConnectionLost)))
 	}
 }
-#endif

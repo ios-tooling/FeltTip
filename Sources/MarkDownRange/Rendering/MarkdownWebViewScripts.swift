@@ -8,7 +8,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 
 extension MarkdownWebView.Coordinator {
 	/// Installed for every rendered page. Local Markdown links ask the host for
@@ -64,17 +67,23 @@ enum MarkdownWebViewScripts {
 	}
 
 	private static let linkOpenButtonIconDataURI: String? = {
-		guard let symbol = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: nil) else { return nil }
-		let size = NSSize(width: 14, height: 14)
-		let image = NSImage(size: size)
-		image.lockFocus()
-		NSColor.labelColor.set()
-		symbol.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1)
-		image.unlockFocus()
-		guard let tiff = image.tiffRepresentation,
-		      let rep = NSBitmapImageRep(data: tiff),
-		      let png = rep.representation(using: .png, properties: [:]) else { return nil }
+		#if os(macOS)
+			guard let symbol = NSImage(systemSymbolName: "arrow.right.circle", accessibilityDescription: nil) else { return nil }
+			let size = NSSize(width: 14, height: 14)
+			let image = NSImage(size: size)
+			image.lockFocus()
+			NSColor.labelColor.set()
+			symbol.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1)
+			image.unlockFocus()
+			guard let tiff = image.tiffRepresentation,
+			      let rep = NSBitmapImageRep(data: tiff),
+			      let png = rep.representation(using: .png, properties: [:]) else { return nil }
+		#else
+			let config = UIImage.SymbolConfiguration(pointSize: 14)
+			guard let symbol = UIImage(systemName: "arrow.right.circle", withConfiguration: config),
+			      let png = symbol.withTintColor(.label, renderingMode: .alwaysOriginal).pngData()
+			else { return nil }
+		#endif
 		return "data:image/png;base64,\(png.base64EncodedString())"
 	}()
 }
-#endif

@@ -8,9 +8,12 @@
 //  applied safely.
 //
 
-#if os(macOS)
-import AppKit
 import WebKit
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
 
 extension MarkdownWebView.Coordinator {
 	public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -282,7 +285,11 @@ extension MarkdownWebView.Coordinator {
 	/// is nothing pastable. Inside a table cell newlines fold to spaces: a
 	/// newline would shatter the row, and a cell can't show one anyway.
 	static func pasteboardText(foldingNewlines: Bool) -> String? {
-		guard let raw = NSPasteboard.general.string(forType: .string), !raw.isEmpty else { return nil }
+		#if os(macOS)
+			guard let raw = NSPasteboard.general.string(forType: .string), !raw.isEmpty else { return nil }
+		#else
+			guard let raw = UIPasteboard.general.string, !raw.isEmpty else { return nil }
+		#endif
 		var text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
 		if foldingNewlines {
 			text = text.split(separator: "\n", omittingEmptySubsequences: true)
@@ -400,4 +407,3 @@ extension MarkdownWebView.Coordinator {
 		return MarkdownImageRequest(url: resolved, altText: String(altText.prefix(512)))
 	}
 }
-#endif

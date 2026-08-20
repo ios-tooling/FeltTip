@@ -9,7 +9,10 @@
 //
 
 #if os(macOS)
-import AppKit
+	import AppKit
+#else
+	import UIKit
+#endif
 import SwiftUI
 import WebKit
 
@@ -669,8 +672,17 @@ extension MarkdownWebView {
 		/// True when this web view (or a descendant, e.g. the WKContentView) holds
 		/// the window's first responder — i.e. it's the editor the user is in.
 		private var isFirstResponder: Bool {
-			guard let webView, let responder = webView.window?.firstResponder as? NSView else { return false }
-			return responder === webView || responder.isDescendant(of: webView)
+			guard let webView else { return false }
+			#if os(macOS)
+				guard let responder = webView.window?.firstResponder as? NSView else { return false }
+				return responder === webView || responder.isDescendant(of: webView)
+			#else
+				// UIKit has no window-wide first-responder accessor; the web
+				// view reports its own focus, and WKContentView's editing
+				// focus surfaces through it.
+				return webView.isFirstResponder
+					|| webView.subviews.contains { $0.isFirstResponder }
+			#endif
 		}
 
 		private var lastMirroredSelection: NSRange?
@@ -757,49 +769,21 @@ extension MarkdownWebView {
 			// Links resolve against the custom resource-scheme base; map them back
 			// to real file URLs before opening.
 			let resolved = url.scheme == MarkdownWebView.resourceScheme ? URL(fileURLWithPath: url.path) : url
-			if resolved.isFileURL, Self.markdownExtensions.contains(resolved.pathExtension.lowercased()) {
-				NSDocumentController.shared.openDocument(withContentsOf: resolved, display: true) { [weak self] document, _, _ in
-					if document == nil { self?.requestAccessAndOpen(resolved) }
-				}
-			} else {
-				NSWorkspace.shared.open(resolved)
+			let isMarkdown = resolved.isFileURL
+				&& Self.markdownExtensions.contains(resolved.pathExtension.lowercased())
+			guard isMarkdown, !isReadable(resolved) else {
+				parent.linkHandler.openLink(resolved, isMarkdownDocument: isMarkdown)
+				return
+			}
+			// A markdown link the sandbox can't read yet: ask for access first,
+			// and hold any scope the host started so the page keeps working.
+			if let scoped = parent.linkHandler.requestAccess(to: resolved, scope: parent.linkAccessScope) {
+				openedLinkAccessScopes.append(scoped)
 			}
 		}
 
-		private func requestAccessAndOpen(_ target: URL) {
-			let panel = NSOpenPanel()
-			panel.allowsMultipleSelection = false
-			panel.canCreateDirectories = false
-			panel.directoryURL = target.deletingLastPathComponent()
-			switch parent.linkAccessScope {
-			case .file:
-				panel.canChooseFiles = true
-				panel.canChooseDirectories = false
-				panel.message = "Select “\(target.lastPathComponent)” to allow Marker to open this link."
-			case .folder:
-				panel.canChooseFiles = false
-				panel.canChooseDirectories = true
-				panel.message = "Select a folder containing “\(target.lastPathComponent)” to allow this and sibling links."
-			}
-			guard panel.runModal() == .OK, let selected = panel.url else { return }
-			let chosen = selected.standardizedFileURL.resolvingSymlinksInPath()
-			let wanted = target.standardizedFileURL.resolvingSymlinksInPath()
-			let coversTarget: Bool
-			switch parent.linkAccessScope {
-			case .file:
-				coversTarget = chosen.path == wanted.path
-			case .folder:
-				coversTarget = wanted.path.hasPrefix(
-					chosen.path.hasSuffix("/") ? chosen.path : chosen.path + "/")
-			}
-			guard coversTarget else { return }
-			if chosen.startAccessingSecurityScopedResource() {
-				openedLinkAccessScopes.append(chosen)
-			}
-			NSDocumentController.shared.openDocument(
-				withContentsOf: wanted, display: true) { document, _, _ in
-					if document == nil { NSWorkspace.shared.open(wanted) }
-				}
+		private func isReadable(_ url: URL) -> Bool {
+			FileManager.default.isReadableFile(atPath: url.path)
 		}
 
 		private static let markdownExtensions: Set<String> = MarkdownLinkExtensions.all
@@ -817,4 +801,3 @@ extension MarkdownWebView {
 		}
 	}
 }
-#endif

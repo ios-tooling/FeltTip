@@ -23,13 +23,23 @@
 //  handler in MarkdownWebViewSchemeHandler.
 //
 
-#if os(macOS)
-import AppKit
+import CrossPlatformKit
 import SwiftUI
 import WebKit
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
 
-public struct MarkdownWebView: NSViewRepresentable {
+public struct MarkdownWebView: UXViewRepresentable {
 	@Environment(\.markdownLinkAccessScope) var linkAccessScope
+	@Environment(\.markdownLinkHandler) private var hostLinkHandler
+
+	/// The host's handler, or the platform default when none was supplied.
+	@MainActor var linkHandler: any MarkdownLinkHandler {
+		hostLinkHandler ?? DefaultMarkdownLinkHandler.shared
+	}
 	let text: String
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
@@ -275,7 +285,7 @@ public struct MarkdownWebView: NSViewRepresentable {
 	/// scheme handler is the supported way to show local images.
 	nonisolated static let resourceScheme = "markerlocalres"
 
-	public func makeNSView(context: Context) -> MarkdownWebViewFindHost {
+	public func makeUXView(context: Context) -> MarkdownWebViewFindHost {
 		let config = WKWebViewConfiguration()
 		let resourcePolicy = LocalResourceAccessPolicy()
 		resourcePolicy.setRoot(baseURL)
@@ -319,14 +329,20 @@ public struct MarkdownWebView: NSViewRepresentable {
 			forURLScheme: Self.resourceScheme)
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = context.coordinator
-		webView.setValue(false, forKey: "drawsBackground")
+		#if os(macOS)
+			webView.setValue(false, forKey: "drawsBackground")
+		#else
+			webView.isOpaque = false
+			webView.backgroundColor = .clear
+			webView.scrollView.backgroundColor = .clear
+		#endif
 		context.coordinator.webView = webView
 		// The host stacks the standard find bar above the web view — hosts
 		// route ⌘F to it the same way they would to an NSTextView.
 		return MarkdownWebViewFindHost(webView: webView)
 	}
 
-	public func updateNSView(_ host: MarkdownWebViewFindHost, context: Context) {
+	public func updateUXView(_ host: MarkdownWebViewFindHost, context: Context) {
 		let webView = host.webView
 		context.coordinator.parent = self
 		context.coordinator.localResourceAccessPolicy?.setRoot(baseURL)
@@ -343,4 +359,3 @@ public struct MarkdownWebView: NSViewRepresentable {
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 }
-#endif

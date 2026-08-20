@@ -160,7 +160,6 @@ public enum MarkdownHTMLRenderer {
 	/// parse on every reload. Callers without the handler (exports, snapshot
 	/// tests, QuickLook) must keep the inline embed.
 	private static func mermaidEmbed(forBody body: String, theme: MarkdownTheme, viaScheme: Bool = false) -> String {
-		#if os(macOS)
 		guard body.contains("language-mermaid") else { return "" }
 		let engineTag: String
 		if viaScheme {
@@ -192,8 +191,5 @@ public enum MarkdownHTMLRenderer {
 		})();
 		</script>
 		"""
-		#else
-		return ""
-		#endif
 	}
 }

@@ -3,7 +3,6 @@
 //  MarkDownRange
 //
 
-#if os(macOS)
 import Foundation
 
 struct MarkdownLinkPreview: Sendable, Equatable {
@@ -41,4 +40,3 @@ enum MarkdownLinkPreviewLoader {
 		.value
 	}
 }
-#endif

@@ -3,7 +3,6 @@
 //  MarkDownRange
 //
 
-#if os(macOS)
 import SwiftUI
 
 private struct ShowLineNumbersKey: EnvironmentKey {
@@ -34,4 +33,3 @@ public extension EnvironmentValues {
 		set { self[MarkdownOptionsKey.self] = newValue }
 	}
 }
-#endif

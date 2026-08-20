@@ -3,7 +3,6 @@
 //  MarkDownRange
 //
 
-#if os(macOS)
 import SwiftUI
 
 /// How much access to request when a clicked local link points at a file the
@@ -24,4 +23,3 @@ public extension EnvironmentValues {
 		set { self[MarkdownLinkAccessScopeKey.self] = newValue }
 	}
 }
-#endif

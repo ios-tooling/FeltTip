@@ -3,8 +3,7 @@
 //  MarkDownRange
 //
 
-#if os(macOS)
-import AppKit
+import Foundation
 import UniformTypeIdentifiers
 import WebKit
 
@@ -130,4 +129,3 @@ final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 		delegate?.userContentController(controller, didReceive: message)
 	}
 }
-#endif
