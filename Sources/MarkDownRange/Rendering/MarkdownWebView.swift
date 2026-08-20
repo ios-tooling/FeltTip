@@ -56,6 +56,9 @@ public struct MarkdownWebView: UXViewRepresentable {
 	/// extension's sandbox can't load a payload that large (it crashes the
 	/// preview), so only the in-app web renderer opts in.
 	var renderMermaid = false
+	/// Show the formatting row above the keyboard while editing (iOS only —
+	/// macOS reaches the same commands through the Format menu).
+	var showsFormattingBar = false
 	/// Remote subresources are blocked by the generated page's CSP unless a host
 	/// deliberately opts in. Opening an untrusted Markdown file must not silently
 	/// turn an image URL into a tracking request.
@@ -152,6 +155,14 @@ public struct MarkdownWebView: UXViewRepresentable {
 
 	/// Opt in to rendering mermaid code blocks as diagrams (embeds the engine).
 	/// Not safe in the QuickLook extension — see `renderMermaid`.
+	/// Show a formatting row above the keyboard while the styled view is being
+	/// edited. No effect on macOS, which has the Format menu.
+	public func formattingBar(_ flag: Bool) -> Self {
+		var copy = self
+		copy.showsFormattingBar = flag
+		return copy
+	}
+
 	public func renderMermaid(_ flag: Bool) -> Self {
 		var copy = self
 		copy.renderMermaid = flag
@@ -329,7 +340,11 @@ public struct MarkdownWebView: UXViewRepresentable {
 		config.setURLSchemeHandler(
 			LocalResourceSchemeHandler(coordinator: context.coordinator, accessPolicy: resourcePolicy),
 			forURLScheme: Self.resourceScheme)
-		let webView = WKWebView(frame: .zero, configuration: config)
+		#if os(iOS)
+			let webView = MarkdownAccessoryWebView(frame: .zero, configuration: config)
+		#else
+			let webView = WKWebView(frame: .zero, configuration: config)
+		#endif
 		webView.navigationDelegate = context.coordinator
 		#if os(macOS)
 			webView.setValue(false, forKey: "drawsBackground")
@@ -339,9 +354,13 @@ public struct MarkdownWebView: UXViewRepresentable {
 			webView.scrollView.backgroundColor = .clear
 		#endif
 		context.coordinator.webView = webView
+		let host = MarkdownWebViewFindHost(webView: webView)
+		#if os(iOS)
+			installFormattingBar(on: webView, host: host)
+		#endif
 		// The host stacks the standard find bar above the web view — hosts
 		// route ⌘F to it the same way they would to an NSTextView.
-		return MarkdownWebViewFindHost(webView: webView)
+		return host
 	}
 
 	public func updateUXView(_ host: MarkdownWebViewFindHost, context: Context) {
@@ -356,9 +375,31 @@ public struct MarkdownWebView: UXViewRepresentable {
 		context.coordinator.load(into: webView)
 		context.coordinator.applyScrollControls(to: webView)
 		context.coordinator.applyMirroredSelection(to: webView)
+		#if os(iOS)
+			if let accessory = webView as? MarkdownAccessoryWebView {
+				installFormattingBar(on: accessory, host: host)
+			}
+		#endif
 		context.coordinator.currentLineChanges = context.environment.markdownLineChanges
 		context.coordinator.applyLineChanges(to: webView)
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 }
+
+#if os(iOS)
+private extension MarkdownWebView {
+	/// The bar is only meaningful while the page is editable, and it holds a
+	/// weak reference to the host so the accessory can't keep the view alive.
+	@MainActor
+	func installFormattingBar(on webView: MarkdownAccessoryWebView, host: MarkdownWebViewFindHost) {
+		guard showsFormattingBar, isEditable else {
+			webView.setFormattingBar(Optional<MarkdownFormattingBar>.none)
+			return
+		}
+		webView.setFormattingBar(MarkdownFormattingBar(
+			apply: { [weak host] in host?.applyFormatting($0) },
+			insertListItem: { [weak host] in host?.insertListItem() }))
+	}
+}
+#endif

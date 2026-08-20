@@ -37,6 +37,7 @@ struct RenderedMarkdownPane: View {
 			text: text, theme: context.theme,
 			fontSize: context.fontSize, baseURL: context.baseURL)
 			.editable(context.editablePreview)
+			.formattingBar(context.editablePreview)
 			.contentReloadToken(context.contentReloadToken)
 			.initialScrollFraction(scrollFraction)
 			.caretTarget(context.caretTarget)

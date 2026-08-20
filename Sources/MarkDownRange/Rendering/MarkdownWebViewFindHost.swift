@@ -65,40 +65,6 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		}
 	}
 
-	/// Menu-item entry points: drive WebKit's editor commands, which reach
-	/// the markdown source through the edit bridge's format-command path.
-	public func toggleBold() {
-		webView.evaluateJavaScript("document.execCommand('bold')", completionHandler: nil)
-	}
-
-	public func toggleItalic() {
-		webView.evaluateJavaScript("document.execCommand('italic')", completionHandler: nil)
-	}
-
-	public func toggleStrikethrough() {
-		webView.evaluateJavaScript("document.execCommand('strikeThrough')", completionHandler: nil)
-	}
-
-	public func toggleCode() {
-		applyFormatting(.inlineCode)
-	}
-
-	public func applyFormatting(_ command: MarkdownFormattingCommand) {
-		webView.evaluateJavaScript(
-			"window.__mdApplyFormat && window.__mdApplyFormat('\(command.rawValue)')",
-			completionHandler: nil)
-	}
-
-	/// Append to the list containing the styled insertion point, or the first
-	/// visible list when no list owns the selection. The page routes this
-	/// through its ordinary structural Return path, including source
-	/// verification and caret restoration.
-	public func insertListItem() {
-		webView.evaluateJavaScript(
-			"window.__mdInsertListItem && window.__mdInsertListItem()",
-			completionHandler: nil)
-	}
-
 	private var webViewIsFocused: Bool {
 		guard let responder = window?.firstResponder as? NSView else { return false }
 		return responder === webView || responder.isDescendant(of: webView)
