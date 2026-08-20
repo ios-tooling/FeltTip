@@ -416,8 +416,13 @@ import Testing
 			let previousCount = harness.selectionReportCount
 			try await select(harness, start: range.location, length: range.length, backward: backward)
 			try await harness.run("document.dispatchEvent(new Event('selectionchange'))")
+			// Wait for a report that actually carries a range, not merely for
+			// the counter to move: iOS WebKit emits extra selectionchange
+			// events around a programmatic selection, and the first of them
+			// can land before the selection exists. macOS emits one.
 			try await harness.waitUntil("selection report") {
 				harness.selectionReportCount > previousCount
+					&& harness.lastReportedSelection != nil
 			}
 			#expect(harness.lastReportedSelection == range, "backward=\(backward)")
 		}
