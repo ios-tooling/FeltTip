@@ -28,6 +28,56 @@ extension CoordinatorBridgeHarness {
 	}
 }
 
+/// One of WebKit's clipboard editing commands, and the `beforeinput` type it
+/// fires. Copy fires none — it only writes the pasteboard.
+enum ClipboardCommand: String {
+	case cut, copy, paste
+
+	var inputType: String? {
+		switch self {
+		case .cut: "deleteByCut"
+		case .copy: nil
+		case .paste: "insertFromPaste"
+		}
+	}
+}
+
+extension CoordinatorBridgeHarness {
+	/// Drive cut/copy/paste the way the platform can.
+	///
+	/// macOS sends the real responder action, so these tests keep exercising
+	/// WebKit's own clipboard pipeline. That matters beyond reaching the bridge:
+	/// the sanitization EDITING.md describes — a multi-line plain-text flavor
+	/// arriving with its newlines stripped — happens inside that pipeline, and
+	/// driving the page directly would quietly stop covering it.
+	///
+	/// iOS can't send it. A library test bundle has no UIApplication ("this
+	/// process does not have a UIApplication object and will not receive
+	/// events"), so a `UIResponderStandardEditActions` send never reaches the
+	/// web view and the harness waits rather than fails. There the page
+	/// dispatches the same `beforeinput` the pipeline would, and the test writes
+	/// the pasteboard flavors WebKit would have written — which is the contract
+	/// the bridge actually implements, since it reads the clipboard host-side
+	/// rather than off the event.
+	@MainActor
+	func clipboardCommand(_ command: ClipboardCommand) async throws {
+		#if os(macOS)
+			focusWebView()
+			webView.perform(NSSelectorFromString("\(command.rawValue):"), with: nil)
+		#else
+			if command != .paste {
+				TestPasteboard.string = try await evaluate("window.getSelection().toString()")
+			}
+			guard let inputType = command.inputType else { return }
+			try await run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: '\(inputType)', bubbles: true, cancelable: true
+				}));
+				""")
+		#endif
+	}
+}
+
 /// The system pasteboard, in the shape the paste tests need: read the current
 /// string, replace it, and restore what was there when the test finishes.
 ///

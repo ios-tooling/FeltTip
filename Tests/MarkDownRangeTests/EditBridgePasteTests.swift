@@ -2,10 +2,14 @@
 //  EditBridgePasteTests.swift
 //  MarkDownRangeTests
 //
-//  Paste, driven through WebKit's own editing pipeline: a real paste: action
-//  off the general pasteboard, not a synthetic event. It takes the verified
-//  structural route — splice the source, re-render — so what lands in the DOM
-//  is always a render of text the source actually holds.
+//  Paste, driven through WebKit's own editing pipeline on macOS: a real paste:
+//  action off the general pasteboard, not a synthetic event. It takes the
+//  verified structural route — splice the source, re-render — so what lands in
+//  the DOM is always a render of text the source actually holds.
+//
+//  iOS drives the same contract from the page instead, because a library test
+//  bundle has no UIApplication to route a responder action through. See
+//  `CoordinatorBridgeHarness.clipboardCommand`.
 //
 
 #if os(macOS)
@@ -54,16 +58,14 @@ import Testing
 
 	private func paste(into harness: CoordinatorBridgeHarness, at offset: Int) async throws {
 		try await harness.placeCaret(offset)
-		harness.focusWebView()
-		harness.webView.perform(NSSelectorFromString("paste:"), with: nil)
+		try await harness.clipboardCommand(.paste)
 	}
 
 	private func performResponderCommand(
-		_ command: String,
+		_ command: ClipboardCommand,
 		in harness: CoordinatorBridgeHarness
-	) {
-		harness.focusWebView()
-		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
+	) async throws {
+		try await harness.clipboardCommand(command)
 	}
 
 	private func restore(
@@ -133,8 +135,7 @@ import Testing
 				var s = window.getSelection(); var r = s.getRangeAt(0).cloneRange();
 				r.setEnd(r.startContainer, r.startOffset + 5); s.removeAllRanges(); s.addRange(r);
 				""")
-			harness.focusWebView()
-			harness.webView.perform(NSSelectorFromString("paste:"))
+			try await harness.clipboardCommand(.paste)
 			try await harness.waitForSourceEdits(1)
 		}
 		#expect(harness.source == "alpha X charlie\n")
@@ -183,8 +184,7 @@ import Testing
 
 		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
 		try await harness.placeCaret(5)
-		harness.focusWebView()
-		harness.webView.perform(NSSelectorFromString("paste:"), with: nil)
+		try await harness.clipboardCommand(.paste)
 		try await Task.sleep(for: .milliseconds(300))
 		#expect(harness.source == "alpha beta\n")
 		#expect(try await harness.evaluate("window.__mdIsFrozen() ? 'frozen' : 'live'") == "live")
@@ -204,8 +204,7 @@ import Testing
 			let harness = try await CoordinatorBridgeHarness(source: source)
 			try await select(harness, start: range.location, length: range.length, backward: backward)
 			try await withClearedPasteboard {
-				harness.focusWebView()
-				harness.webView.perform(NSSelectorFromString("cut:"), with: nil)
+				try await harness.clipboardCommand(.cut)
 				try await harness.waitForSourceEdits(1)
 				let copied = TestPasteboard.string ?? ""
 				#expect(copied.contains("Before linked and bold after"))
@@ -234,7 +233,7 @@ import Testing
 			selection.addRange(range)
 			""")
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(TestPasteboard.string?.contains("let value = 1") == true)
 		}
@@ -262,8 +261,7 @@ import Testing
 		let harness = try await CoordinatorBridgeHarness(source: source)
 		try await select(harness, start: range.location, length: range.length)
 		try await withClearedPasteboard {
-			harness.focusWebView()
-			harness.webView.perform(NSSelectorFromString("cut:"), with: nil)
+			try await harness.clipboardCommand(.cut)
 			try await harness.waitForSourceEdits(1)
 			let copied = TestPasteboard.string ?? ""
 			#expect(copied.contains("This view is displayed"))
@@ -286,7 +284,7 @@ import Testing
 		try await select(harness, start: range.location, length: range.length)
 
 		try await withClearedPasteboard {
-			performResponderCommand("copy", in: harness)
+			try await performResponderCommand(.copy, in: harness)
 			try await Task.sleep(for: .milliseconds(80))
 			#expect(harness.source == source)
 			#expect(harness.sourceEditCount == 0)
@@ -314,7 +312,7 @@ import Testing
 		try await select(harness, start: range.location, length: range.length, backward: true)
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == afterCut)
 			#expect(TestPasteboard.string == moved)
@@ -344,7 +342,7 @@ import Testing
 		try await select(harness, start: alice.location, length: alice.length)
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == afterCut)
 			#expect(TestPasteboard.string == "Alice")
@@ -380,7 +378,7 @@ import Testing
 		try await select(harness, start: range.location, length: range.length)
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == afterCut)
 			let copied = try #require(TestPasteboard.string)
@@ -420,7 +418,7 @@ import Testing
 			""")
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source == "Intro\n\n**Next paragraph.**")
 			try await harness.waitQuiescent()
@@ -451,7 +449,7 @@ import Testing
 		try await harness.run("document.execCommand('selectAll')")
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitForSourceEdits(1)
 			#expect(harness.source.isEmpty)
 			let copied = try #require(TestPasteboard.string)
@@ -481,10 +479,10 @@ import Testing
 		try await select(harness, start: moved.location, length: moved.length)
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
+			try await performResponderCommand(.cut, in: harness)
 			// The cut freezes the old DOM synchronously. A nearly simultaneous
 			// paste must not address that old selection.
-			performResponderCommand("paste", in: harness)
+			try await performResponderCommand(.paste, in: harness)
 			try await harness.waitForSourceEdits(1)
 			try await Task.sleep(for: .milliseconds(150))
 			#expect(harness.source == afterCut)
@@ -510,8 +508,8 @@ import Testing
 		try await select(harness, start: moved.location, length: moved.length)
 
 		try await withClearedPasteboard {
-			performResponderCommand("cut", in: harness)
-			performResponderCommand("paste", in: harness)
+			try await performResponderCommand(.cut, in: harness)
+			try await performResponderCommand(.paste, in: harness)
 			try await harness.waitForSourceEdits(2)
 			#expect(harness.source == source)
 			#expect(TestPasteboard.string == "move-this ")

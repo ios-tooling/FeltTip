@@ -949,12 +949,15 @@
     if (frozen) { e.preventDefault(); return; }
     var ranges = e.getTargetRanges();
     var range = ranges && ranges.length ? ranges[0] : null;
-    if (!range && (e.inputType === 'deleteByCut' || e.inputType === 'formatBold' ||
+    if (!range && (e.inputType === 'deleteByCut' || e.inputType === 'insertFromPaste' ||
+                   e.inputType === 'formatBold' ||
                    e.inputType === 'formatItalic' || e.inputType === 'formatStrikeThrough')) {
-      // Cut and formatting commands can report no target ranges; they act on
-      // the selection, so read it directly. Without this fallback WebKit
+      // Cut, paste, and formatting commands can report no target ranges; they
+      // act on the selection, so read it directly. Without this fallback WebKit
       // copies a selected run to the pasteboard but the source deletion is
-      // vetoed, making Cut appear to do nothing.
+      // vetoed, making Cut appear to do nothing — and a paste that arrives
+      // without ranges is dropped in silence, which is the worse failure of the
+      // two because nothing reaches the source at all.
       var commandSel = window.getSelection();
       if (commandSel && commandSel.rangeCount) { range = commandSel.getRangeAt(0); }
     }
