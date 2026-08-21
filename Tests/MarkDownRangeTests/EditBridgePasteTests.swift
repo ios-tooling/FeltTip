@@ -87,6 +87,52 @@ import Testing
 		harness.adoptHostText(text)
 	}
 
+	// MARK: Non-breaking spaces
+	//
+	// contentEditable renders a lone space as U+00A0 so layout can't collapse
+	// it, and hands that to the clipboard. These live here rather than in their
+	// own suite because they touch the same system pasteboard the tests above
+	// do, and a separate suite races them.
+
+	@Test func pastedTextNormalizesNonBreakingSpaces() {
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+
+		TestPasteboard.string = "Alpha\u{00A0}bravo"
+		#expect(MarkdownWebView.Coordinator.pasteboardText(foldingNewlines: false) == "Alpha bravo")
+	}
+
+	@Test func normalizationSurvivesTheTableCellFold() {
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+
+		// Folding splits on newlines and trims; an NBSP is not whitespace to
+		// `trimmingCharacters(in: .whitespaces)`'s eyes in the middle of a run,
+		// so it has to be gone before the fold rather than after.
+		TestPasteboard.string = "one\u{00A0}two\nthree"
+		#expect(MarkdownWebView.Coordinator.pasteboardText(foldingNewlines: true) == "one two three")
+	}
+
+	@Test func cuttingAndPastingASingleSpaceIsANoOp() async throws {
+		// Marker #3: the space between two words, cut and pasted straight back.
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha bravo charlie\n")
+		let space = ("Alpha bravo charlie\n" as NSString).range(of: " ").location
+
+		try await harness.run("window.__mdPlaceCaret(\(space), 1)")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "Alphabravo charlie\n")
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(space))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "Alpha bravo charlie\n")
+		#expect(!harness.source.contains("\u{00A0}"), "a non-breaking space reached the source")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func pastingPlainTextSplicesItAtTheCaret() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
 		try await withPasteboard("PASTED") {

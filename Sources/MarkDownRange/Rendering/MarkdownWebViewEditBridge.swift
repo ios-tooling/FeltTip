@@ -284,12 +284,23 @@ extension MarkdownWebView.Coordinator {
 		return String(data: data, encoding: .utf8)
 	}
 
-	/// The clipboard's plain text, with line endings normalized. Nil when there
-	/// is nothing pastable. Inside a table cell newlines fold to spaces: a
-	/// newline would shatter the row, and a cell can't show one anyway.
+	/// The clipboard's plain text, with line endings and non-breaking spaces
+	/// normalized. Nil when there is nothing pastable. Inside a table cell
+	/// newlines fold to spaces: a newline would shatter the row, and a cell
+	/// can't show one anyway.
+	///
+	/// The U+00A0 pass is not cosmetic. contentEditable renders a lone space as
+	/// a non-breaking space so layout can't collapse it, and hands that to the
+	/// clipboard — so cutting the space between two words and pasting it back
+	/// writes U+00A0 into the markdown. The page already flattens it in
+	/// everything it reads out of the DOM (`plain()` in EditorScript.js), which
+	/// means the styled view cannot show the difference: a source holding one
+	/// would disagree with its own render forever. Flattening here keeps the
+	/// two sides reading the same text.
 	static func pasteboardText(foldingNewlines: Bool) -> String? {
 		guard let raw = MarkdownPasteboard.text, !raw.isEmpty else { return nil }
 		var text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+		text = text.replacingOccurrences(of: "\u{00A0}", with: " ")
 		if foldingNewlines {
 			text = text.split(separator: "\n", omittingEmptySubsequences: true)
 				.map { $0.trimmingCharacters(in: .whitespaces) }
