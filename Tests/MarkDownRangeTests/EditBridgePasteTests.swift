@@ -133,6 +133,85 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func cuttingAndPastingAWordInAHeadingAddsNoMarkup() async throws {
+		// Marker #4: the round trip is visually invisible but was writing
+		// emphasis markers into the source.
+		let source = "# Styled Clipboard Stress\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let word = (source as NSString).range(of: "Clipboard")
+
+		try await harness.run("window.__mdPlaceCaret(\(word.location), \(word.length))")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(word.location))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test(.disabled("Marker #2 — reproduces; the clipboard carries the DOM's one newline, the source loses two"))
+	func cuttingAndPastingABlockSeparatorKeepsTheBlocksApart() async throws {
+		// Marker #2: the blank line between a heading and the paragraph under
+		// it, cut and pasted back. Joining them would turn two blocks into one.
+		let source = "# Styled Clipboard Stress\n\nAlpha bravo charlie.\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let separator = (source as NSString).range(of: "\n\n")
+
+		try await harness.run("window.__mdPlaceCaret(\(separator.location), \(separator.length))")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(separator.location))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		// Still a heading and a paragraph, not one run-on block.
+		#expect(try await harness.evaluate("String(document.querySelectorAll('h1').length)") == "1")
+		#expect(try await harness.evaluate("String(document.querySelectorAll('p').length)") == "1")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test(.disabled("Marker #5 — the paste after a to-end-of-document cut produces no source edit at all"))
+	func aLargeCutAndPasteLeavesNoExtraBlankLinesInTheDOM() async throws {
+		// Marker #5: the source round-tripped exactly but the render kept
+		// visible blank lines the markdown doesn't have. Compare the live DOM
+		// against a fresh render of the same source — the convergence oracle.
+		let source = """
+			> Quoted text with punctuation: commas, semicolons; and em dashes — intact.
+
+			## Second Section
+
+			Paragraph A: 0123456789 repeated 0123456789 repeated 0123456789.
+			Paragraph B: Unicode café naïve emoji 🧪🚀 and symbols <>&.
+			"""
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let ns = source as NSString
+		let start = ns.range(of: "Second Section").location
+		let length = ns.length - start
+
+		try await harness.run("window.__mdPlaceCaret(\(start), \(length))")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(start))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+
+		let live = try await harness.domProjectedText()
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		#expect(live == (try await fresh.domProjectedText()), "the DOM kept blank lines the source doesn't have")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func pastingPlainTextSplicesItAtTheCaret() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
 		try await withPasteboard("PASTED") {
