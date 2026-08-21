@@ -329,15 +329,24 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		// vary run to run, so derive the position from the caret's own run —
 		// a fixed offset sometimes left the caret off-screen, where a
 		// (correct) minimal nudge would fail the equality check.
+		//
+		// Clamp to maxY here rather than reading `window.scrollY` back for the
+		// achieved position. iOS reports the *requested* offset from a fresh
+		// programmatic scroll — its UIScrollView clamps a beat later — so the
+		// read-back invented a target the document could not reach, and the
+		// restore was then measured against somewhere it was never able to go.
 		let target = try await host.evaluate("""
 			(function () {
 			  var spans = document.querySelectorAll('[data-s]');
 			  for (var i = 0; i < spans.length; i++) {
 			    var base = parseInt(spans[i].getAttribute('data-s'), 10);
 			    if (base <= \(caret) && \(caret) <= base + spans[i].textContent.length) {
-			      var y = Math.max(0, Math.round(spans[i].getBoundingClientRect().top + window.scrollY - 300));
+			      var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+			        - window.innerHeight;
+			      var wanted = Math.round(spans[i].getBoundingClientRect().top + window.scrollY - 300);
+			      var y = Math.min(Math.max(0, wanted), Math.max(maxY, 0));
 			      window.scrollTo(0, y);
-			      return String(Math.round(window.scrollY));   // the ACHIEVED position (clamped to maxY)
+			      return String(y);
 			    }
 			  }
 			  return "-1";
