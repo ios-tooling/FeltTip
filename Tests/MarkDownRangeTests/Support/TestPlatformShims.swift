@@ -98,6 +98,30 @@ extension CoordinatorBridgeHarness {
 	}
 }
 
+extension CoordinatorBridgeHarness {
+	/// Drive a physical Backspace.
+	///
+	/// macOS sends the responder action, which is the whole point of the tests
+	/// that use it: WebKit's physical-Backspace path is the one that can report
+	/// a collapsed target range over an extended selection, and the bridge's
+	/// fallback to the live selection exists for exactly that.
+	///
+	/// iOS has no UIApplication to route the action through, and sending it
+	/// anyway takes the web process down — the suite then reports every test
+	/// passing on the retry while xcodebuild reports the run as failed. The page
+	/// performs the same edit through WebKit's own editing command instead,
+	/// which arrives at the bridge as the same `deleteContentBackward`.
+	@MainActor
+	func deleteBackward() async throws {
+		#if os(macOS)
+			focusWebView()
+			webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
+		#else
+			try await run("document.execCommand('delete')")
+		#endif
+	}
+}
+
 /// The clipboard the paste tests write to and read back.
 ///
 /// macOS uses the real pasteboard, because these tests drive a real `paste:`

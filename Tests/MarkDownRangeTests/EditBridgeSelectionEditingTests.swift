@@ -134,11 +134,18 @@ import Testing
 		let range = (source as NSString).range(of: selected)
 		let harness = try await CoordinatorBridgeHarness(source: source)
 		try await harness.run("window.__mdPlaceCaret(\(range.location), \(range.length))")
-		harness.focusWebView()
-		harness.webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
+		try await harness.deleteBackward()
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "```swift\nlet \nprint(value)\n```\n")
-		try await assertHealthy(harness)
+		// The deletion ends at a trailing space, which is the case iOS WebKit
+		// rebalances: the run comes back shorter than the source it is stamped
+		// for, the queued edit's check catches the drift, and the bridge
+		// resyncs from the spliced source. macOS keeps the fast path.
+		#if os(macOS)
+			try await assertHealthy(harness)
+		#else
+			try await assertHealthy(harness, allowedResyncs: 1)
+		#endif
 	}
 
 	@Test func backspaceDeletesAWholeCodeDOMSelection() async throws {
@@ -152,8 +159,7 @@ import Testing
 			selection.removeAllRanges()
 			selection.addRange(range)
 			""")
-		harness.focusWebView()
-		harness.webView.perform(NSSelectorFromString("deleteBackward:"), with: nil)
+		try await harness.deleteBackward()
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "```swift\n```\n")
 		try await assertHealthy(harness)
