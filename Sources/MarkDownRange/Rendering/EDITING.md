@@ -160,19 +160,42 @@ underneath it, not in what the page asks for.
 - The check is held to the same standard as the invariant itself: a run may show
   **less** than the source from its stamp (typing into an empty fenced block
   consumes the blank line's newline), but never something else and never more.
-- **Text substitution** — autocorrect, predictive text, dictation — arrives as
-  `insertReplacementText` and is mapped like any other in-run edit, including
-  the retroactive kind that rewrites a word already typed. iOS is more
-  aggressive about it than macOS. This path has no test coverage on either
-  platform: the suites drive `beforeinput` directly, not the software keyboard.
+- **Text substitution** — autocorrect, predictive text, dictation — reaches the
+  page two ways, and they are covered to different depths.
+  - *Autocorrect* arrives as `insertReplacementText` and is mapped like any
+    other in-run edit, including the retroactive kind that rewrites a word
+    already typed. It shares its branch with `insertText`, so the mapping is
+    well covered; what isn't is the `dataTransfer` fallback the branch uses
+    when `e.data` is null. A synthetic event can't drive it — unlike cut and
+    paste, `insertReplacementText` has no live-selection fallback, because a
+    real one always carries target ranges.
+  - *Dictation and predictive text* arrive as a **composition**, reconciled by
+    diffing the whole run at `compositionend`. `EditBridgeTextSubstitutionTests`
+    covers that on both platforms: a commit into a run, a cancelled
+    composition, a commit inside `**bold**` that must not disturb the markers,
+    and one spanning two runs, which resyncs rather than guessing. Driving the
+    composition events directly is faithful here precisely because the handler
+    deliberately trusts nothing they carry — it re-reads the run.
+  - What no test reaches on either platform is the **software keyboard itself**:
+    whether iOS fires these events where we expect for every substitution
+    feature. That needs a host app and a real keyboard, not a library bundle.
   The **raw** editor turns substitution off wholesale because it edits markdown
   source, where a curled quote changes meaning; the styled view edits prose, so
   it leaves substitution on and relies on the mapping.
-- **Responder-chain routes don't cross over.** The tests drive Cut and Paste
-  with `perform(NSSelectorFromString("paste:"))`, which AppKit answers and iOS
-  WKWebView does not — the harness waits forever instead of failing.
-  `Scripts/test-ios.sh` skips those suites and records why. The bridge's own
-  clipboard read is platform-neutral; it is the test driving that is missing.
+- **Responder-chain routes don't cross over**, and the tests no longer ask them
+  to. `perform(NSSelectorFromString("paste:"))` is answered by AppKit; on iOS a
+  library test bundle has no UIApplication, so the action never arrives — and
+  for `deleteBackward:` it takes the web process down, which truncated whole
+  runs. `CoordinatorBridgeHarness.clipboardCommand` and `.deleteBackward()`
+  branch instead: macOS keeps the real action, iOS drives the same contract
+  from the page. The two are not interchangeable, and which one to use depends
+  on where the work happens — *paste* is host-driven, so a dispatched
+  `beforeinput` is enough, while *cut* and *backspace* take the fast path and
+  need WebKit to actually mutate the DOM, so they go through `execCommand`.
+- **A test host cannot read its own clipboard on iOS.** Without a UIApplication
+  the process can't own a pasteboard write, so `UIPasteboard.general.string`
+  returns nil — not blocks — even for the string just written.
+  `MarkdownPasteboard.substitute` stands in for tests; the app leaves it nil.
 - **Find** is `NSTextFinder` on macOS and `UIFindInteraction` on iOS; the
   formatting bar above the keyboard exists only on iOS, where there is no
   Format menu.
