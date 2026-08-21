@@ -22,29 +22,14 @@ fi
 # Suites excluded on iOS, and why. None of these are silent: a run that skips
 # work should say so, or the green result means less than it looks like.
 #
-#   EditBridgePasteTests   – three causes, two of them now fixed. The tests no
-#                            longer drive `paste:` through the responder chain
-#                            (a library bundle has no UIApplication, so the
-#                            action never arrived) — CoordinatorBridgeHarness
-#                            .clipboardCommand dispatches `beforeinput` from the
-#                            page on iOS instead. The test's own pasteboard read
-#                            no longer prompts either (see TestPasteboard).
-#                            What still hangs is the *bridge's* read:
-#                            MarkdownWebViewEditBridge asks for
-#                            UIPasteboard.general.string on the main actor while
-#                            handling op:'paste', iOS gates that read behind
-#                            paste authorization the test host cannot answer, and
-#                            the blocked main actor takes the evaluateJavaScript
-#                            completion — and the whole suite — down with it.
-#                            The first test never finishes. Fixing it means the
-#                            bridge reading the pasteboard without blocking.
-#   EditBridgeFuzzTests    – contains cut/paste fuzz cases, same cause.
+#   (EditBridgePasteTests and EditBridgeFuzzTests used to be skipped here for
+#    the responder chain, then for paste authorization, then for the clipboard
+#    read. All three are addressed — see MarkdownPasteboard and
+#    CoordinatorBridgeHarness.clipboardCommand — and both suites now run.)
 #   EditBridgeSoakTests    – long-running; the coverage is exhaustiveness, which
 #   BlockPatchBenchmark…   – macOS already provides far faster.
 #   EditingLatencyBenchmark– wall-clock budgets, meaningless on a simulator.
 SKIPS=(
-	EditBridgePasteTests
-	EditBridgeFuzzTests
 	EditBridgeSoakTests
 	BlockPatchBenchmarkTests
 	EditingLatencyBenchmarkTests

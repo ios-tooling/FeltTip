@@ -9,6 +9,7 @@
 
 import SwiftUI
 import WebKit
+@testable import MarkDownRange
 #if os(macOS)
 	import AppKit
 #else
@@ -65,36 +66,63 @@ extension CoordinatorBridgeHarness {
 			focusWebView()
 			webView.perform(NSSelectorFromString("\(command.rawValue):"), with: nil)
 		#else
+			// Cut and copy put the selection on the clipboard themselves; here
+			// the test does it, because the process can't own a pasteboard write.
 			if command != .paste {
 				TestPasteboard.string = try await evaluate("window.getSelection().toString()")
 			}
-			guard let inputType = command.inputType else { return }
-			try await run("""
-				document.body.dispatchEvent(new InputEvent('beforeinput', {
-				  inputType: '\(inputType)', bubbles: true, cancelable: true
-				}));
-				""")
+			switch command {
+			case .copy:
+				// Copy mutates nothing and fires no beforeinput. Clipboard only.
+				break
+			case .cut:
+				// Cut takes the fast path, which trusts the browser to mutate the
+				// DOM and follow up with `input`. A synthetic beforeinput does
+				// neither, so the edit queues and never drains — the deletion
+				// simply doesn't happen. execCommand goes through WebKit's own
+				// editing pipeline, so the event carries real target ranges and
+				// the DOM actually changes.
+				try await run("document.execCommand('cut')")
+			case .paste:
+				// Paste is host-driven: the page vetoes the default and posts its
+				// range, and the host fills in the text. Nothing needs WebKit to
+				// perform an edit, so dispatching the event is enough — and
+				// execCommand('paste') is blocked without user activation anyway.
+				try await run("""
+					document.body.dispatchEvent(new InputEvent('beforeinput', {
+					  inputType: 'insertFromPaste', bubbles: true, cancelable: true
+					}));
+					""")
+			}
 		#endif
 	}
 }
 
-/// The system pasteboard, in the shape the paste tests need: read the current
-/// string, replace it, and restore what was there when the test finishes.
+/// The clipboard the paste tests write to and read back.
 ///
-/// Reading is macOS-only, and that is the whole point. iOS gates a read of
-/// content this process did not write behind paste authorization, and an
-/// xctest host has no UI to show the prompt on — the request never resolves,
-/// and the suite hangs rather than fails. What the read buys is restoring the
-/// user's clipboard afterwards, which matters on a Mac and means nothing on a
-/// simulator, so iOS reports an empty pasteboard and skips the courtesy.
+/// macOS uses the real pasteboard, because these tests drive a real `paste:`
+/// through the responder chain and WebKit's own pipeline has to find the text
+/// where it expects it.
+///
+/// iOS can't use it at all. A library test bundle has no UIApplication, so the
+/// process can't own a write: `UIPasteboard.general.string` returns nil with
+/// "Operation not authorized" even for the string set a line earlier. It fails
+/// fast rather than hanging, which is worse for a test — the paste path runs
+/// with nothing to splice and every assertion after it is measuring the wrong
+/// thing. So iOS stands MarkdownPasteboard's substitute up instead, holding the
+/// text in-process where both the test and the bridge can reach it.
 enum TestPasteboard {
+	#if !os(macOS)
+		nonisolated(unsafe) private static var held: String?
+	#endif
+
 	@MainActor
 	static var string: String? {
 		get {
 			#if os(macOS)
 				NSPasteboard.general.string(forType: .string)
 			#else
-				nil
+				held
 			#endif
 		}
 		set {
@@ -102,7 +130,8 @@ enum TestPasteboard {
 				NSPasteboard.general.clearContents()
 				if let newValue { NSPasteboard.general.setString(newValue, forType: .string) }
 			#else
-				UIPasteboard.general.string = newValue ?? ""
+				held = newValue
+				MarkdownPasteboard.substitute = { held }
 			#endif
 		}
 	}

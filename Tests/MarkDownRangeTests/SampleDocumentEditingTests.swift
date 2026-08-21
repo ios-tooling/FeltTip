@@ -363,7 +363,21 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		try await host.waitUntilReady()
 		try await Task.sleep(for: .milliseconds(400))   // let the restore land
 		let scrollY = try await host.evaluate("String(Math.round(window.scrollY))").flatMap { Double($0) } ?? -1
-		#expect(abs(scrollY - target) < 60, "scroll moved from \(target) to \(scrollY) after Return")
+		// "Where the user was, as far as the document still allows" is the
+		// actual contract, so measure against that rather than against the
+		// pre-edit number. The edit re-renders the page, and on iOS the
+		// viewport is not the size the harness asked for — a 700x900 web view
+		// on a 402x874 screen — so the reachable maximum moves under the test
+		// between the two measurements.
+		let reachable = try await host.evaluate("""
+			String(Math.round(Math.max(0,
+			  Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+			    - window.innerHeight)))
+			""").flatMap { Double($0) } ?? -1
+		let expectedY = min(target, reachable)
+		#expect(
+			abs(scrollY - expectedY) < 60,
+			"scroll moved from \(target) to \(scrollY) after Return (reachable \(reachable))")
 	}
 
 	@Test func sourceOffsetScrollTargetsTheHeading() async throws {

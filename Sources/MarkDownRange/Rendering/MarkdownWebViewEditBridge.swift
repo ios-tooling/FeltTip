@@ -288,11 +288,7 @@ extension MarkdownWebView.Coordinator {
 	/// is nothing pastable. Inside a table cell newlines fold to spaces: a
 	/// newline would shatter the row, and a cell can't show one anyway.
 	static func pasteboardText(foldingNewlines: Bool) -> String? {
-		#if os(macOS)
-			guard let raw = NSPasteboard.general.string(forType: .string), !raw.isEmpty else { return nil }
-		#else
-			guard let raw = UIPasteboard.general.string, !raw.isEmpty else { return nil }
-		#endif
+		guard let raw = MarkdownPasteboard.text, !raw.isEmpty else { return nil }
 		var text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
 		if foldingNewlines {
 			text = text.split(separator: "\n", omittingEmptySubsequences: true)

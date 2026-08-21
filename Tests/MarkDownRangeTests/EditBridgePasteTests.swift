@@ -364,7 +364,18 @@ import Testing
 		#expect(harness.source.split(separator: "\n").allSatisfy {
 			$0.filter { $0 == "|" }.count == 3
 		})
-		#expect(harness.coordinator.resyncCount == 0)
+		// Cutting the cell down to "|  |" leaves two adjacent spaces, which is
+		// the case iOS WebKit rebalances: the run comes back a character short
+		// of the source it is stamped for, the queued edit's check catches it,
+		// and the bridge resyncs from the spliced source rather than trusting a
+		// DOM that has drifted. Everything that resync exists to protect is
+		// asserted above — source, pipes, stamps, no hard rejections. macOS
+		// never drifts here and must still take the fast path.
+		#if os(macOS)
+			#expect(harness.coordinator.resyncCount == 0)
+		#else
+			#expect(harness.coordinator.resyncCount <= 1)
+		#endif
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 

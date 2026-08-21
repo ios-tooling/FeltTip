@@ -70,7 +70,16 @@ struct SeededRNG: RandomNumberGenerator {
 		let script = "seed \(seed):\n" + opLog.joined(separator: "\n")
 			+ "\nincidents:\n" + harness.coordinator.bridgeIncidents.joined(separator: "\n")
 		#expect(harness.coordinator.hardRejections == 0, "hard rejections during \(script)")
-		#expect(harness.coordinator.resyncCount == 0, "resyncs during \(script)")
+		// macOS holds the fast path for the whole script. iOS doesn't, and
+		// shouldn't have to: WebKit rebalances whitespace around a deletion
+		// there, the queued edit's check catches the drift, and the bridge
+		// resyncs from the spliced source. How often that happens depends on
+		// what the random script does to the DOM, not on anything the test
+		// controls — so the count isn't the contract. Convergence below is,
+		// and it stays strict on both platforms, as does hardRejections above.
+		#if os(macOS)
+			#expect(harness.coordinator.resyncCount == 0, "resyncs during \(script)")
+		#endif
 
 		// Convergence: a fresh render of the final source must project the
 		// same text as the live DOM (modulo WebKit's NBSP churn).
@@ -260,7 +269,7 @@ struct SeededRNG: RandomNumberGenerator {
 
 			TestPasteboard.string = nil
 			try await harness.run("window.__mdPlaceCaret(\(start), \(end - start))")
-			Self.performResponderCommand("cut", in: harness)
+			try await Self.performResponderCommand(.cut, in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
 			let copied = try #require(TestPasteboard.string)
@@ -276,7 +285,7 @@ struct SeededRNG: RandomNumberGenerator {
 			// immediately before the synchronous responder command so another
 			// seed's Cut cannot turn this move into unrelated text.
 			TestPasteboard.string = copied
-			Self.performResponderCommand("paste", in: harness)
+			try await Self.performResponderCommand(.paste, in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
 			expected = (expected as NSString).replacingCharacters(
@@ -326,7 +335,7 @@ struct SeededRNG: RandomNumberGenerator {
 
 			TestPasteboard.string = nil
 			try await harness.run("window.__mdPlaceCaret(\(start), \(length))")
-			Self.performResponderCommand("cut", in: harness)
+			try await Self.performResponderCommand(.cut, in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
 			let copied = try #require(TestPasteboard.string)
@@ -343,7 +352,7 @@ struct SeededRNG: RandomNumberGenerator {
 			// Keep concurrently scheduled argument cases from borrowing one
 			// another's process-wide pasteboard contents.
 			TestPasteboard.string = copied
-			Self.performResponderCommand("paste", in: harness)
+			try await Self.performResponderCommand(.paste, in: harness)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
 			expected = (expected as NSString).replacingCharacters(
@@ -452,10 +461,9 @@ struct SeededRNG: RandomNumberGenerator {
 	}
 
 	static func performResponderCommand(
-		_ command: String,
+		_ command: ClipboardCommand,
 		in harness: CoordinatorBridgeHarness
-	) {
-		harness.focusWebView()
-		harness.webView.perform(NSSelectorFromString("\(command):"), with: nil)
+	) async throws {
+		try await harness.clipboardCommand(command)
 	}
 }
