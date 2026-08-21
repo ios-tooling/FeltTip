@@ -22,6 +22,7 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	private lazy var previousButton = chevronButton(system: "chevron.up", action: #selector(findPrevious))
 	private lazy var nextButton = chevronButton(system: "chevron.down", action: #selector(findNext))
 	private lazy var doneButton = NSButton(title: "Done", target: self, action: #selector(dismissBar))
+	let matchCountLabel = NSTextField(labelWithString: "")
 	private var barVisible = false
 	private let barHeight: CGFloat = 34
 	private let barInset: CGFloat = 8
@@ -118,11 +119,13 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		webView.find(term, configuration: configuration) { result in
 			if !result.matchFound { NSSound.beep() }
 		}
+		updateMatchCount(for: term)
 	}
 
 	private func clearMatch() {
 		// WKWebView represents the active find result as a selection.
 		webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
+		updateMatchCount(for: "")
 	}
 
 	// MARK: Bar UI
@@ -151,7 +154,10 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		// constraint pass) while creating the document window — which AppKit
 		// reports as a mutually-exclusive conflict and can escalate to a raised
 		// LAYOUT_CONSTRAINTS_NOT_SATISFIABLE exception.
-		for view in [searchField, previousButton, nextButton, doneButton] { bar.addSubview(view) }
+		matchCountLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+		matchCountLabel.textColor = .secondaryLabelColor
+		matchCountLabel.alignment = .right
+		for view in [searchField, matchCountLabel, previousButton, nextButton, doneButton] { bar.addSubview(view) }
 		addSubview(bar)
 	}
 
@@ -200,11 +206,17 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	private func layoutBar() {
 		let buttons = [previousButton, nextButton, doneButton]
 		let buttonsWidth = buttons.reduce(0) { $0 + $1.fittingSize.width + barSpacing }
-		let available = bar.bounds.width - barInset * 2 - buttonsWidth
+		let countSize = matchCountLabel.fittingSize
+		let countWidth = countSize.width > 0 ? countSize.width + barSpacing : 0
+		let available = bar.bounds.width - barInset * 2 - buttonsWidth - countWidth
 		let height = searchField.fittingSize.height
 		let width = max(0, min(searchFieldMaxWidth, available))
 		searchField.frame = NSRect(x: barInset, y: bar.bounds.midY - height / 2, width: width, height: height)
 		var leading = searchField.frame.maxX + barSpacing
+		matchCountLabel.frame = NSRect(
+			x: leading, y: bar.bounds.midY - countSize.height / 2,
+			width: countSize.width, height: countSize.height)
+		leading += countWidth
 		for button in buttons {
 			let size = button.fittingSize
 			button.frame = NSRect(x: leading, y: bar.bounds.midY - size.height / 2, width: size.width, height: size.height)
