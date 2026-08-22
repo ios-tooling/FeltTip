@@ -222,7 +222,7 @@ extension MarkdownWebView.Coordinator {
 		switch MarkdownEditSplicer.apply(edit, to: source) {
 		case .applied(let newSource, let selection, let replaced):
 			if isClipboardCut, !replaced.isEmpty {
-				MarkdownPasteboard.writeSource(replaced)
+				MarkdownPasteboard.writeSource(replaced, ifTextMatches: edit.expected)
 			}
 			currentSource = newSource
 			currentRev += 1

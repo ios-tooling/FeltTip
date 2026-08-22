@@ -58,10 +58,15 @@ enum MarkdownPasteboard {
 		return String(data: data, encoding: .utf8)
 	}
 
-	static func writeSource(_ source: String) {
+	/// Adds the private source flavor only while the native cut's visible text
+	/// is still on the pasteboard. The edit bridge message is asynchronous; an
+	/// intervening Copy in this or another app must not receive stale Markdown.
+	@discardableResult
+	static func writeSource(_ source: String, ifTextMatches expectedText: String) -> Bool {
+		guard normalized(text) == normalized(expectedText) else { return false }
 		if let writeSourceSubstitute {
 			writeSourceSubstitute(source)
-			return
+			return true
 		}
 		let data = Data(source.utf8)
 		#if os(macOS)
@@ -70,5 +75,14 @@ enum MarkdownPasteboard {
 		#else
 			UIPasteboard.general.setData(data, forPasteboardType: sourceType)
 		#endif
+		return true
+	}
+
+	private static func normalized(_ text: String?) -> String? {
+		guard let text else { return nil }
+		// WebKit's target range can omit whitespace at element boundaries while
+		// the native pasteboard inserts it (and may use NBSP within a run).
+		// Non-whitespace content is the stable identity shared by both views.
+		return String(text.filter { !$0.isWhitespace })
 	}
 }

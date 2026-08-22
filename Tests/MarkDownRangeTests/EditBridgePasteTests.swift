@@ -129,6 +129,18 @@ import Testing
 			foldingNewlines: false, preferringSource: false) == "visible prose")
 	}
 
+	@Test func delayedCutDoesNotAttachSourceToAChangedPasteboard() {
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+		TestPasteboard.string = "new clipboard contents"
+
+		let wrote = MarkdownPasteboard.writeSource(
+			"**old selection**", ifTextMatches: "old selection")
+
+		#expect(!wrote)
+		#expect(TestPasteboard.source == nil)
+	}
+
 	@Test func cuttingAndPastingASingleSpaceIsANoOp() async throws {
 		// Marker #3: the space between two words, cut and pasted straight back.
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha bravo charlie\n")
