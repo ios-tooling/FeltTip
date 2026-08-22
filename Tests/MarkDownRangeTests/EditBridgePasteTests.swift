@@ -141,6 +141,18 @@ import Testing
 		#expect(TestPasteboard.source == nil)
 	}
 
+	@Test func delayedCutDoesNotIgnoreRemovedClipboardWhitespace() {
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+		TestPasteboard.string = "oldselection"
+
+		let wrote = MarkdownPasteboard.writeSource(
+			"**old selection**", ifTextMatches: "old selection")
+
+		#expect(!wrote)
+		#expect(TestPasteboard.source == nil)
+	}
+
 	@Test func cuttingAndPastingASingleSpaceIsANoOp() async throws {
 		// Marker #3: the space between two words, cut and pasted straight back.
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha bravo charlie\n")

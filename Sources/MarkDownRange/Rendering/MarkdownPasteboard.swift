@@ -63,7 +63,7 @@ enum MarkdownPasteboard {
 	/// intervening Copy in this or another app must not receive stale Markdown.
 	@discardableResult
 	static func writeSource(_ source: String, ifTextMatches expectedText: String) -> Bool {
-		guard normalized(text) == normalized(expectedText) else { return false }
+		guard text(text, matches: expectedText) else { return false }
 		if let writeSourceSubstitute {
 			writeSourceSubstitute(source)
 			return true
@@ -78,11 +78,40 @@ enum MarkdownPasteboard {
 		return true
 	}
 
-	private static func normalized(_ text: String?) -> String? {
-		guard let text else { return nil }
-		// WebKit's target range can omit whitespace at element boundaries while
-		// the native pasteboard inserts it (and may use NBSP within a run).
-		// Non-whitespace content is the stable identity shared by both views.
-		return String(text.filter { !$0.isWhitespace })
+	/// WebKit's target range can omit whitespace at element boundaries while
+	/// the native pasteboard inserts it. Permit those additions, but require
+	/// every whitespace boundary the event did report so a later Copy with
+	/// collapsed words cannot be mistaken for the original cut.
+	private static func text(_ currentText: String?, matches expectedText: String) -> Bool {
+		guard let currentText else { return false }
+		let current = Array(currentText)
+		let expected = Array(expectedText)
+		if current.allSatisfy(\.isWhitespace), expected.allSatisfy(\.isWhitespace) {
+			return true
+		}
+
+		var currentIndex = current.startIndex
+		var expectedIndex = expected.startIndex
+		while expectedIndex < expected.endIndex {
+			if expected[expectedIndex].isWhitespace {
+				guard currentIndex < current.endIndex,
+					  current[currentIndex].isWhitespace else { return false }
+				while currentIndex < current.endIndex, current[currentIndex].isWhitespace {
+					currentIndex += 1
+				}
+				while expectedIndex < expected.endIndex, expected[expectedIndex].isWhitespace {
+					expectedIndex += 1
+				}
+			} else {
+				while currentIndex < current.endIndex, current[currentIndex].isWhitespace {
+					currentIndex += 1
+				}
+				guard currentIndex < current.endIndex,
+					  current[currentIndex] == expected[expectedIndex] else { return false }
+				currentIndex += 1
+				expectedIndex += 1
+			}
+		}
+		return current[currentIndex...].allSatisfy(\.isWhitespace)
 	}
 }
