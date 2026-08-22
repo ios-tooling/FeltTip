@@ -9,6 +9,13 @@
     window.webkit.messageHandlers.mdedit.postMessage({ type: 'ready', bridge: !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mdedit) });
   } catch (e) {}
   document.body.contentEditable = 'true';
+  // A styled document is prose, so keep iOS' software-keyboard substitutions
+  // enabled explicitly. WebKit's default for a programmatically editable body
+  // is not stable across OS releases and can otherwise suppress QuickType and
+  // autocorrect even though the bridge handles their replacement events.
+  document.body.setAttribute('autocorrect', 'on');
+  document.body.setAttribute('autocapitalize', 'sentences');
+  document.body.spellcheck = true;
   document.body.style.outline = 'none';
   // Blocks we can't map edits inside become read-only islands, so the caret
   // can't land somewhere a keystroke would be silently vetoed. Tables are
@@ -41,6 +48,7 @@
   var stampRev = 0;
   // Monotonic message counter, for ordering diagnostics on the host side.
   var seq = 0;
+  var nextPasteMatchesStyle = false;
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -69,6 +77,9 @@
   // edit freezes synchronously in its own turn, so "not frozen and at the
   // current revision" is a deterministic settled-state check.
   window.__mdIsFrozen = function () { return !!frozen; };
+  window.__mdRequestMatchStylePaste = function () {
+    nextPasteMatchesStyle = true;
+  };
   function freeze() {
     var token = seq;
     frozen = { token: token };
@@ -939,6 +950,13 @@
     // so it can't desync the source or move the caret. Checked first, before
     // the range lookup, because a history beforeinput may carry no range.
     if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); return; }
+    // Match Style belongs to exactly one native paste command. Consume the
+    // request before any early-out so a refused paste cannot affect the next.
+    var requestedMatchStyle = false;
+    if (e.inputType === 'insertFromPaste') {
+      requestedMatchStyle = nextPasteMatchesStyle;
+      nextPasteMatchesStyle = false;
+    }
     // While a composition is live (IME, dead keys, inline predictive
     // text), marked text sits in the DOM that the source doesn't have, so
     // no event can be mapped through offsets — not even plain insertText,
@@ -1067,7 +1085,8 @@
       if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length) {
         e.preventDefault();
         freeze();
-        post({ start: start, end: end, text: '', expected: expected,
+        post({ op: type === 'deleteByCut' ? 'cut' : undefined,
+               start: start, end: end, text: '', expected: expected,
                crossRun: crossRun, selected: selected, before: before, after: after,
                endAtBlockStart: deleteEndAtBlockStart,
                syntaxStart: syntaxStart, syntaxEnd: syntaxEnd,
@@ -1075,7 +1094,8 @@
                caret: start, rev: stampRev, seq: seq++ });
         return;
       }
-      queueFastEdit({ start: start, end: end, text: '', expected: expected, before: before, after: after },
+      queueFastEdit({ op: type === 'deleteByCut' ? 'cut' : undefined,
+                      start: start, end: end, text: '', expected: expected, before: before, after: after },
                     start, -(end - start), startSpan);
       return;
     }
@@ -1144,7 +1164,7 @@
       var pasteHost = startPos.node.nodeType === 1 ? startPos.node : startPos.node.parentNode;
       var inCell = !!(pasteHost && pasteHost.closest && pasteHost.closest('td, th'));
       freeze();
-      post({ op: 'paste', inCell: inCell, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, rev: stampRev, seq: seq++ });
+      post({ op: 'paste', matchStyle: requestedMatchStyle, inCell: inCell, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, rev: stampRev, seq: seq++ });
       return;
     }
     // Shift-Enter: a hard break inside the paragraph. Written as a backslash

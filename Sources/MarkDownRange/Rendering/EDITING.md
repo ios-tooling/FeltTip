@@ -138,10 +138,13 @@ synthetic empty paragraph as its caret home.
 ### Paste
 
 The page posts `op: 'paste'` with its range only; the **host** fills in the text
-from `NSPasteboard`. WebKit sanitizes the plain-text flavor of a paste's
+from the system pasteboard. WebKit sanitizes the plain-text flavor of a paste's
 `dataTransfer` — a multi-line paste reaches the page with its newlines already
-stripped — so the pasteboard is the only faithful source. Plain text only:
-markdown *is* the rich form. Inside a table cell newlines fold to spaces.
+stripped — so the pasteboard is the only faithful source. A Cut keeps WebKit's
+rendered plain-text flavor for other applications and adds a private exact
+Markdown-source flavor; another Marker editor prefers that flavor, preserving
+hidden syntax and block separators. External plain text remains the fallback.
+Inside a table cell newlines fold to spaces either way.
 
 ## iOS
 
@@ -176,9 +179,15 @@ underneath it, not in what the page asks for.
     and one spanning two runs, which resyncs rather than guessing. Driving the
     composition events directly is faithful here precisely because the handler
     deliberately trusts nothing they carry — it re-reads the run.
-  - What no test reaches on either platform is the **software keyboard itself**:
-    whether iOS fires these events where we expect for every substitution
-    feature. That needs a host app and a real keyboard, not a library bundle.
+  - Marker supplies that missing UIApplication host in
+    `MarkerIOSUITests/SoftwareKeyboardUITests`. It taps visible software-keyboard
+    keys (never `typeText` for the behavior under test) and proves Smart
+    Punctuation's `--` → em-dash replacement reaches Markdown source. QuickType
+    and double-space probes run too, and skip with an explicit reason on
+    simulators whose prediction dictionary or WebKit shortcut is unavailable.
+    The styled page explicitly enables autocorrect, sentence capitalization,
+    and spellcheck so WebKit OS-default changes cannot silently remove these
+    features; `EditBridgeTextSubstitutionTests` verifies those page traits.
   The **raw** editor turns substitution off wholesale because it edits markdown
   source, where a curled quote changes meaning; the styled view edits prose, so
   it leaves substitution on and relies on the mapping.

@@ -72,7 +72,7 @@ enum MarkdownEditSplicer {
 		/// The new source, plus the selection to restore after a structural
 		/// re-render: style toggles keep the (shifted) selection selected;
 		/// other edits collapse to their caret target.
-		case applied(String, selection: NSRange?)
+		case applied(String, selection: NSRange?, replaced: String)
 		case rejected(String)
 	}
 
@@ -124,7 +124,8 @@ enum MarkdownEditSplicer {
 			}
 			return .applied(
 				text.replacingCharacters(in: change.range, with: change.replacement),
-				selection: change.selection)
+				selection: change.selection,
+				replaced: text.substring(with: change.range))
 		}
 		if edit.inlineCode {
 			guard !edit.crossRun else {
@@ -137,7 +138,8 @@ enum MarkdownEditSplicer {
 			}
 			return .applied(
 				text.replacingCharacters(in: change.range, with: change.replacement),
-				selection: change.selection)
+				selection: change.selection,
+				replaced: text.substring(with: change.range))
 		}
 		if let marker = edit.wrapMarker {
 			// A cross-run DOM selection can stop immediately before hidden
@@ -162,12 +164,21 @@ enum MarkdownEditSplicer {
 				   text.substring(with: NSRange(location: edit.start - length, length: length)) == alternate,
 				   text.substring(with: NSRange(location: edit.end, length: length)) == alternate {
 					let unwrapped = text.substring(to: edit.start - length) + actual + text.substring(from: edit.end + length)
-					return .applied(unwrapped, selection: NSRange(location: edit.start - length, length: edit.end - edit.start))
+					let replacedRange = NSRange(
+						location: edit.start - length,
+						length: edit.end - edit.start + 2 * length)
+					return .applied(
+						unwrapped,
+						selection: NSRange(location: edit.start - length, length: edit.end - edit.start),
+						replaced: text.substring(with: replacedRange))
 				}
 			}
 			let markerLength = (marker as NSString).length
 			let wrapped = text.substring(to: edit.start) + marker + actual + marker + text.substring(from: edit.end)
-			return .applied(wrapped, selection: NSRange(location: edit.start + markerLength, length: edit.end - edit.start))
+			return .applied(
+				wrapped,
+				selection: NSRange(location: edit.start + markerLength, length: edit.end - edit.start),
+				replaced: actual)
 		}
 		guard var replacement = edit.replacement else {
 			return .rejected("no replacement or marker")
@@ -243,8 +254,10 @@ enum MarkdownEditSplicer {
 			}
 			spliceRange = NSRange(location: edit.start, length: cursor - edit.start)
 		}
-		return .applied(text.replacingCharacters(in: spliceRange, with: replacement),
-						selection: caret.map { NSRange(location: $0, length: 0) })
+		return .applied(
+			text.replacingCharacters(in: spliceRange, with: replacement),
+			selection: caret.map { NSRange(location: $0, length: 0) },
+			replaced: text.substring(with: spliceRange))
 	}
 
 	private static let taskListPrefix = try! NSRegularExpression(

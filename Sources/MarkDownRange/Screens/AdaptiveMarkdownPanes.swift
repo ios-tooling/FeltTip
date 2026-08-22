@@ -23,17 +23,30 @@ struct AdaptiveMarkdownPanes: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
 	let context: MarkdownPaneContext
+	var onPaneChanged: ((MarkdownCompactPane) -> Void)?
 	var initialScrollFraction: Double?
 	var onScrollFractionChanged: ((Double) -> Void)?
 
-	@State private var pane: Pane = .rendered
+	@State private var pane: MarkdownCompactPane
 	@State private var scrollFraction: Double = 0
 	@State private var didSeedScroll = false
 
-	enum Pane: String, CaseIterable, Identifiable {
-		case rendered, source
-		var id: Self { self }
-		var label: String { self == .rendered ? "Rendered" : "Source" }
+	init(
+		text: Binding<String>,
+		selectedHeadingID: Binding<String?>,
+		context: MarkdownPaneContext,
+		initialPane: MarkdownCompactPane,
+		onPaneChanged: ((MarkdownCompactPane) -> Void)?,
+		initialScrollFraction: Double?,
+		onScrollFractionChanged: ((Double) -> Void)?
+	) {
+		_text = text
+		_selectedHeadingID = selectedHeadingID
+		self.context = context
+		self.onPaneChanged = onPaneChanged
+		self.initialScrollFraction = initialScrollFraction
+		self.onScrollFractionChanged = onScrollFractionChanged
+		_pane = State(initialValue: initialPane)
 	}
 
 	var body: some View {
@@ -55,11 +68,12 @@ struct AdaptiveMarkdownPanes: View {
 			didSeedScroll = true
 			scrollFraction = initialScrollFraction
 		}
+		.onChange(of: pane) { _, pane in onPaneChanged?(pane) }
 	}
 }
 
 private struct CompactMarkdownPanes: View {
-	@Binding var pane: AdaptiveMarkdownPanes.Pane
+	@Binding var pane: MarkdownCompactPane
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
 	@Binding var scrollFraction: Double
@@ -69,7 +83,7 @@ private struct CompactMarkdownPanes: View {
 	var body: some View {
 		VStack(spacing: 0) {
 			Picker("View", selection: $pane) {
-				ForEach(AdaptiveMarkdownPanes.Pane.allCases) { Text($0.label).tag($0) }
+				ForEach(MarkdownCompactPane.allCases) { Text($0.label).tag($0) }
 			}
 			.pickerStyle(.segmented)
 			.padding(.horizontal)

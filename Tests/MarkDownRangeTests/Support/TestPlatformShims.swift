@@ -138,6 +138,7 @@ extension CoordinatorBridgeHarness {
 enum TestPasteboard {
 	#if !os(macOS)
 		nonisolated(unsafe) private static var held: String?
+		nonisolated(unsafe) private static var heldSource: String?
 	#endif
 
 	@MainActor
@@ -155,9 +156,21 @@ enum TestPasteboard {
 				if let newValue { NSPasteboard.general.setString(newValue, forType: .string) }
 			#else
 				held = newValue
+				heldSource = nil
 				MarkdownPasteboard.substitute = { held }
+				MarkdownPasteboard.sourceSubstitute = { heldSource }
+				MarkdownPasteboard.writeSourceSubstitute = { heldSource = $0 }
 			#endif
 		}
+	}
+
+	@MainActor
+	static var source: String? {
+		#if os(macOS)
+			MarkdownPasteboard.source
+		#else
+			heldSource
+		#endif
 	}
 }
 

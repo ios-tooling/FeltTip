@@ -71,6 +71,19 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		return responder === webView || responder.isDescendant(of: webView)
 	}
 
+	/// Paste only the clipboard's visible text, deliberately ignoring Marker's
+	/// source-faithful Markdown flavor. This is the styled editor's equivalent
+	/// of AppKit's Paste and Match Style command.
+	public func pasteAndMatchStyle() {
+		webView.evaluateJavaScript(
+			"window.__mdRequestMatchStylePaste && window.__mdRequestMatchStylePaste()"
+		) { [weak webView] _, _ in
+			guard let webView else { return }
+			webView.window?.makeFirstResponder(webView)
+			webView.perform(NSSelectorFromString("paste:"), with: nil)
+		}
+	}
+
 	// MARK: Find actions (routed from the app's Find menu, NSTextView-style)
 
 	public override func performTextFinderAction(_ sender: Any?) {

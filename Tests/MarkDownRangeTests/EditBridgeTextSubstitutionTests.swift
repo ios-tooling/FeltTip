@@ -18,6 +18,13 @@ import Testing
 @testable import MarkDownRange
 
 @Suite(.serialized) @MainActor struct EditBridgeTextSubstitutionTests {
+	@Test func styledPageExplicitlyEnablesSoftwareKeyboardSubstitutions() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "prose\n")
+		#expect(try await harness.evaluate("document.body.getAttribute('autocorrect')") == "on")
+		#expect(try await harness.evaluate("document.body.getAttribute('autocapitalize')") == "sentences")
+		#expect(try await harness.evaluate("String(document.body.spellcheck)") == "true")
+	}
+
 	/// Start a composition with the caret at `offset`, run `mutate` against the
 	/// composing run the way an IME or dictation commit would, then end it.
 	private func compose(

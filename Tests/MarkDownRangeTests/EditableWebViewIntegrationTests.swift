@@ -26,7 +26,7 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		editCount += 1
 		guard let edit = MarkdownEditSplicer.Edit(body: body) else { return }
 		switch MarkdownEditSplicer.apply(edit, to: source) {
-		case .applied(let new, _): source = new
+		case .applied(let new, _, _): source = new
 		case .rejected(let reason): rejections.append(reason)
 		}
 	}

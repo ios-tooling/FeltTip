@@ -187,7 +187,9 @@ extension MarkdownWebView.Coordinator {
 		// Everything after this — revision gate, context verification,
 		// structural re-render — is the ordinary edit path.
 		if body["op"] as? String == "paste" {
-			guard let pasted = Self.pasteboardText(foldingNewlines: body["inCell"] as? Bool == true) else {
+			guard let pasted = Self.pasteboardText(
+				foldingNewlines: body["inCell"] as? Bool == true,
+				preferringSource: body["matchStyle"] as? Bool != true) else {
 				log("paste with nothing usable on the pasteboard")
 				if let token = body["seq"] as? Int {
 					webView?.evaluateJavaScript("window.__mdUnfreeze && window.__mdUnfreeze(\(token));", completionHandler: nil)
@@ -216,8 +218,12 @@ extension MarkdownWebView.Coordinator {
 			}
 		}
 		let source = currentSource ?? parent.text
+		let isClipboardCut = body["op"] as? String == "cut"
 		switch MarkdownEditSplicer.apply(edit, to: source) {
-		case .applied(let newSource, let selection):
+		case .applied(let newSource, let selection, let replaced):
+			if isClipboardCut, !replaced.isEmpty {
+				MarkdownPasteboard.writeSource(replaced)
+			}
 			currentSource = newSource
 			currentRev += 1
 			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count) rev=\(currentRev)")
@@ -297,8 +303,9 @@ extension MarkdownWebView.Coordinator {
 	/// means the styled view cannot show the difference: a source holding one
 	/// would disagree with its own render forever. Flattening here keeps the
 	/// two sides reading the same text.
-	static func pasteboardText(foldingNewlines: Bool) -> String? {
-		guard let raw = MarkdownPasteboard.text, !raw.isEmpty else { return nil }
+	static func pasteboardText(foldingNewlines: Bool, preferringSource: Bool = true) -> String? {
+		guard let raw = (preferringSource ? MarkdownPasteboard.source : nil) ?? MarkdownPasteboard.text,
+		      !raw.isEmpty else { return nil }
 		var text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
 		text = text.replacingOccurrences(of: "\u{00A0}", with: " ")
 		if foldingNewlines {

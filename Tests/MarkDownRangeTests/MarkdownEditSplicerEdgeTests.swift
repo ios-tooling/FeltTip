@@ -29,7 +29,7 @@ import Testing
 	}
 
 	private func applied(_ outcome: MarkdownEditSplicer.Outcome) -> (String, NSRange?)? {
-		guard case .applied(let text, let selection) = outcome else { return nil }
+		guard case .applied(let text, let selection, _) = outcome else { return nil }
 		return (text, selection)
 	}
 

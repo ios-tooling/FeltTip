@@ -26,8 +26,12 @@
 /// pasteboard, which is also what macOS does under test — a real `paste:`
 /// through the responder chain is the pipeline those tests are there to cover.
 enum MarkdownPasteboard {
+	private static let sourceType = "com.standalone.marker.markdown-source"
+
 	/// Stands in for the system pasteboard. Tests only; nil everywhere else.
 	nonisolated(unsafe) static var substitute: (@Sendable () -> String?)?
+	nonisolated(unsafe) static var sourceSubstitute: (@Sendable () -> String?)?
+	nonisolated(unsafe) static var writeSourceSubstitute: (@Sendable (String) -> Void)?
 
 	/// The clipboard's plain text, or nil when there is nothing pastable.
 	static var text: String? {
@@ -36,6 +40,35 @@ enum MarkdownPasteboard {
 			return NSPasteboard.general.string(forType: .string)
 		#else
 			return UIPasteboard.general.string
+		#endif
+	}
+
+	/// Exact Markdown source carried alongside the rendered plain-text flavor.
+	/// Other applications continue to see normal prose; another Marker editor
+	/// can round-trip hidden syntax and block separators without loss.
+	static var source: String? {
+		if let sourceSubstitute { return sourceSubstitute() }
+		#if os(macOS)
+			guard let data = NSPasteboard.general.data(
+				forType: NSPasteboard.PasteboardType(sourceType)) else { return nil }
+		#else
+			guard let data = UIPasteboard.general.data(
+				forPasteboardType: sourceType) else { return nil }
+		#endif
+		return String(data: data, encoding: .utf8)
+	}
+
+	static func writeSource(_ source: String) {
+		if let writeSourceSubstitute {
+			writeSourceSubstitute(source)
+			return
+		}
+		let data = Data(source.utf8)
+		#if os(macOS)
+			NSPasteboard.general.setData(
+				data, forType: NSPasteboard.PasteboardType(sourceType))
+		#else
+			UIPasteboard.general.setData(data, forPasteboardType: sourceType)
 		#endif
 	}
 }

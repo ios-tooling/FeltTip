@@ -12,7 +12,7 @@ import Testing
 	}
 
 	private func applied(_ outcome: MarkdownEditSplicer.Outcome) -> String? {
-		if case .applied(let new, _) = outcome { return new }
+		if case .applied(let new, _, _) = outcome { return new }
 		return nil
 	}
 
@@ -90,7 +90,7 @@ import Testing
 		// ⌘B on already-bold text un-bolds instead of stacking markers, and
 		// the caret override lands at the (shrunken) end of the selection.
 		let bold = MarkdownEditSplicer.apply(edit(start: 2, end: 7, marker: "**", expected: "Alpha", caret: 11), to: "**Alpha**\n\nBeta")
-		guard case .applied(let unwrapped, let selection) = bold else {
+		guard case .applied(let unwrapped, let selection, _) = bold else {
 			Issue.record("unwrap did not apply")
 			return
 		}

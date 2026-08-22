@@ -10,6 +10,14 @@
 
 import SwiftUI
 
+/// Pane selected by the compact iOS source/rendered switch. Hosts can persist
+/// this per document while regular-width layouts continue to show both panes.
+public enum MarkdownCompactPane: String, CaseIterable, Identifiable, Sendable {
+	case rendered, source
+	public var id: Self { self }
+	var label: String { self == .rendered ? "Rendered" : "Source" }
+}
+
 public struct WebSplitMarkdownScreen: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
@@ -25,6 +33,8 @@ public struct WebSplitMarkdownScreen: View {
 	var onSourceEdit: ((String, Int?) -> Void)?
 	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	var onVisibleSectionChanged: ((String) -> Void)?
+	var initialCompactPane: MarkdownCompactPane
+	var onCompactPaneChanged: ((MarkdownCompactPane) -> Void)?
 	var initialScrollFraction: Double?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	/// Host-driven caret restore (undo/redo), applied to both panes so the
@@ -53,6 +63,8 @@ public struct WebSplitMarkdownScreen: View {
 		onSourceEdit: ((String, Int?) -> Void)? = nil,
 		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		onVisibleSectionChanged: ((String) -> Void)? = nil,
+		initialCompactPane: MarkdownCompactPane = .rendered,
+		onCompactPaneChanged: ((MarkdownCompactPane) -> Void)? = nil,
 		initialScrollFraction: Double? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		caretTarget: MarkdownCaretTarget? = nil,
@@ -74,6 +86,8 @@ public struct WebSplitMarkdownScreen: View {
 		self.onSourceEdit = onSourceEdit
 		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.onVisibleSectionChanged = onVisibleSectionChanged
+		self.initialCompactPane = initialCompactPane
+		self.onCompactPaneChanged = onCompactPaneChanged
 		self.initialScrollFraction = initialScrollFraction
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.caretTarget = caretTarget
@@ -263,6 +277,8 @@ public struct WebSplitMarkdownScreen: View {
 				onCheckboxToggle: onCheckboxToggle,
 				caretTarget: caretTarget,
 				selectionTarget: selectionTarget),
+			initialPane: initialCompactPane,
+			onPaneChanged: onCompactPaneChanged,
 			initialScrollFraction: initialScrollFraction,
 			onScrollFractionChanged: onScrollFractionChanged)
 	}
