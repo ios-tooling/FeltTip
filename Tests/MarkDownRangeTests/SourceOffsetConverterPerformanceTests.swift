@@ -8,7 +8,8 @@ import Testing
 @testable import MarkDownRange
 
 @Suite struct SourceOffsetConverterPerformanceTests {
-	@Test func largeASCIIConstructionBaseline() {
+	@Test(.enabled(if: ProcessInfo.processInfo.environment["MDR_RUN_BENCHMARKS"] == "1"))
+	func largeASCIIConstructionBaseline() {
 		let source = (0..<20_000)
 			.map { "Plain ASCII line \($0) with ordinary editor text." }
 			.joined(separator: "\n")

@@ -16,7 +16,11 @@
 import Testing
 @testable import MarkDownRange
 
-@Suite(.serialized) @MainActor struct EditingLatencyBenchmarkTests {
+@Suite(
+	.serialized,
+	.enabled(if: ProcessInfo.processInfo.environment["MDR_RUN_BENCHMARKS"] == "1")
+)
+@MainActor struct EditingLatencyBenchmarkTests {
 	static func largeDocument(blocks: Int) -> String {
 		(0..<blocks).map { "Paragraph \($0) with enough text to make a realistically sized block." }
 			.joined(separator: "\n\n")

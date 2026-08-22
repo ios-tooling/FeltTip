@@ -34,16 +34,18 @@ struct EditorSelectionHandoffTests {
 
 		let selected = (source as NSString).range(of: "bravo")
 		let exactCount = harness.sourceSelectionReportCount
+		let mirrorCount = harness.selectionReportCount
 		try await harness.run("""
 			window.__mdPlaceCaret(\(selected.location), \(selected.length))
 			document.dispatchEvent(new Event('selectionchange'))
 			""")
-		try await harness.waitUntil("extended source selection") {
-			harness.sourceSelectionReportCount > exactCount
-		}
 		let selectedWithFormatting = (source as NSString).range(of: "**bravo**")
-		#expect(harness.lastReportedSourceSelection == selectedWithFormatting)
-		#expect(harness.lastReportedSelection == selectedWithFormatting)
+		try await harness.waitUntil("extended exact and mirror selections") {
+			harness.sourceSelectionReportCount > exactCount
+				&& harness.selectionReportCount > mirrorCount
+				&& harness.lastReportedSourceSelection == selectedWithFormatting
+				&& harness.lastReportedSelection == selectedWithFormatting
+		}
 	}
 
 	@Test func paragraphSelectionStopsBeforeTheSeparatorAndNextBlocksFormatting() async throws {
