@@ -121,16 +121,25 @@
   // user types in the other pane of a split). Swapping the body avoids a
   // navigation — no blank flash, scroll position preserved. The editor
   // page re-arms its per-content state via __mdAfterSwap.
-  // Cached [data-s] runs — elements plus parsed numeric bases, in document
-  // order (the renderer emits ascending source offsets). Rebuilt lazily after
-  // invalidation so per-keystroke and per-marker work stops paying a full
-  // querySelectorAll + parseInt walk over the whole document.
+  // Cached [data-s] runs — elements plus parsed numeric bases, in source
+  // order. Empty caret-holder runs can appear after visible paragraph content
+  // while retaining an earlier source anchor, so document order alone is not
+  // sufficient for binary search. Rebuilt lazily after invalidation so
+  // per-keystroke and per-marker work stops paying a full querySelectorAll +
+  // parseInt walk over the whole document.
   var stampCache = null;
   window.__mdStampsInvalidate = function () { stampCache = null; };
   window.__mdStamps = function () {
     if (!stampCache) {
-      var els = Array.prototype.slice.call(document.querySelectorAll('[data-s]'));
-      stampCache = { els: els, bases: els.map(function (el) { return parseInt(el.getAttribute('data-s'), 10); }) };
+      var entries = Array.prototype.slice.call(document.querySelectorAll('[data-s]'))
+        .map(function (el, index) {
+          return { el: el, base: parseInt(el.getAttribute('data-s'), 10), index: index };
+        });
+      entries.sort(function (a, b) { return a.base - b.base || a.index - b.index; });
+      stampCache = {
+        els: entries.map(function (entry) { return entry.el; }),
+        bases: entries.map(function (entry) { return entry.base; })
+      };
     }
     return stampCache;
   };

@@ -62,8 +62,19 @@
     window.__mdStampsInvalidate = function () { stampCache = null; };
     window.__mdStamps = function () {
       if (!stampCache) {
-        var els = Array.prototype.slice.call(document.querySelectorAll('[data-s]'));
-        stampCache = { els: els, bases: els.map(function (el) { return parseInt(el.getAttribute('data-s'), 10); }) };
+        var entries = Array.prototype.slice.call(document.querySelectorAll('[data-s]'))
+          .map(function (el, index) {
+            return { el: el, base: parseInt(el.getAttribute('data-s'), 10), index: index };
+          });
+        // Empty caret-holder runs can be appended after the visible paragraph
+        // even though their source anchor precedes later rendered runs. Keep
+        // the binary-search cache in source order, with DOM order as the stable
+        // tie-break for runs sharing an anchor.
+        entries.sort(function (a, b) { return a.base - b.base || a.index - b.index; });
+        stampCache = {
+          els: entries.map(function (entry) { return entry.el; }),
+          bases: entries.map(function (entry) { return entry.base; })
+        };
       }
       return stampCache;
     };
@@ -236,8 +247,9 @@
   // After an in-place edit, every run at or past the edit moved by the
   // edit's length delta; keep the data-s stamps in step so the next edit
   // maps from fresh offsets instead of pre-edit geometry. Runs once per
-  // keystroke, so it works from the shared stamp cache and touches only the
-  // tail the binary search scopes to — not every span on the page.
+  // keystroke, so it works from the source-sorted shared stamp cache and
+  // touches only the tail the binary search scopes to — not every span on the
+  // page.
   function shiftStamps(start, delta, editedSpan) {
     if (!delta) return;
     var stamps = window.__mdStamps();

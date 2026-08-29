@@ -118,6 +118,26 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func typingAfterDelimiterDeletionKeepsNestedRunStampsAligned() async throws {
+		let source = "am****ma d**e**lta **ba\n\ny\n\ny\n\ny"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "am***ma d**e**lta **ba\n\ny\n\ny\n\ny")
+
+		try await harness.type("\u{00A0}", at: 6)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "am***m a d**e**lta **ba\n\ny\n\ny\n\ny")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func typingBesideStyledRunRefreshesDistantDelimiterPairing() async throws {
 		let source = "text t**ext **delta gamma **beta**"
 		let harness = try await CoordinatorBridgeHarness(source: source)
