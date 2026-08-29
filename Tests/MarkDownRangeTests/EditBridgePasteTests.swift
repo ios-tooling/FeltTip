@@ -291,6 +291,69 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func restoringACharacterCutBesideAnEmptyUnderlineKeepsTheCaretTypable() async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
+			})
+			document.body.dispatchEvent(arrow)
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha<u></u>Tail")
+		try await harness.waitUntil("cut source rendered") {
+			try await harness.domVisibleText()
+				.replacingOccurrences(of: "\u{200B}", with: "")
+				.contains("AlphaTail")
+		}
+
+		restore(formatted, caret: 12, token: 701, in: harness)
+		try await harness.waitQuiescent()
+		try await harness.waitUntil("restored source rendered") {
+			try await harness.domVisibleText()
+				.replacingOccurrences(of: "\u{200B}", with: "")
+				.contains("Alpha Tail")
+		}
+		try await harness.waitUntil("caret restored after empty underline") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.anchorNode) return 'missing'
+				  var element = selection.anchorNode.nodeType === 1
+				    ? selection.anchorNode : selection.anchorNode.parentElement
+				  var home = element.closest('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		try await harness.waitUntil("post-restore typing rendered") {
+			try await harness.domVisibleText()
+				.replacingOccurrences(of: "\u{200B}", with: "")
+				.contains("AlphaX Tail")
+		}
+
+		#expect(harness.source == "Alpha<u></u>X Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0,
+			"resync=\(harness.coordinator.lastResyncReason ?? "none"), incidents=\(harness.coordinator.bridgeIncidents)")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func selectAllCutAfterAnIndentedSoftLineDeletionRoundTripsWithoutCopyingTheCaretHome() async throws {
 		let expectedSource = "Term\n  : Definition\n\nTail"
 		let harness = try await CoordinatorBridgeHarness(

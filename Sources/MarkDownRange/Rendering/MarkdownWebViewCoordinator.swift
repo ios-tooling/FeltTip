@@ -522,16 +522,22 @@ extension MarkdownWebView {
 			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
 				source.substring(with: NSRange(location: offset - 3, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
+			let caretAfterEmptyUnderline = offset >= 7 &&
+				source.substring(with: NSRange(location: offset - 7, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			var neutralPreviousOffset = "null"
 			var neutralPreviousCharacterJSON = "\"\""
 			var neutralNextOffset = "null"
 			var neutralNextCharacterJSON = "\"\""
 			var neutralWrapperJSON = "\"\""
-			if sourceNeutralCaretHome {
-				neutralWrapperJSON = (try? JSONEncoder().encode(
-					source.substring(with: NSRange(location: offset - 3, length: 7))))
-					.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-				let wrapperStart = offset - 3
+			if sourceNeutralCaretHome || caretAfterEmptyUnderline {
+				let wrapperStart = sourceNeutralCaretHome ? offset - 3 : offset - 7
+				let wrapperEnd = wrapperStart + 7
+				if sourceNeutralCaretHome {
+					neutralWrapperJSON = (try? JSONEncoder().encode(
+						source.substring(with: NSRange(location: wrapperStart, length: 7))))
+						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+				}
 				if wrapperStart > 0 {
 					let range = source.rangeOfComposedCharacterSequence(at: wrapperStart - 1)
 					if range.upperBound == wrapperStart {
@@ -540,7 +546,6 @@ extension MarkdownWebView {
 							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 					}
 				}
-				let wrapperEnd = offset + 4
 				if wrapperEnd < source.length {
 					let range = source.rangeOfComposedCharacterSequence(at: wrapperEnd)
 					neutralNextOffset = String(range.location)
@@ -548,7 +553,7 @@ extension MarkdownWebView {
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON)"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(caretAfterEmptyUnderline)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {

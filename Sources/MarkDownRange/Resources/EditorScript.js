@@ -620,7 +620,7 @@
     // If source whitespace follows the empty wrapper, the renderer leaves it
     // as an unstamped text node before the next run. The semantic caret is
     // before that whitespace, not merely before the stamped run after it.
-    if (!afterSpan && sourceNeutral && Number.isFinite(neutralNextOffset) &&
+    if (!afterSpan && Number.isFinite(neutralNextOffset) &&
         Number.isFinite(nextBase) && neutralNextOffset < nextBase &&
         span.previousSibling && span.previousSibling.nodeType === 3) {
       insertionReference = span.previousSibling;
@@ -630,12 +630,15 @@
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, caretAfterEmptyUnderline) {
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
     }
-    var start = spotFor(offset);
+    // An offset immediately after an empty wrapper has no rendered character
+    // of its own. `spotFor` gives that hidden boundary left affinity and snaps
+    // it to the preceding run; let the dedicated exact-offset home below own it.
+    var start = caretAfterEmptyUnderline ? null : spotFor(offset);
     if (start && length) {
       var end = spotFor(offset + length) || start;
       document.body.focus({ preventScroll: true });
@@ -673,10 +676,26 @@
       var base = parseInt(spans[i].getAttribute('data-s'), 10);
       var len = textLength(spans[i]);
       if (base + len < offset) { prev = spans[i]; prevEnd = base + len; }
-      if (base > offset && !next) { next = spans[i]; nextBase = base; }
+      if ((base > offset || (caretAfterEmptyUnderline && base === offset)) && !next) {
+        next = spans[i]; nextBase = base;
+      }
     }
     var prevBlock = prev ? blockOf(prev) : null;
     var nextBlock = next ? blockOf(next) : null;
+    if (caretAfterEmptyUnderline && sourceLineStart != null && sourceLineEnd != null) {
+      var afterNextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
+      var afterPrevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
+      if (afterNextOnLine && placeInlineCaretHome(
+            next, offset, '', false,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter,
+            '', false)) return;
+      if (afterPrevOnLine && placeInlineCaretHome(
+            prev, offset, '', false,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter,
+            '', true)) return;
+    }
     // A host-restored caret can address hidden Markdown syntax rather than a
     // rendered run (undoing a Cut at the start of `**paragraph**`, for
     // example). If a real run exists on that same source line, snap to its
