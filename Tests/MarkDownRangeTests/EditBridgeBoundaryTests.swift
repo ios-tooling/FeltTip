@@ -87,6 +87,21 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func deletingTheOnlyEmphasizedCharacterRefreshesLiteralDelimiters() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "*a*")
+		try await harness.batch([
+			"window.__mdPlaceCaret(2)",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "**")
+		let visible = Self.compactVisible(try await harness.domVisibleText())
+		#expect(visible == "**", "\(visible.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	private static func compactVisible(_ text: String) -> String {
 		text.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
