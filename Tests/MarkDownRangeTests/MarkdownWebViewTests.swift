@@ -140,7 +140,8 @@ import Testing
 		#expect(script.contains("if (composing || e.isComposing || e.inputType === 'insertCompositionText' || e.inputType === 'deleteCompositionText') return;"))
 		// Reconciliation replaces the whole run, verified by its prior text.
 		#expect(script.contains("beforeText: plain(span.textContent)"))
-		#expect(script.contains("post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '', rev: stampRev, seq: seq++ });"))
+		#expect(script.contains("caret: c.base + after.length"))
+		#expect(script.contains("Always reconcile the verified whole run structurally"))
 		#expect(script.contains("post({ type: 'desync' })"))
 	}
 

@@ -98,6 +98,22 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func compositionThatActivatesMarkdownRefreshesTheStyledRun() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "b**")
+		try await compose(in: harness, at: 1, mutate: """
+			\(runScript(at: 1))
+			found.firstChild.textContent = 'b*a*';
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "b*a*")
+		let visible = try await harness.domVisibleText()
+		#expect(visible.trimmingCharacters(in: .whitespacesAndNewlines) == "ba")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func aCompositionSpanningTwoRunsResyncsRatherThanGuessing() async throws {
 		// A selection that starts in one run and ends in another can't be
 		// reconciled by diffing one run, so compositionstart marks it desynced

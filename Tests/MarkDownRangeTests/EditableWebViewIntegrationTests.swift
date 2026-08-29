@@ -181,11 +181,10 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		#expect(harness.source == "AlphaXé\n\nBeta")
 		#expect(harness.editCount == 1, "per-keystroke events during composition must not post individually")
 
-		// Stamps must have shifted by the composed delta: typing at the start
-		// of "Beta" (now offset 9) must land before the B.
-		try await run(webView, "window.__mdPlaceCaret(9); document.execCommand('insertText', false, 'Z');")
-		try await waitForEdits(2, in: harness)
-		#expect(harness.source == "AlphaXé\n\nZBeta")
+		// Composition commits freeze for a structural refresh: a whole-run
+		// replacement can change Markdown interpretation, which this script-only
+		// seam cannot safely restamp without the real coordinator/render loop.
+		#expect(try await evaluate(webView, "window.__mdIsFrozen() ? 'yes' : 'no'") == "yes")
 		#expect(harness.rejections.isEmpty)
 	}
 

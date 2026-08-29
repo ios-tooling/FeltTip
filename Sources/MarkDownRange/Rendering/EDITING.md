@@ -100,7 +100,7 @@ pre-restore source — typing the undo straight back out.
 | List add button / ⌘Return | structural | appends after the target list's final item and restores the caret in the new item; ⌘Return prefers the caret's list, then the first source-mapped list visible from the top |
 | ⇧Enter | structural | writes a `\` break, and swallows the next line's leading whitespace |
 | ⌘V | structural | host reads `NSPasteboard`; see below |
-| IME / dead keys / predictive text | reconciled | whole run diffed at `compositionend` |
+| IME / dead keys / predictive text | structural | whole run diffed at `compositionend`, then re-rendered |
 | Checkbox click | host callback | `onCheckboxToggle` |
 
 **Not mapped** (blocked, no-ops): drag-and-drop text, list indent/outdent,
@@ -177,7 +177,8 @@ underneath it, not in what the page asks for.
     paste, `insertReplacementText` has no live-selection fallback, because a
     real one always carries target ranges.
   - *Dictation and predictive text* arrive as a **composition**, reconciled by
-    diffing the whole run at `compositionend`. `EditBridgeTextSubstitutionTests`
+    diffing the whole run at `compositionend`, then structurally re-rendered so
+    delimiter or autolink changes cannot leave stale traits. `EditBridgeTextSubstitutionTests`
     covers that on both platforms: a commit into a run, a cancelled
     composition, a commit inside `**bold**` that must not disturb the markers,
     and one spanning two runs, which resyncs rather than guessing. Driving the

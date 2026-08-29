@@ -1327,8 +1327,14 @@
     }
     var after = plain(c.span.textContent);
     if (after === c.beforeText) return;  // canceled, nothing changed
-    post({ start: c.base, end: c.base + c.beforeText.length, text: after, expected: c.beforeText, before: '', after: '', rev: stampRev, seq: seq++ });
-    shiftStamps(c.base, after.length - c.beforeText.length, c.span);
-    stampRev += 1;
+    // A composition can change Markdown interpretation just as ordinary
+    // typing can (`b**` → `b*a*`), but its marked-text mutations have already
+    // happened by compositionend and cannot be classified per keystroke.
+    // Always reconcile the verified whole run structurally so the committed
+    // source and rendered traits converge.
+    freeze();
+    post({ start: c.base, end: c.base + c.beforeText.length, text: after,
+           expected: c.beforeText, before: '', after: '',
+           caret: c.base + after.length, rev: stampRev, seq: seq++ });
   });
 })();
