@@ -665,6 +665,27 @@ extension MarkdownWebView {
 			finishInitialRenderIfNeeded()
 		}
 
+		public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+			// WKWebView can be evicted under memory or process pressure, leaving an
+			// otherwise healthy Styled editor on about:blank. Invalidate every DOM
+			// baseline and force a fresh navigation from the latest host source.
+			// Keep pendingSelection intact so an edit that was already accepted can
+			// still restore its caret after the replacement process loads.
+			log("web content process terminated — reloading latest source")
+			pendingSwap?.cancel()
+			pendingSwap = nil
+			renderTask?.cancel()
+			renderTask = nil
+			renderGeneration += 1
+			pendingHostText = nil
+			selfEdit = nil
+			lastRenderedText = nil
+			lastFragments = nil
+			exactFragmentText = nil
+			initialDocumentNavigation = nil
+			load(into: webView)
+		}
+
 		private func startInitialRenderIfNeeded() {
 			guard !didStartInitialRender else { return }
 			didStartInitialRender = true

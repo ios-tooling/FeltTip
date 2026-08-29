@@ -96,7 +96,7 @@ final class CoordinatorBridgeHarness {
 		wireRoundTrip(text: source)
 		coordinator.load(into: webView)
 		try await waitUntil("initial stamped content") {
-			try await self.evaluate("document.querySelector('[data-s]') && window.__mdSetRev ? 'yes' : 'no'") == "yes"
+			try await self.evaluate("document.querySelector('[data-s]') && typeof window.__mdPlaceCaret === 'function' ? 'yes' : 'no'") == "yes"
 		}
 	}
 
@@ -263,7 +263,22 @@ final class CoordinatorBridgeHarness {
 	}
 
 	func run(_ script: String) async throws {
-		_ = try await evaluate("(function () { \(script); return 'ok'; })()")
+		// A replacement WebContent process briefly exposes about:blank while the
+		// coordinator reloads the latest source. Check readiness atomically with
+		// the command so a parallel WebKit-heavy test run cannot call editor APIs
+		// in that gap.
+		for _ in 0..<100 {
+			let result = try await evaluate("""
+				(function () {
+				  if (typeof window.__mdPlaceCaret !== 'function') return 'not-ready';
+				  \(script);
+				  return 'ok';
+				})()
+				""")
+			if result == "ok" { return }
+			try await Task.sleep(for: .milliseconds(50))
+		}
+		Issue.record("timed out waiting for editor script before command")
 	}
 
 	private func json(_ s: String) -> String {

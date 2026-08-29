@@ -10,6 +10,23 @@ import Testing
 @testable import MarkDownRange
 
 @Suite(.serialized) @MainActor struct EditBridgePatchTests {
+	@Test func webContentProcessTerminationReloadsLatestSourceAndRestoresEditing() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha **Beta**")
+		try await harness.run("window.__testNonce = 1")
+		let oldRevision = harness.coordinator.currentRev
+
+		harness.coordinator.webViewWebContentProcessDidTerminate(harness.webView)
+		#expect(harness.coordinator.currentRev > oldRevision)
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("typeof window.__testNonce") == "undefined")
+		#expect(try await harness.stampMismatches() == [])
+
+		try await harness.type("Z", at: 5)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "AlphaZ **Beta**")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func enterPatchesInPlaceWithoutNavigating() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\nBeta\n\nGamma")
 		// A nonce survives patches and body swaps but not a navigation.

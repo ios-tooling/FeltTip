@@ -208,12 +208,8 @@ struct EditorSelectionHandoffTests {
 		window.contentView = hosting
 		window.orderFront(nil)
 
-		var editor: NSTextView?
-		for _ in 0..<40 where editor == nil {
-			editor = findTextView(in: hosting)
-			if editor == nil { try await Task.sleep(for: .milliseconds(25)) }
-		}
-		let textView = try #require(editor)
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
 		#expect(textView.selectedRange() == NSRange(location: 8, length: 2))
 		#expect((textView.string as NSString).substring(with: textView.selectedRange()) == "89")
 	}
@@ -248,12 +244,8 @@ struct EditorSelectionHandoffTests {
 		window.contentView = hosting
 		window.orderFront(nil)
 
-		var editor: NSTextView?
-		for _ in 0..<40 where editor == nil {
-			editor = findTextView(in: hosting)
-			if editor == nil { try await Task.sleep(for: .milliseconds(25)) }
-		}
-		let textView = try #require(editor)
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
 		#expect(textView.selectedRange() == selected)
 		#expect((textView.string as NSString).substring(with: selected) == "😀 cafe\u{301} 👩‍💻")
 	}
@@ -262,6 +254,14 @@ struct EditorSelectionHandoffTests {
 		if let textView = view as? NSTextView { return textView }
 		for child in view.subviews {
 			if let found = findTextView(in: child) { return found }
+		}
+		return nil
+	}
+
+	private func waitForTextView(in view: NSView) async throws -> NSTextView? {
+		for _ in 0..<200 {
+			if let editor = findTextView(in: view) { return editor }
+			try await Task.sleep(for: .milliseconds(25))
 		}
 		return nil
 	}
