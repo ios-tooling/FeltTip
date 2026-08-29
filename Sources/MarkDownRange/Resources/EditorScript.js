@@ -311,6 +311,16 @@
         }
         if (input.command === 'insertText') {
           document.execCommand('insertText', false, input.text);
+        } else if (input.command === 'deleteWordBackward' ||
+                   input.command === 'deleteWordForward') {
+          var selection = window.getSelection();
+          if (selection && selection.rangeCount && selection.isCollapsed) {
+            selection.modify(
+              'extend',
+              input.command === 'deleteWordBackward' ? 'backward' : 'forward',
+              'word');
+          }
+          document.execCommand('delete');
         } else {
           document.execCommand(input.command);
         }
@@ -1192,9 +1202,13 @@
         }
       } else if ((!frozen || !frozen.hostUpdate) &&
                  (e.inputType === 'deleteContentBackward' ||
-                  e.inputType === 'deleteContentForward')) {
+                  e.inputType === 'deleteContentForward' ||
+                  e.inputType === 'deleteWordBackward' ||
+                  e.inputType === 'deleteWordForward')) {
         frozenInputQueue.push({
-          command: e.inputType === 'deleteContentBackward' ? 'delete' : 'forwardDelete',
+          command: e.inputType === 'deleteContentBackward' ? 'delete'
+            : e.inputType === 'deleteContentForward' ? 'forwardDelete'
+            : e.inputType,
           selection: frozenRequestedSelection
         });
         frozenRequestedSelection = null;

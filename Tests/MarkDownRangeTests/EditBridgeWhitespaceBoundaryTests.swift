@@ -238,6 +238,39 @@ struct EditBridgeWhitespaceBoundaryTests {
 	}
 
 	#if os(macOS)
+		@Test func wordBackspaceDuringAWhitespaceRenderFreezeIsReplayed() async throws {
+			let source = "eta ds alpha bravo"
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.type(" ", at: 3)
+			try await harness.placeCaret((source as NSString).length + 1)
+			harness.focusWebView()
+			harness.webView.perform(
+				NSSelectorFromString("deleteWordBackward:"), with: nil)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == "eta  ds alpha ")
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(try await harness.stampMismatches() == [])
+		}
+
+		@Test func wordForwardDeleteDuringAWhitespaceRenderFreezeIsReplayed() async throws {
+			let source = "eta ds alpha bravo"
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.type(" ", at: 3)
+			let alpha = (source as NSString).range(of: "alpha").location + 1
+			try await harness.placeCaret(alpha)
+			harness.focusWebView()
+			harness.webView.perform(
+				NSSelectorFromString("deleteWordForward:"), with: nil)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == "eta  ds  bravo")
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(try await harness.stampMismatches() == [])
+		}
+
 		@Test func wordBackspaceExposingTrailingSpacesDoesNotNeedRecovery() async throws {
 			let source = "ex de  bea\n\nTail"
 			let caret = (source as NSString).range(of: "bea").upperBound
