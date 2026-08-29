@@ -631,4 +631,43 @@ import Testing
 			}
 		}
 	}
+
+	@Test func nativeFormatsUseTheLiveSelectionWhenWebKitReportsACollapsedTarget() async throws {
+		let source = "alpha bravo charlie"
+		let bravo = (source as NSString).range(of: "bravo")
+		let cases = [
+			(command: "bold", expected: "alpha **bravo** charlie"),
+			(command: "italic", expected: "alpha *bravo* charlie"),
+			(command: "strikeThrough", expected: "alpha ~~bravo~~ charlie"),
+		]
+
+		for item in cases {
+			for direction in Direction.allCases {
+				let harness = try await CoordinatorBridgeHarness(source: source)
+				var commands = selectionCommands(
+					start: bravo.location,
+					length: bravo.length,
+					direction: direction)
+				commands.append("""
+					var live = window.getSelection().getRangeAt(0)
+					var stale = document.createRange()
+					stale.setStart(live.startContainer, live.startOffset)
+					stale.collapse(true)
+					document.addEventListener('beforeinput', function sabotage(event) {
+					  Object.defineProperty(event, 'getTargetRanges', {
+					    value: function () { return [stale] }
+					  })
+					}, { capture: true, once: true })
+					document.execCommand('\(item.command)')
+					""")
+				try await harness.batch(commands)
+				try await harness.waitForSourceEdits(1)
+
+				#expect(
+					harness.source == item.expected,
+					"command=\(item.command), direction=\(direction.rawValue)")
+				try await assertHealthy(harness)
+			}
+		}
+	}
 }

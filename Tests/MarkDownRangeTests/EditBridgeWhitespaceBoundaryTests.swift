@@ -241,11 +241,16 @@ struct EditBridgeWhitespaceBoundaryTests {
 		@Test func wordBackspaceDuringAWhitespaceRenderFreezeIsReplayed() async throws {
 			let source = "eta ds alpha bravo"
 			let harness = try await CoordinatorBridgeHarness(source: source)
-			try await harness.type(" ", at: 3)
-			try await harness.placeCaret((source as NSString).length + 1)
-			harness.focusWebView()
-			harness.webView.perform(
-				NSSelectorFromString("deleteWordBackward:"), with: nil)
+			try await harness.batch([
+				"window.__mdPlaceCaret(3)",
+				"document.execCommand('insertText', false, ' ')",
+				"window.__mdPlaceCaret(\((source as NSString).length + 1))",
+				"""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'deleteWordBackward', bubbles: true, cancelable: true
+				}))
+				""",
+			])
 			try await harness.waitForSourceEdits(2)
 			try await harness.waitQuiescent()
 
@@ -257,12 +262,17 @@ struct EditBridgeWhitespaceBoundaryTests {
 		@Test func wordForwardDeleteDuringAWhitespaceRenderFreezeIsReplayed() async throws {
 			let source = "eta ds alpha bravo"
 			let harness = try await CoordinatorBridgeHarness(source: source)
-			try await harness.type(" ", at: 3)
 			let alpha = (source as NSString).range(of: "alpha").location + 1
-			try await harness.placeCaret(alpha)
-			harness.focusWebView()
-			harness.webView.perform(
-				NSSelectorFromString("deleteWordForward:"), with: nil)
+			try await harness.batch([
+				"window.__mdPlaceCaret(3)",
+				"document.execCommand('insertText', false, ' ')",
+				"window.__mdPlaceCaret(\(alpha))",
+				"""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'deleteWordForward', bubbles: true, cancelable: true
+				}))
+				""",
+			])
 			try await harness.waitForSourceEdits(2)
 			try await harness.waitQuiescent()
 
