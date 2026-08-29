@@ -253,6 +253,21 @@ extension MarkdownWebView.Coordinator {
 			if isClipboardCut, !replaced.isEmpty {
 				MarkdownPasteboard.writeSource(replaced, ifTextMatches: edit.expected)
 			}
+			// A preventDefault'ed structural replacement can be a source no-op
+			// (select the complete `**é**` run and type the same `é`). The DOM was
+			// never mutated, and SwiftUI will not re-render an unchanged binding,
+			// so thaw and collapse the selection here instead of waiting for the
+			// frozen-timeout recovery. Do not advance the source revision: the
+			// page's stamps still address exactly the current source.
+			if edit.caret != nil, newSource == source, let token = body["seq"] as? Int {
+				let caretHint = selection?.upperBound
+					?? edit.start + ((edit.replacement ?? "") as NSString).length
+				parent.onSourceEdit?(newSource, caretHint)
+				var script = "window.__mdUnfreeze && window.__mdUnfreeze(\(token));"
+				script += " window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretHint));"
+				webView?.evaluateJavaScript(script, completionHandler: nil)
+				return
+			}
 			currentSource = newSource
 			currentRev += 1
 			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count) rev=\(currentRev)")

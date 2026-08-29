@@ -151,6 +151,41 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func typingBeforeHiddenDelimiterRefreshesNewlyLiteralTail() async throws {
+		let source = "xt b3e**ta wa**o\"**rds *\"*** g3"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let caret = (source as NSString).range(of: "*\"***").location
+		try await harness.type("é", at: caret)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "xt b3e**ta wa**o\"**rds é*\"*** g3")
+		let live = Self.compactVisible(try await harness.domVisibleText())
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let rendered = Self.compactVisible(try await fresh.domVisibleText())
+		#expect(live == rendered, "live \(live.debugDescription), rendered \(rendered.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func replacingWholeStyledRunBackwardDoesNotNeedRecovery() async throws {
+		let source = "before **é** after"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let selected = (source as NSString).range(of: "é")
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(selected.location), \(selected.length))",
+			"var r = window.getSelection().getRangeAt(0).cloneRange()",
+			"window.getSelection().setBaseAndExtent(r.endContainer, r.endOffset, r.startContainer, r.startOffset)",
+			"document.execCommand('insertText', false, 'é')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source)
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	private static func compactVisible(_ text: String) -> String {
 		text.trimmingCharacters(in: .whitespacesAndNewlines)
 	}

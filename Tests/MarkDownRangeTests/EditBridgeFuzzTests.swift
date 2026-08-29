@@ -115,6 +115,9 @@ struct SeededRNG: RandomNumberGenerator {
 			let replacement = ["", "x", "YZ", "é"].randomElement(using: &rng)!
 			let backward = Bool.random(using: &rng)
 			opLog.append("\(backward ? "backward" : "forward") \(start)..<\(start + selectedLength) → \(replacement)")
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_TRACE"] != nil {
+				print("selection seed \(seed) before \(opLog.last!): \(harness.source.debugDescription)")
+			}
 
 			var commands = ["window.__mdPlaceCaret(\(start), \(selectedLength))"]
 			if backward {
@@ -135,6 +138,12 @@ struct SeededRNG: RandomNumberGenerator {
 			// changes how nearby Markdown delimiters parse. Do not choose the next
 			// random range until that frozen render has landed.
 			try await harness.waitQuiescent()
+			#expect(harness.coordinator.resyncCount == 0,
+				"selection seed \(seed) first resynced after \(opLog.last ?? "unknown operation")")
+			if harness.coordinator.resyncCount > 0 {
+				print("selection resync incidents: \(harness.coordinator.bridgeIncidents)")
+				break
+			}
 			if harness.source != expected, replacement.isEmpty {
 				// Deleting the complete visible contents of a styled run also
 				// consumes its now-empty hidden delimiters. The NSString oracle does

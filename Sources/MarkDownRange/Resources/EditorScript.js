@@ -911,7 +911,11 @@
         if (isInlineSyntaxElement(element)) {
           var relative = textOffsetWithin(
             element, position.node, position.offset);
-          if (relative === 0 || relative === textLength(element)) return 'inside';
+          var atStart = relative === 0;
+          var atEnd = relative === textLength(element);
+          if (atStart && atEnd) return 'inside-both';
+          if (atStart) return 'inside-start';
+          if (atEnd) return 'inside-end';
         }
         element = element.parentElement;
       }
@@ -958,7 +962,14 @@
     // from inside the styled run keeps that edge's flanking class; punctuation
     // (including emoji symbols) can rebalance delimiter pairs across the block.
     var wordOnly = replacement !== '' && /^[\p{L}\p{N}\p{M}]+$/u.test(replacement);
-    return atSyntaxBoundary === 'adjacent' || (!!atSyntaxBoundary && !wordOnly);
+    if (atSyntaxBoundary === 'adjacent' || atSyntaxBoundary === 'inside-both') return true;
+    if (!atSyntaxBoundary || !wordOnly) return !!atSyntaxBoundary;
+    // Even a word-only insertion changes flanking when it replaces whitespace
+    // or punctuation as the character immediately inside the delimiter. A word
+    // added after another word at the same styled edge keeps the class stable.
+    var neighbour = atSyntaxBoundary === 'inside-start'
+      ? after.slice(0, 1) : before.slice(-1);
+    return !/^[\p{L}\p{N}\p{M}]$/u.test(neighbour);
   }
   function selectedBlockPrefixes(range) {
     var node = range.startContainer;
@@ -1185,11 +1196,18 @@
       if (data == null && e.dataTransfer) data = e.dataTransfer.getData('text/plain');
       if (data == null) { e.preventDefault(); return; }
       data = plain(data);
-      if (crossRun || needsStructuralInlineRefresh(range, data, before, after)) {
-        var replacementSyntaxStart = selected
-          ? selectedSyntaxBoundaries(range, true) : [];
-        var replacementSyntaxEnd = selected
-          ? selectedSyntaxBoundaries(range, false) : [];
+      var replacementSyntaxStart = selected
+        ? selectedSyntaxBoundaries(range, true) : [];
+      var replacementSyntaxEnd = selected
+        ? selectedSyntaxBoundaries(range, false) : [];
+      // Replacing the complete visible contents of one styled run can make
+      // WebKit discard its wrapper even though both endpoints map to the same
+      // stamped span. Rebuild from source so the stamp and formatting survive;
+      // the host retains these delimiters for a non-cross-run replacement.
+      var ownsInlineRun = replacementSyntaxStart.length > 0 ||
+        replacementSyntaxEnd.length > 0;
+      if (crossRun || ownsInlineRun ||
+          needsStructuralInlineRefresh(range, data, before, after)) {
         var replacementBlockPrefixes = selected
           ? selectedBlockPrefixes(range) : [];
         e.preventDefault();
