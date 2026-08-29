@@ -98,5 +98,31 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 		#expect(try await harness.stampMismatches() == [])
 	}
+
+	@Test func crossRunTypingBurstInALargeDocumentReplaysBeforeTheFreezeDeadline() async throws {
+		let base = Self.largeDocument(blocks: 800)
+		let ordinary = "Paragraph 400 with enough text to make a realistically sized block."
+		let styled = "Paragraph 400 Before **Alpha** and _Beta_ after."
+		let source = base.replacingOccurrences(of: ordinary, with: styled)
+		let start = (source as NSString).range(of: "Alpha").location
+		let beta = (source as NSString).range(of: "Beta")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		let clockStart = ContinuousClock.now
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(start), \(beta.upperBound - start))",
+			"document.execCommand('insertText', false, 'X')",
+			"document.execCommand('insertText', false, '!')",
+		])
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		let settle = ContinuousClock.now - clockStart
+
+		#expect(harness.source.contains("Paragraph 400 Before X! after."))
+		#expect(settle < .milliseconds(1800), "cross-run burst took \(settle) in an 800-block document")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
 }
 #endif
