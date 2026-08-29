@@ -103,6 +103,24 @@ import Testing
 		}
 	}
 
+	@Test func cuttingOnlyPartOfAStyledRunPreservesItsDelimiters() async throws {
+		let cases = [
+			(source: "**Alpha** Tail", selected: "Al", expected: "**pha** Tail"),
+			(source: "**Alpha** Tail", selected: "ha", expected: "**Alp** Tail"),
+			(source: "[Alpha](https://example.com) Tail", selected: "Al", expected: "[pha](https://example.com) Tail"),
+			(source: "[Alpha](https://example.com) Tail", selected: "ha", expected: "[Alp](https://example.com) Tail"),
+		]
+		for item in cases {
+			for backward in [false, true] {
+				try await assertCut(
+					source: item.source,
+					selected: item.selected,
+					expected: item.expected,
+					backward: backward)
+			}
+		}
+	}
+
 	@Test func ordinarySelectionDeleteRemovesOwnedInlineAndBlockSyntax() async throws {
 		let cases: [(source: String, selected: String, expected: String)] = [
 			("**Alpha** Tail", "Alpha", " Tail"),
