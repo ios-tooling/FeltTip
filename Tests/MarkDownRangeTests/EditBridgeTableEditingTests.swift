@@ -131,6 +131,25 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func revisionlessTableAppendCannotMutateSourceAndEditingRecovers() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: Self.plainTable)
+		try await harness.run("""
+			window.webkit.messageHandlers.mdedit.postMessage({
+				type: 'appendTableRow', at: 46, columns: 2, seq: 999
+			})
+			""")
+		try await harness.waitUntil("revisionless table append resync") {
+			harness.coordinator.resyncCount >= 1
+		}
+		#expect(harness.source == Self.plainTable)
+		#expect(harness.sourceEditCount == 0)
+
+		try await harness.waitQuiescent()
+		try await harness.type("X", at: 47)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| BXob | 41 |")
+	}
+
 	@Test func backspaceAtCellStartNeverEatsPipes() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: Self.table)
 		try await harness.batch([

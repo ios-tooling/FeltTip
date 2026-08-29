@@ -106,6 +106,10 @@ struct EditorSelectionHandoffTests {
 		try await harness.run("""
 			window.webkit.messageHandlers.mdedit.postMessage({
 			  type: 'selection', start: 2, length: 5,
+			  syntaxStart: ['strong'], syntaxEnd: ['strong']
+			})
+			window.webkit.messageHandlers.mdedit.postMessage({
+			  type: 'selection', start: 2, length: 5,
 			  syntaxStart: ['strong'], syntaxEnd: ['strong'],
 			  rev: \(currentRevision - 1)
 			})
@@ -118,7 +122,7 @@ struct EditorSelectionHandoffTests {
 		try await Task.sleep(for: .milliseconds(150))
 		#expect(harness.sourceSelectionReportCount == reportCount)
 
-		// A valid current-revision report still works after both rejected inputs.
+		// A valid current-revision report still works after every rejected input.
 		try await harness.run("""
 			window.webkit.messageHandlers.mdedit.postMessage({
 			  type: 'selection', start: 2, length: 5,

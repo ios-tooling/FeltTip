@@ -105,4 +105,24 @@ import Testing
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "ZAlpha\n\nBeta", "typing must work after the resync")
 	}
+
+	@Test func revisionlessEditCannotMutateSourceAndEditingRecovers() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\nBeta")
+		try await harness.run("""
+			window.webkit.messageHandlers.mdedit.postMessage({
+				start: 0, end: 0, text: 'X', expected: '',
+				before: '', after: '', seq: 999
+			})
+			""")
+		try await harness.waitUntil("revisionless edit resync") {
+			harness.coordinator.resyncCount >= 1
+		}
+		#expect(harness.source == "Alpha\n\nBeta")
+		#expect(harness.sourceEditCount == 0)
+
+		try await harness.waitQuiescent()
+		try await harness.type("Z", at: 0)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "ZAlpha\n\nBeta")
+	}
 }

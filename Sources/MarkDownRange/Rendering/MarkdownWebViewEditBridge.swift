@@ -57,7 +57,11 @@ extension MarkdownWebView.Coordinator {
 		}
 		if body["type"] as? String == "selection" {
 			log("selection message start=\(body["start"] ?? "nil") length=\(body["length"] ?? "nil") handler=\(parent.onSelectionChanged != nil || parent.onSourceSelectionChanged != nil)")
-			if let revision = body["rev"] as? Int, revision != currentRev {
+			guard let revision = body["rev"] as? Int else {
+				log("dropping selection without a revision")
+				return
+			}
+			if revision != currentRev {
 				log("dropping stale selection rev=\(revision) currentRev=\(currentRev)")
 				return
 			}
@@ -188,6 +192,29 @@ extension MarkdownWebView.Coordinator {
 			return
 		}
 		log("message \(body)")
+		// Every source-mutating page message must identify the exact source
+		// revision its offsets address. Gate this before pasteboard access or
+		// payload expansion so stale/malformed messages are cheap no-ops and can
+		// never borrow the host's current clipboard contents.
+		guard let rev = body["rev"] as? Int else {
+			bridgeIncidents.append("edit without revision seq=\(body["seq"] ?? "?")")
+			log("edit without revision seq=\(body["seq"] ?? "?") — resyncing")
+			resync(caretAt: nil)
+			return
+		}
+		if rev < reseedRev {
+			droppedStaleEdits += 1
+			log("dropping stale edit rev=\(rev) (reseeded at \(reseedRev)) seq=\(body["seq"] ?? "?")")
+			return
+		}
+		if rev != currentRev {
+			bridgeIncidents.append("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") body=\(body)")
+			log("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") — resyncing")
+			let sourceLength = ((currentSource ?? parent.text) as NSString).length
+			let caret = (body["start"] as? Int).map { min(max(0, $0), sourceLength) }
+			resync(caretAt: caret)
+			return
+		}
 		var payload = body
 		// A paste carries no text: the page can't read the clipboard faithfully
 		// (WebKit sanitizes the plain-text flavor of a paste's dataTransfer, and
@@ -219,23 +246,6 @@ extension MarkdownWebView.Coordinator {
 			payload["caret"] = caret
 		}
 		guard let edit = MarkdownEditSplicer.Edit(body: payload) else { return }
-		// Revision gate. Every edit declares the source revision its offsets
-		// address. A pre-reseed straggler raced a reload/swap that already
-		// replaced its DOM — drop it. Any other mismatch means the page and
-		// the source genuinely disagree — resync, never guess.
-		if let rev = body["rev"] as? Int {
-			if rev < reseedRev {
-				droppedStaleEdits += 1
-				log("dropping stale edit rev=\(rev) (reseeded at \(reseedRev)) seq=\(body["seq"] ?? "?")")
-				return
-			}
-			if rev != currentRev {
-				bridgeIncidents.append("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") body=\(body)")
-				log("rev mismatch: message rev=\(rev) currentRev=\(currentRev) seq=\(body["seq"] ?? "?") — resyncing")
-				resync(caretAt: min(max(0, edit.start), ((currentSource ?? parent.text) as NSString).length))
-				return
-			}
-		}
 		let source = currentSource ?? parent.text
 		let isClipboardCut = body["op"] as? String == "cut"
 		switch MarkdownEditSplicer.apply(edit, to: source) {
@@ -380,18 +390,21 @@ extension MarkdownWebView.Coordinator {
 			guard let seq = body["seq"] as? Int else { return }
 			webView?.evaluateJavaScript("window.__mdUnfreeze && window.__mdUnfreeze(\(seq));", completionHandler: nil)
 		}
-		if let rev = body["rev"] as? Int {
-			if rev < reseedRev {
-				droppedStaleEdits += 1
-				thaw()
-				return
-			}
-			if rev != currentRev {
-				bridgeIncidents.append("rev mismatch: appendTableRow rev=\(rev) currentRev=\(currentRev)")
-				log("rev mismatch on appendTableRow — resyncing")
-				resync(caretAt: nil)
-				return
-			}
+		guard let rev = body["rev"] as? Int else {
+			bridgeIncidents.append("appendTableRow without revision")
+			resync(caretAt: nil)
+			return
+		}
+		if rev < reseedRev {
+			droppedStaleEdits += 1
+			thaw()
+			return
+		}
+		if rev != currentRev {
+			bridgeIncidents.append("rev mismatch: appendTableRow rev=\(rev) currentRev=\(currentRev)")
+			log("rev mismatch on appendTableRow — resyncing")
+			resync(caretAt: nil)
+			return
 		}
 		let source = currentSource ?? parent.text
 		let ns = source as NSString
