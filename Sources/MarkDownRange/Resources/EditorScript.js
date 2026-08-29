@@ -53,6 +53,7 @@
   // selection replacement has re-rendered and restored its caret. Preserve
   // those plain-text events and replay them once the fresh caret is live.
   var frozenTextBuffer = '';
+  var frozenTextReplayTimer = null;
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -71,6 +72,8 @@
     stampRev = rev;
     pendingEdits = [];
     frozen = null;
+    if (frozenTextReplayTimer) { clearTimeout(frozenTextReplayTimer); }
+    frozenTextReplayTimer = null;
     frozenTextBuffer = '';
     composing = null;
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
@@ -101,6 +104,8 @@
   window.__mdUnfreeze = function (token) {
     if (frozen && frozen.token === token) {
       frozen = null;
+      if (frozenTextReplayTimer) { clearTimeout(frozenTextReplayTimer); }
+      frozenTextReplayTimer = null;
       frozenTextBuffer = '';
     }
   };
@@ -111,6 +116,8 @@
   window.__mdBeginHostUpdate = function () {
     pendingEdits = [];
     composing = null;
+    if (frozenTextReplayTimer) { clearTimeout(frozenTextReplayTimer); }
+    frozenTextReplayTimer = null;
     frozenTextBuffer = '';
     frozen = { token: null, hostUpdate: true };
   };
@@ -264,12 +271,15 @@
     installListAddButtons();
   };
   function replayFrozenTextAfterCaret() {
-    if (!frozenTextBuffer) return;
-    var buffered = frozenTextBuffer;
-    frozenTextBuffer = '';
+    if (!frozenTextBuffer || frozenTextReplayTimer) return;
     // Leave the caret-placement call stack first. WebKit can reject a nested
     // editing command while it is still finalizing the restored selection.
-    setTimeout(function () {
+    // Keep the timer non-null until this callback begins so later native text
+    // cannot overtake the older buffered characters during that one-turn gap.
+    frozenTextReplayTimer = setTimeout(function () {
+      frozenTextReplayTimer = null;
+      var buffered = frozenTextBuffer;
+      frozenTextBuffer = '';
       document.execCommand('insertText', false, buffered);
     }, 0);
   }
@@ -1009,8 +1019,8 @@
     // Everything composition-adjacent is reconciled at compositionend by
     // diffing the whole run instead.
     if (composing || e.isComposing || e.inputType === 'insertCompositionText' || e.inputType === 'deleteCompositionText') return;
-    if (frozen) {
-      if (!frozen.hostUpdate &&
+    if (frozen || frozenTextReplayTimer) {
+      if ((!frozen || !frozen.hostUpdate) &&
           (e.inputType === 'insertText' || e.inputType === 'insertReplacementText')) {
         var bufferedData = e.data;
         if (bufferedData == null && e.dataTransfer) {

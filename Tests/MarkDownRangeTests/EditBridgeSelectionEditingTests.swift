@@ -338,11 +338,13 @@ import Testing
 			"window.__mdPlaceCaret(\(start), \(beta.upperBound - start))",
 			"document.execCommand('insertText', false, 'X')",
 			"document.execCommand('insertText', false, '!')",
+			"document.execCommand('insertText', false, '?')",
+			"document.execCommand('insertText', false, 'Z')",
 		])
 
 		try await harness.waitForSourceEdits(2)
-		#expect(harness.source == "Before X! after")
-		#expect(harness.lastCaretHint == ("Before X!" as NSString).length)
+		#expect(harness.source == "Before X!?Z after")
+		#expect(harness.lastCaretHint == ("Before X!?Z" as NSString).length)
 		try await assertHealthy(harness)
 	}
 
