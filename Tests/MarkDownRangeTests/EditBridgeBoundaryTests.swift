@@ -300,6 +300,7 @@ import Testing
 
 	@Test(arguments: [
 		(source: "Term\nx: Definition\n\nTail", expected: "Term\n: Definition\n\nTail"),
+		(source: "A reasonably long term\nx: Definition\n\nTail", expected: "A reasonably long term\n: Definition\n\nTail"),
 		(source: "Term\nx- Item\n\nTail", expected: "Term\n- Item\n\nTail"),
 		(source: "Term\nx1. Item\n\nTail", expected: "Term\n1. Item\n\nTail"),
 		(source: "Term\nx> Quote\n\nTail", expected: "Term\n> Quote\n\nTail"),
@@ -309,8 +310,9 @@ import Testing
 		expected: String
 	) async throws {
 		let harness = try await CoordinatorBridgeHarness(source: source)
+		let deletionOffset = (source as NSString).range(of: "\nx").location + 1
 		try await harness.run("""
-			window.__mdPlaceCaret(5, 1)
+			window.__mdPlaceCaret(\(deletionOffset), 1)
 			var target = window.getSelection().getRangeAt(0).cloneRange()
 			window.getSelection().collapseToStart()
 			var deletion = new InputEvent('beforeinput', {

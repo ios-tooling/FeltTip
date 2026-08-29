@@ -1050,7 +1050,7 @@
       ? owner.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote') : null;
     if (!block) return false;
     var offset = textOffsetWithin(block, range.startContainer, range.startOffset);
-    if (offset == null || offset > 8) return false;
+    if (offset == null) return false;
     var localBefore = before.slice(Math.max(0, before.length - offset));
     var prefix = localBefore + replacement + after.slice(0, 12);
     return /(?:^|\n)(?:#{1,6}[ \t]|>[ \t]?|:(?:[ \t]|$)|(?:[-+*]|[0-9]+[.)])[ \t]+|```|~~~)/.test(prefix);
