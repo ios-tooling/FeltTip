@@ -469,6 +469,28 @@
     block.insertAdjacentElement('beforebegin', spacer);
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
   }
+  function activeInlineCaretHome() {
+    var selection = window.getSelection();
+    var node = selection && selection.anchorNode;
+    var element = node && node.nodeType === 1
+      ? node : node && node.parentElement;
+    return element && element.closest
+      ? element.closest('[data-md-inline-caret-home]') : null;
+  }
+  function postInlineCaretPaste(inlineHome, matchStyle) {
+    if (!inlineHome) return false;
+    var offset = parseInt(
+      inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+    if (!Number.isFinite(offset)) return false;
+    var cell = inlineHome.closest && inlineHome.closest('td, th');
+    freeze();
+    post({ op: 'paste', matchStyle: matchStyle, inCell: !!cell,
+           start: offset, end: offset, expected: '', crossRun: false,
+           selected: false, endAtBlockStart: false,
+           syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
+           before: '', after: '', rev: stampRev, seq: seq++ });
+    return true;
+  }
   window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset) {
     length = length || 0;
     if (frozen) {
@@ -1149,6 +1171,18 @@
     return window.__mdApplyFormat('inlineCode');
   };
 
+  // At a DOM-only inline caret home macOS WebKit sends `paste` but omits the
+  // `beforeinput` event that normally enters the verified source bridge. Handle
+  // only that marked synthetic position here; every ordinary paste continues
+  // through the native beforeinput route below.
+  document.body.addEventListener('paste', function (e) {
+    var inlineHome = activeInlineCaretHome();
+    if (!inlineHome || frozen || frozenInputReplayTimer) return;
+    var matchStyle = nextPasteMatchesStyle;
+    nextPasteMatchesStyle = false;
+    if (postInlineCaretPaste(inlineHome, matchStyle)) e.preventDefault();
+  });
+
   document.addEventListener('keydown', function (event) {
     // WebKit can decline the native Delete command (and AppKit emits the
     // system beep) when a mouse selection owns PRE/CODE element boundaries,
@@ -1243,13 +1277,8 @@
     // source selection is collapsed. Route that one synthetic position by its
     // explicit source offset so the first restored keystroke cannot disappear
     // or be rejected as an attempt to replace text the source never contained.
+    var inlineHome = activeInlineCaretHome();
     if (e.inputType === 'insertText') {
-      var inlineHomeSelection = window.getSelection();
-      var inlineHomeNode = inlineHomeSelection && inlineHomeSelection.anchorNode;
-      var inlineHomeElement = inlineHomeNode && inlineHomeNode.nodeType === 1
-        ? inlineHomeNode : inlineHomeNode && inlineHomeNode.parentElement;
-      var inlineHome = inlineHomeElement && inlineHomeElement.closest
-        ? inlineHomeElement.closest('[data-md-inline-caret-home]') : null;
       var inlineHomeData = e.data;
       if (inlineHome && inlineHomeData != null) {
         var inlineHomeOffset = parseInt(
@@ -1264,6 +1293,12 @@
                  rev: stampRev, seq: seq++ });
           return;
         }
+      }
+    }
+    if (e.inputType === 'insertFromPaste' && inlineHome) {
+      if (postInlineCaretPaste(inlineHome, requestedMatchStyle)) {
+        e.preventDefault();
+        return;
       }
     }
     var ranges = e.getTargetRanges();

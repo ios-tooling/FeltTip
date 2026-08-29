@@ -91,6 +91,48 @@ import Testing
 		harness.adoptHostText(text)
 	}
 
+	@Test func pasteAfterAnIndentedSoftLineDeletionUsesTheRestoredCaret() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Term\n  P: Definition\n\nTail")
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let liveVisible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await harness.domVisibleText())
+		let freshVisible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await fresh.domVisibleText())
+		#expect(liveVisible == freshVisible)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	// MARK: Non-breaking spaces
 	//
 	// contentEditable renders a lone space as U+00A0 so layout can't collapse
