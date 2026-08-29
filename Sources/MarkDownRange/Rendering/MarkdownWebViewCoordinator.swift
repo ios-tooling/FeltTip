@@ -501,7 +501,32 @@ extension MarkdownWebView {
 			}
 			let previousCharacterJSON = (try? JSONEncoder().encode(previousCharacter))
 				.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON)"
+			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
+				source.substring(with: NSRange(location: offset - 3, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame
+			var neutralPreviousOffset = "null"
+			var neutralPreviousCharacterJSON = "\"\""
+			var neutralNextOffset = "null"
+			var neutralNextCharacterJSON = "\"\""
+			if sourceNeutralCaretHome {
+				let wrapperStart = offset - 3
+				if wrapperStart > 0 {
+					let range = source.rangeOfComposedCharacterSequence(at: wrapperStart - 1)
+					if range.upperBound == wrapperStart {
+						neutralPreviousOffset = String(range.location)
+						neutralPreviousCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
+							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+					}
+				}
+				let wrapperEnd = offset + 4
+				if wrapperEnd < source.length {
+					let range = source.rangeOfComposedCharacterSequence(at: wrapperEnd)
+					neutralNextOffset = String(range.location)
+					neutralNextCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
+						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+				}
+			}
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {

@@ -409,6 +409,138 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func rapidTypingAfterAnIndentedSoftLineRestoreQueuesAtTheExactSourceCaret() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.batch([
+			"document.execCommand('insertText', false, 'X')",
+			"document.execCommand('insertText', false, 'Y')",
+		])
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Term\n  XY: Definition\n\nTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "underline", formatted: "<u>X</u>"),
+		(command: "inlineCode", formatted: "`X`"),
+		(command: "highlight", formatted: "==X=="),
+		(command: "superscript", formatted: "^X^"),
+		(command: "subscript", formatted: "~X~"),
+		(command: "link", formatted: "[X]()"),
+	])
+	func customFormattingAfterAnIndentedSoftLineRestoreKeepsATypableSourceCaret(
+		command: String,
+		formatted: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdApplyFormat('\(command)')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Term\n  \(formatted): Definition\n\nTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "delete", expected: "Term\n <u>X</u>: Definition\n\nTail"),
+		(command: "forwardDelete", expected: "Term\n  <u>X</u> Definition\n\nTail"),
+	])
+	func deletionFromAnEmptyUnderlineCaretTargetsVisibleTextAndKeepsTheCaretTypable(
+		command: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("window.__mdApplyFormat('underline')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(4)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func deletionThatActivatesAThematicBreakRerenders() async throws {
 		let harness = try await CoordinatorBridgeHarness(
 			source: "Term\n--x-\n\nTail")

@@ -477,6 +477,33 @@
     return element && element.closest
       ? element.closest('[data-md-inline-caret-home]') : null;
   }
+  function selectedInlineCaretHome() {
+    var selection = window.getSelection();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
+    var range = selection.getRangeAt(0);
+    var homes = document.querySelectorAll('[data-md-inline-caret-home]');
+    for (var i = 0; i < homes.length; i++) {
+      try {
+        if (range.intersectsNode(homes[i])) return homes[i];
+      } catch (_) {}
+    }
+    return null;
+  }
+  function rangeTextWithoutInlineCaretHome(range, inlineHome) {
+    var value = rangeText(range);
+    var marker = inlineHome && inlineHome.firstChild;
+    if (!range || !marker || marker.nodeType !== 3) return value;
+    try {
+      var prefix = document.createRange();
+      prefix.setStart(range.startContainer, range.startOffset);
+      prefix.setEnd(marker, 0);
+      var markerIndex = prefix.toString().length;
+      if (value.charAt(markerIndex) === '\u200B') {
+        return value.slice(0, markerIndex) + value.slice(markerIndex + 1);
+      }
+    } catch (_) {}
+    return value;
+  }
   function postInlineCaretPaste(inlineHome, matchStyle) {
     if (!inlineHome) return false;
     var offset = parseInt(
@@ -491,7 +518,29 @@
            before: '', after: '', rev: stampRev, seq: seq++ });
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter) {
+  function placeInlineCaretHomeBefore(span, offset, previousSourceCharacter, sourceNeutral,
+                                      neutralPreviousOffset, neutralPreviousCharacter,
+                                      neutralNextOffset, neutralNextCharacter) {
+    if (!span || !span.parentNode) return false;
+    var inlineHolder = document.createElement('span');
+    inlineHolder.setAttribute('data-s', String(offset - 1));
+    inlineHolder.setAttribute('data-md-inline-caret-home', '1');
+    inlineHolder.setAttribute('data-md-inline-caret-offset', String(offset));
+    if (sourceNeutral) inlineHolder.setAttribute('data-md-inline-caret-source-neutral', '1');
+    inlineHolder.__mdPreviousSourceCharacter = sourceNeutral
+      ? '' : (previousSourceCharacter || '');
+    inlineHolder.__mdNeutralPreviousOffset = neutralPreviousOffset;
+    inlineHolder.__mdNeutralPreviousCharacter = neutralPreviousCharacter || '';
+    inlineHolder.__mdNeutralNextOffset = neutralNextOffset;
+    inlineHolder.__mdNeutralNextCharacter = neutralNextCharacter || '';
+    var inlineCaretText = document.createTextNode('\u200B');
+    inlineHolder.appendChild(inlineCaretText);
+    span.parentNode.insertBefore(inlineHolder, span);
+    if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
+    placeCaretIn(inlineCaretText, 1, inlineHolder);
+    return true;
+  }
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter) {
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
@@ -520,16 +569,8 @@
       if (offset === startBase && previousSibling &&
           previousSibling.nodeType === 3 && previousSibling.nodeValue.length &&
           start.span.parentNode) {
-        var inlineHolder = document.createElement('span');
-        inlineHolder.setAttribute('data-s', String(offset - 1));
-        inlineHolder.setAttribute('data-md-inline-caret-home', '1');
-        inlineHolder.setAttribute('data-md-inline-caret-offset', String(offset));
-        inlineHolder.__mdPreviousSourceCharacter = previousSourceCharacter || '';
-        var inlineCaretText = document.createTextNode('\u200B');
-        inlineHolder.appendChild(inlineCaretText);
-        start.span.parentNode.insertBefore(inlineHolder, start.span);
-        if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
-        placeCaretIn(inlineCaretText, 1, inlineHolder);
+        placeInlineCaretHomeBefore(
+          start.span, offset, previousSourceCharacter, false, null, '', null, '');
         return;
       }
       placeCaretIn(start.node, start.offset, start.span);
@@ -555,6 +596,15 @@
     if (snapHiddenSyntax && sourceLineStart != null && sourceLineEnd != null) {
       var prevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
       var nextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
+      // Empty underline markup renders no DOM node at all. Its formatter caret
+      // is nevertheless a real source insertion point between <u> and </u>;
+      // keep that exact offset typable instead of snapping it onto the next
+      // visible run, where WebKit silently drops the first character.
+      if (sourceNeutralCaretHome && nextOnLine &&
+          placeInlineCaretHomeBefore(
+            next, offset, '', true,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter)) return;
       // With runs on both sides, the caret can intentionally sit inside an
       // empty inline construct (`Alpha<u>|</u> Tail`). Preserve the existing
       // synthetic caret home for that case so typing remains formatted.
@@ -1135,6 +1185,20 @@
     if (!sel || !sel.rangeCount) { return false; }
     var range = sel.getRangeAt(0);
     if (selectionTouchesReadOnlyIsland()) { return false; }
+    var inlineHome = activeInlineCaretHome();
+    if (inlineHome && sel.isCollapsed) {
+      var inlineFormatOffset = parseInt(
+        inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      if (!Number.isFinite(inlineFormatOffset)) return false;
+      freeze();
+      post({ op: 'format', command: command,
+             start: inlineFormatOffset, end: inlineFormatOffset,
+             expected: '', crossRun: false, selected: false,
+             endAtBlockStart: false, before: '', after: '',
+             caret: inlineFormatOffset,
+             rev: stampRev, seq: seq++ });
+      return true;
+    }
     var startPos = normalizePosition(range.startContainer, range.startOffset, true);
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
@@ -1182,6 +1246,47 @@
     var matchStyle = nextPasteMatchesStyle;
     nextPasteMatchesStyle = false;
     if (postInlineCaretPaste(inlineHome, matchStyle)) e.preventDefault();
+  });
+
+  // A restored caret home is intentionally real DOM text so WebKit can keep a
+  // typable insertion point, but it is never document content. If a later
+  // Select All (or a wider mouse selection) includes that temporary span,
+  // native Copy would expose its zero-width character on the system clipboard.
+  // Override only that exceptional copy and keep every ordinary copy native.
+  document.body.addEventListener('copy', function (e) {
+    var inlineHome = selectedInlineCaretHome();
+    if (!inlineHome || !e.clipboardData) return;
+    var selection = window.getSelection();
+    var copied = plain(selection && selection.rangeCount
+      ? rangeTextWithoutInlineCaretHome(selection.getRangeAt(0), inlineHome)
+      : '');
+    e.clipboardData.setData('text/plain', copied);
+    e.preventDefault();
+  });
+
+  // Cut needs the same clipboard cleanup, but preventing its native default
+  // also suppresses WebKit's deleteByCut beforeinput. Re-emit that verified
+  // source operation ourselves; the normal handler below owns the deletion,
+  // syntax-boundary expansion, freeze, and caret restoration.
+  document.body.addEventListener('cut', function (e) {
+    var inlineHome = selectedInlineCaretHome();
+    if (!inlineHome || !e.clipboardData) return;
+    var selection = window.getSelection();
+    var copied = plain(selection && selection.rangeCount
+      ? rangeTextWithoutInlineCaretHome(selection.getRangeAt(0), inlineHome)
+      : '');
+    e.clipboardData.setData('text/plain', copied);
+    e.preventDefault();
+    if (frozen || frozenInputReplayTimer) return;
+    // WebKit commits ClipboardEvent data after the listener returns. Let that
+    // happen before the host receives the cut message, because it verifies the
+    // public text before adding Marker's private exact-source flavor.
+    setTimeout(function () {
+      if (frozen || frozenInputReplayTimer) return;
+      document.body.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'deleteByCut', bubbles: true, cancelable: true
+      }));
+    }, 0);
   });
 
   document.addEventListener('keydown', function (event) {
@@ -1279,6 +1384,32 @@
     // explicit source offset so the first restored keystroke cannot disappear
     // or be rejected as an attempt to replace text the source never contained.
     var inlineHome = activeInlineCaretHome();
+    if (inlineHome && inlineHome.hasAttribute('data-md-inline-caret-source-neutral') &&
+        (e.inputType === 'deleteContentBackward' ||
+         e.inputType === 'deleteContentForward' ||
+         e.inputType === 'deleteWordBackward' ||
+         e.inputType === 'deleteWordForward')) {
+      e.preventDefault();
+      var neutralCaretOffset = parseInt(
+        inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      var neutralBackward = e.inputType === 'deleteContentBackward';
+      var neutralForward = e.inputType === 'deleteContentForward';
+      var neutralOffset = neutralBackward
+        ? inlineHome.__mdNeutralPreviousOffset : inlineHome.__mdNeutralNextOffset;
+      var neutralCharacter = neutralBackward
+        ? inlineHome.__mdNeutralPreviousCharacter : inlineHome.__mdNeutralNextCharacter;
+      if ((neutralBackward || neutralForward) && Number.isFinite(neutralCaretOffset) &&
+          Number.isFinite(neutralOffset) && neutralCharacter) {
+        freeze();
+        post({ start: neutralOffset, end: neutralOffset + neutralCharacter.length,
+               text: '', expected: neutralCharacter,
+               before: '', after: '',
+               caret: neutralBackward
+                 ? neutralCaretOffset - neutralCharacter.length : neutralCaretOffset,
+               rev: stampRev, seq: seq++ });
+      }
+      return;
+    }
     if (e.inputType === 'deleteContentBackward' && inlineHome) {
       var hiddenPrevious = inlineHome.__mdPreviousSourceCharacter || '';
       var hiddenCaretOffset = parseInt(
@@ -1464,7 +1595,11 @@
       e.preventDefault();
       return;
     }
-    var type = e.inputType, expected = plain(rangeText(range));
+    var type = e.inputType;
+    var selectedCaretHome = selectedInlineCaretHome();
+    var expected = plain(selectedCaretHome
+      ? rangeTextWithoutInlineCaretHome(range, selectedCaretHome)
+      : rangeText(range));
     var startSpan = spanOf(startPos.node, startPos.offset);
     // A real selection means the user chose the range — hidden syntax
     // inside it may go. A collapsed caret (block merge) may only remove

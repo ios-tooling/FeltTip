@@ -91,6 +91,31 @@ import Testing
 		harness.adoptHostText(text)
 	}
 
+	private func deleteIndentedSoftLineCharacter(
+		in harness: CoordinatorBridgeHarness
+	) async throws {
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+	}
+
 	@Test func pasteAfterAnIndentedSoftLineDeletionUsesTheRestoredCaret() async throws {
 		let harness = try await CoordinatorBridgeHarness(
 			source: "Term\n  x: Definition\n\nTail")
@@ -128,6 +153,150 @@ import Testing
 		let freshVisible = EditBridgeFuzzTests.normalizedVisibleText(
 			try await fresh.domVisibleText())
 		#expect(liveVisible == freshVisible)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllCopyAfterAnIndentedSoftLineDeletionDoesNotExposeTheCaretHome() async throws {
+		let original = "Term\n  x: Definition\n\nTail"
+		let expectedSource = "Term\n  : Definition\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(source: original)
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate(
+			"String(document.querySelectorAll('[data-md-inline-caret-home]').length)"
+		) == "1")
+
+		try await harness.run("document.execCommand('selectAll')")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			let copied = try #require(TestPasteboard.string)
+			#expect(!copied.contains("\u{200B}"),
+				"clipboard exposed the DOM-only caret marker: \(copied.debugDescription)")
+		}
+
+		#expect(harness.source == expectedSource)
+		#expect(harness.sourceEditCount == 1)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllCutAfterAnIndentedSoftLineDeletionRoundTripsWithoutCopyingTheCaretHome() async throws {
+		let expectedSource = "Term\n  : Definition\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('selectAll')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+			let copied = try #require(TestPasteboard.string)
+			#expect(!copied.contains("\u{200B}"),
+				"clipboard exposed the DOM-only caret marker: \(copied.debugDescription)")
+			#expect(harness.source.isEmpty)
+			let exactSource = try #require(MarkdownPasteboard.source)
+			#expect(exactSource == expectedSource,
+				"private clipboard source was \(exactSource.debugDescription)")
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(3)
+		}
+
+		#expect(harness.source == expectedSource)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func partialCrossRunCutThroughARestoredCaretHomeRoundTripsExactSource() async throws {
+		let expectedSource = "Term\n  : Definition\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await deleteIndentedSoftLineCharacter(in: harness)
+		try await harness.run("""
+			var home = document.querySelector('[data-md-inline-caret-home]')
+			var runs = home.closest('p').querySelectorAll(
+			  '[data-s]:not([data-md-inline-caret-home])')
+			var range = document.createRange()
+			range.setStart(runs[0].firstChild, 2)
+			range.setEnd(runs[1].firstChild, 5)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(TestPasteboard.string == "rm : Def")
+			#expect(MarkdownPasteboard.source == "rm\n  : Def")
+			#expect(harness.source == "Teinition\n\nTail")
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: 2)
+			try await harness.waitForSourceEdits(3)
+		}
+
+		#expect(harness.source == expectedSource)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func typingImmediatelyAfterPasteAtARestoredCaretHomeReplaysAfterThePaste() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await deleteIndentedSoftLineCharacter(in: harness)
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.run("document.execCommand('insertText', false, 'Z')")
+			try await harness.waitForSourceEdits(3)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Term\n  PZ: Definition\n\nTail")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
