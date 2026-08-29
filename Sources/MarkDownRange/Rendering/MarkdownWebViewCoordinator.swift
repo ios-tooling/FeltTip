@@ -142,6 +142,9 @@ extension MarkdownWebView {
 		var vetoedEdits = 0
 		/// Why each resync/rejection happened, for test failure messages.
 		var bridgeIncidents: [String] = []
+		/// Most recent recovery route, including expected adversarial desyncs that
+		/// deliberately do not count as bridge incidents.
+		var lastResyncReason: String?
 		private var openedLinkAccessScopes: [URL] = []
 
 		init(parent: MarkdownWebView) {
@@ -181,9 +184,15 @@ extension MarkdownWebView {
 			}
 			if let edit = selfEdit, parent.text == edit.text, currentRev == edit.rev {
 				selfEdit = nil
-				if parent.text == lastRenderedText, config == lastConfigSignature { return }
+				// A structural inverse edit can return the source to the last
+				// fully-rendered string while the live DOM still contains an
+				// intervening fast-path mutation. Its pending caret proves the page
+				// still needs the structural patch; source equality alone cannot skip it.
+				if pendingSelection == nil,
+				   parent.text == lastRenderedText, config == lastConfigSignature { return }
 			}
-			guard parent.text != lastRenderedText || config != lastConfigSignature else {
+			guard parent.text != lastRenderedText || config != lastConfigSignature ||
+				pendingSelection != nil else {
 				// A burst may return to the text the page already shows before
 				// its debounced host update lands. Cancel that render and thaw
 				// the still-correct DOM at the coordinator's current revision.
@@ -326,6 +335,13 @@ extension MarkdownWebView {
 			renderGeneration += 1
 			let generation = renderGeneration
 			let selection = pendingSelection
+			// Fast edits deliberately leave lastFragments as an inexact but often
+			// useful diff baseline. A later inverse edit can make its changed block
+			// equal that stale baseline even though the live DOM still differs. In
+			// that case an incremental patch must explicitly replace the caret's
+			// block; otherwise a full body swap is the only honest repair.
+			let requiredPatchedSourceOffset = exactFragmentText == nil
+				? selection?.location : nil
 			let theme = resolvedTheme ?? parent.theme
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
@@ -347,7 +363,8 @@ extension MarkdownWebView {
 				self.pendingStructuralText = nil
 				self.apply(rendered, text: text, into: webView, thenPlaceCaret: selection,
 				           tailSourceDelta: tailSourceDelta,
-				           tailSourceBoundary: tailSourceBoundary)
+				           tailSourceBoundary: tailSourceBoundary,
+				           requiredPatchedSourceOffset: requiredPatchedSourceOffset)
 			}
 		}
 
@@ -360,7 +377,8 @@ extension MarkdownWebView {
 			into webView: WKWebView,
 			thenPlaceCaret selection: NSRange?,
 			tailSourceDelta: Int? = nil,
-			tailSourceBoundary: Int? = nil
+			tailSourceBoundary: Int? = nil,
+			requiredPatchedSourceOffset: Int? = nil
 		) {
 			let fragments = rendered.fragments
 			let generation = renderGeneration
@@ -401,6 +419,20 @@ extension MarkdownWebView {
 			      let htmlJSON = rendered.patchHTMLJSON else {
 				fullSwap()
 				return
+			}
+			if let requiredPatchedSourceOffset {
+				var requiredBlock = 0
+				for (index, fragment) in fragments.enumerated() {
+					guard let stamp = fragment.firstStamp else { continue }
+					if stamp > requiredPatchedSourceOffset { break }
+					requiredBlock = index
+				}
+				let insertedEnd = patch.start + patch.html.count
+				guard patch.start <= requiredBlock, requiredBlock < insertedEnd else {
+					log("inexact baseline patch misses edited block \(requiredBlock) — full swap")
+					fullSwap()
+					return
+				}
 			}
 			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchors \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp)…\(patch.tailEndAnchorOffset)@\(patch.tailEndAnchorStamp), rev \(revision)")
 			let deltaArgument = tailSourceDelta.map(String.init) ?? "null"

@@ -49,11 +49,16 @@
   // Monotonic message counter, for ordering diagnostics on the host side.
   var seq = 0;
   var nextPasteMatchesStyle = false;
-  // Native typing APIs can deliver the next character before a structural
-  // selection replacement has re-rendered and restored its caret. Preserve
-  // those plain-text events and replay them once the fresh caret is live.
-  var frozenTextBuffer = '';
-  var frozenTextReplayTimer = null;
+  // Native input can arrive before a structural edit has re-rendered and
+  // restored its caret. Preserve ordinary typing and single-character delete
+  // commands in order, then replay them once the fresh caret is live.
+  var frozenInputQueue = [];
+  var frozenInputReplayTimer = null;
+  // A host/test may explicitly move the caret while the previous structural
+  // edit is still rendering. Attach that requested source range to the next
+  // buffered command so it does not replay at the previous edit's caret.
+  // Ordinary rapid typing never sets this and follows the restored caret.
+  var frozenRequestedSelection = null;
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -83,9 +88,10 @@
     stampRev = rev;
     pendingEdits = [];
     frozen = null;
-    if (frozenTextReplayTimer) { clearTimeout(frozenTextReplayTimer); }
-    frozenTextReplayTimer = null;
-    frozenTextBuffer = '';
+    if (frozenInputReplayTimer) { clearTimeout(frozenInputReplayTimer); }
+    frozenInputReplayTimer = null;
+    frozenInputQueue = [];
+    frozenRequestedSelection = null;
     composing = null;
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
   };
@@ -102,7 +108,8 @@
   function freeze() {
     var token = seq;
     frozen = { token: token };
-    frozenTextBuffer = '';
+    frozenInputQueue = [];
+    frozenRequestedSelection = null;
     window.setTimeout(function () {
       if (frozen && frozen.token === token) {
         try { post({ type: 'frozenTimeout', token: token }); } catch (e) {}
@@ -115,9 +122,10 @@
   window.__mdUnfreeze = function (token) {
     if (frozen && frozen.token === token) {
       frozen = null;
-      if (frozenTextReplayTimer) { clearTimeout(frozenTextReplayTimer); }
-      frozenTextReplayTimer = null;
-      frozenTextBuffer = '';
+      if (frozenInputReplayTimer) { clearTimeout(frozenInputReplayTimer); }
+      frozenInputReplayTimer = null;
+      frozenInputQueue = [];
+      frozenRequestedSelection = null;
     }
   };
   // The host has adopted newer source (for example from the raw split pane)
@@ -127,9 +135,10 @@
   window.__mdBeginHostUpdate = function () {
     pendingEdits = [];
     composing = null;
-    if (frozenTextReplayTimer) { clearTimeout(frozenTextReplayTimer); }
-    frozenTextReplayTimer = null;
-    frozenTextBuffer = '';
+    if (frozenInputReplayTimer) { clearTimeout(frozenInputReplayTimer); }
+    frozenInputReplayTimer = null;
+    frozenInputQueue = [];
+    frozenRequestedSelection = null;
     frozen = { token: null, hostUpdate: true };
   };
   // State captured at compositionstart, reconciled at compositionend.
@@ -285,17 +294,27 @@
     installLinkOpenButtons();
     installListAddButtons();
   };
-  function replayFrozenTextAfterCaret() {
-    if (!frozenTextBuffer || frozenTextReplayTimer) return;
+  function replayFrozenInputAfterCaret() {
+    if (!frozenInputQueue.length || frozenInputReplayTimer) return;
     // Leave the caret-placement call stack first. WebKit can reject a nested
     // editing command while it is still finalizing the restored selection.
     // Keep the timer non-null until this callback begins so later native text
     // cannot overtake the older buffered characters during that one-turn gap.
-    frozenTextReplayTimer = setTimeout(function () {
-      frozenTextReplayTimer = null;
-      var buffered = frozenTextBuffer;
-      frozenTextBuffer = '';
-      document.execCommand('insertText', false, buffered);
+    frozenInputReplayTimer = setTimeout(function () {
+      frozenInputReplayTimer = null;
+      var buffered = frozenInputQueue;
+      frozenInputQueue = [];
+      for (var i = 0; i < buffered.length; i++) {
+        var input = buffered[i];
+        if (input.selection) {
+          window.__mdPlaceCaret(input.selection.offset, input.selection.length);
+        }
+        if (input.command === 'insertText') {
+          document.execCommand('insertText', false, input.text);
+        } else {
+          document.execCommand(input.command);
+        }
+      }
     }, 0);
   }
   function placeCaretIn(node, offset, anchor) {
@@ -310,7 +329,7 @@
     r.setStart(node, offset); r.collapse(true);
     sel.removeAllRanges(); sel.addRange(r);
     anchor.scrollIntoView({ block: 'nearest' });
-    replayFrozenTextAfterCaret();
+    replayFrozenInputAfterCaret();
   }
   function blockOf(el) {
     return el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th') || el;
@@ -442,6 +461,9 @@
   }
   window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset) {
     length = length || 0;
+    if (frozen) {
+      frozenRequestedSelection = { offset: offset, length: length };
+    }
     var start = spotFor(offset);
     if (start && length) {
       var end = spotFor(offset + length) || start;
@@ -972,19 +994,55 @@
     var nearby = before.slice(-4) + replacement + after.slice(0, 4);
     if (/[*_~`\[\]<>\\]/.test(nearby)) return true;
     var atSyntaxBoundary = touchesInlineSyntaxBoundary(range);
-    // CommonMark's delimiter flanking distinguishes Unicode letters/numbers
-    // from whitespace and punctuation/symbols. Adding only word characters
-    // from inside the styled run keeps that edge's flanking class; punctuation
-    // (including emoji symbols) can rebalance delimiter pairs across the block.
+    // WebKit may resolve a caret at the first text position of an inline
+    // wrapper to the outside DOM affinity when it performs the native mutation.
+    // The target still maps to the styled stamp, so a fast edit would expect
+    // text that never appears in that run and then recover by resync. The end
+    // affinity is stable for an added word character after an existing word;
+    // keep that common typing route fast while rebuilding every leading edge.
+    if (atSyntaxBoundary === 'adjacent' || atSyntaxBoundary === 'inside-both' ||
+        atSyntaxBoundary === 'inside-start') return true;
+    if (atSyntaxBoundary !== 'inside-end') return false;
     var wordOnly = replacement !== '' && /^[\p{L}\p{N}\p{M}]+$/u.test(replacement);
-    if (atSyntaxBoundary === 'adjacent' || atSyntaxBoundary === 'inside-both') return true;
-    if (!atSyntaxBoundary || !wordOnly) return !!atSyntaxBoundary;
-    // Even a word-only insertion changes flanking when it replaces whitespace
-    // or punctuation as the character immediately inside the delimiter. A word
-    // added after another word at the same styled edge keeps the class stable.
-    var neighbour = atSyntaxBoundary === 'inside-start'
-      ? after.slice(0, 1) : before.slice(-1);
-    return !/^[\p{L}\p{N}\p{M}]$/u.test(neighbour);
+    if (!wordOnly) return true;
+    return !/^[\p{L}\p{N}\p{M}]$/u.test(before.slice(-1));
+  }
+  // WebKit normalizes adjacent editable spaces as it deletes. Removing one
+  // space from a doubled run can remove or NBSP-rebalance more DOM text than
+  // the target range describes; deleting a word between spaces can collapse
+  // the two surviving spaces into one. Source intentionally preserves those
+  // characters, so perform these edits structurally instead of repairing the
+  // predictable DOM drift with a recovery resync afterwards.
+  function needsStructuralWhitespaceDeletion(expected, before, after) {
+    var onlyHorizontalWhitespace = expected !== '' && /^[ \t]+$/.test(expected);
+    var deletesVisibleText = /[^ \t]/.test(expected);
+    var adjacentBefore = /[ \t]$/.test(before);
+    var adjacentAfter = /^[ \t]/.test(after);
+    var repeatedBefore = /[ \t]{2}$/.test(before);
+    var repeatedAfter = /^[ \t]{2}/.test(after);
+    return (onlyHorizontalWhitespace && (adjacentBefore || adjacentAfter)) ||
+      (adjacentBefore && adjacentAfter) ||
+      (deletesVisibleText && (repeatedBefore || repeatedAfter)) ||
+      (deletesVisibleText && adjacentBefore && after === '') ||
+      (deletesVisibleText && before === '' && adjacentAfter);
+  }
+  function needsStructuralWhitespaceInsertion(replacement, before, after) {
+    if (replacement === '') return false;
+    if (/[ \t]{2}$/.test(before) || /^[ \t]{2}/.test(after)) return true;
+    return /^[ \t]+$/.test(replacement) &&
+      (/[ \t]$/.test(before) || /^[ \t]/.test(after));
+  }
+  function needsStructuralBlockPrefixRefresh(range, replacement, before, after) {
+    var node = range.startContainer;
+    var owner = node.nodeType === 1 ? node : node.parentElement;
+    var block = owner && owner.closest
+      ? owner.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote') : null;
+    if (!block) return false;
+    var offset = textOffsetWithin(block, range.startContainer, range.startOffset);
+    if (offset == null || offset > 8) return false;
+    var localBefore = before.slice(Math.max(0, before.length - offset));
+    var prefix = localBefore + replacement + after.slice(0, 12);
+    return /^(?:#{1,6}[ \t]|>[ \t]?|(?:[-+*]|[0-9]+[.)])[ \t]+|```|~~~)/.test(prefix);
   }
   function selectedBlockPrefixes(range) {
     var node = range.startContainer;
@@ -1110,14 +1168,35 @@
     // Everything composition-adjacent is reconciled at compositionend by
     // diffing the whole run instead.
     if (composing || e.isComposing || e.inputType === 'insertCompositionText' || e.inputType === 'deleteCompositionText') return;
-    if (frozen || frozenTextReplayTimer) {
+    if (frozen || frozenInputReplayTimer) {
       if ((!frozen || !frozen.hostUpdate) &&
           (e.inputType === 'insertText' || e.inputType === 'insertReplacementText')) {
         var bufferedData = e.data;
         if (bufferedData == null && e.dataTransfer) {
           bufferedData = e.dataTransfer.getData('text/plain');
         }
-        if (bufferedData != null) { frozenTextBuffer += plain(bufferedData); }
+        if (bufferedData != null) {
+          var bufferedText = plain(bufferedData);
+          var lastBuffered = frozenInputQueue[frozenInputQueue.length - 1];
+          if (lastBuffered && lastBuffered.command === 'insertText' &&
+              frozenRequestedSelection == null) {
+            lastBuffered.text += bufferedText;
+          } else {
+            frozenInputQueue.push({
+              command: 'insertText', text: bufferedText,
+              selection: frozenRequestedSelection
+            });
+          }
+          frozenRequestedSelection = null;
+        }
+      } else if ((!frozen || !frozen.hostUpdate) &&
+                 (e.inputType === 'deleteContentBackward' ||
+                  e.inputType === 'deleteContentForward')) {
+        frozenInputQueue.push({
+          command: e.inputType === 'deleteContentBackward' ? 'delete' : 'forwardDelete',
+          selection: frozenRequestedSelection
+        });
+        frozenRequestedSelection = null;
       }
       e.preventDefault();
       return;
@@ -1137,6 +1216,35 @@
       if (commandSel && commandSel.rangeCount) { range = commandSel.getRangeAt(0); }
     }
     if (!range) { e.preventDefault(); return; }
+    // Around consecutive spaces WebKit can snap an insertText StaticRange to
+    // an earlier visual caret stop even though the live Selection still holds
+    // the exact source-restored position. Prefer the live caret only when the
+    // two positions map to different source offsets. At a formatted edge they
+    // can map to the same offset with different DOM affinity; the StaticRange
+    // then correctly says whether typing belongs inside or outside the wrapper.
+    // Replacement text keeps its target range because autocorrect and
+    // substitutions may intentionally replace text while selection is collapsed.
+    if (e.inputType === 'insertText') {
+      var liveInsertionSelection = window.getSelection();
+      if (range.collapsed && liveInsertionSelection &&
+          liveInsertionSelection.rangeCount && liveInsertionSelection.isCollapsed) {
+        var liveInsertionRange = liveInsertionSelection.getRangeAt(0);
+        var targetInsertionPos = normalizePosition(
+          range.startContainer, range.startOffset, true);
+        var liveInsertionPos = normalizePosition(
+          liveInsertionRange.startContainer, liveInsertionRange.startOffset, true);
+        var targetInsertionOffset = sourceOffsetOf(
+          targetInsertionPos.node, targetInsertionPos.offset);
+        var liveInsertionOffset = sourceOffsetOf(
+          liveInsertionPos.node, liveInsertionPos.offset);
+        if (targetInsertionOffset != null && liveInsertionOffset != null &&
+            targetInsertionOffset !== liveInsertionOffset &&
+            spanOf(targetInsertionPos.node, targetInsertionPos.offset) ===
+              spanOf(liveInsertionPos.node, liveInsertionPos.offset)) {
+          range = liveInsertionRange;
+        }
+      }
+    }
     // Physical Backspace can expose a collapsed StaticRange even though the
     // live selection is extended (notably at PRE/CODE element boundaries).
     // A selected deletion acts on that live selection, just like Cut; using
@@ -1191,6 +1299,9 @@
     var ownsStampedRun = selected && startSpan &&
       (!startSpan.contains(range.startContainer) ||
        !startSpan.contains(range.endContainer));
+    var targetOwnsStampedText = !range.collapsed && startSpan && startSpan === endSpan &&
+      textOffsetWithin(startSpan, startPos.node, startPos.offset) === 0 &&
+      textOffsetWithin(startSpan, endPos.node, endPos.offset) === textLength(startSpan);
     var crossRun = startSpan !== endSpan || ownsStampedRun;
     // beforeinput target ranges are non-collapsed for Backspace/Delete even
     // when the live selection is only a caret. Only a real selection gets
@@ -1227,6 +1338,8 @@
       // whitespace makes it part of the following source paragraph. Re-render
       // this first insertion; subsequent characters use the normal fast path.
       if (crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
+          needsStructuralWhitespaceInsertion(data, before, after) ||
+          needsStructuralBlockPrefixRefresh(range, data, before, after) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
         var replacementBlockPrefixes = selected
           ? selectedBlockPrefixes(range) : [];
@@ -1264,7 +1377,10 @@
       // Backspace removes only the separator, not an opener such as `**`.
       var deleteEndAtBlockStart = endAtBlockStart ||
         (!selected && crossRun && isVisualBlockStart(endPos.node, endPos.offset));
-      if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length ||
+      if (crossRun || targetOwnsStampedText || syntaxStart.length ||
+          syntaxEnd.length || blockPrefixes.length ||
+          needsStructuralWhitespaceDeletion(expected, before, after) ||
+          needsStructuralBlockPrefixRefresh(range, '', before, after) ||
           needsStructuralInlineRefresh(range, '', before, after)) {
         e.preventDefault();
         freeze();
@@ -1446,6 +1562,7 @@
       finalText.set(pendingEdits[i].__span, pendingEdits[i].__expect);
     }
     var drifted = false;
+    var driftDetails = [];
     finalText.forEach(function (expect, span) {
       // Exact, deliberately. A looser rule that let the run show a prefix of
       // what was asked for was tried and is wrong: deleting up to a trailing
@@ -1456,6 +1573,12 @@
       // character survives that normalization, which is the point.
       if (!span.isConnected || plain(span.textContent) !== plain(expect)) {
         drifted = true;
+        if (driftDetails.length < 3) {
+          driftDetails.push({
+            stamp: span.getAttribute('data-s'), connected: span.isConnected,
+            expected: plain(expect), actual: plain(span.textContent)
+          });
+        }
       }
     });
     // The edits themselves are still correct — they describe what the user
@@ -1473,7 +1596,7 @@
     }
     if (drifted) {
       freeze();
-      post({ type: 'desync', caret: caret });
+      post({ type: 'desync', caret: caret, detail: driftDetails });
     }
   });
   // Composition (IME, dead keys, macOS inline predictive text) can't be

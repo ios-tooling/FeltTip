@@ -64,23 +64,29 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		// around every insertion, so the next keystroke's context contained
 		// U+00A0s the source doesn't have and got rejected — eating every
 		// other typed character. Reproduce the swap and keep typing.
-		let harness = EditBridgeHarness(source: "Alpha and     more\n\nBeta")
-		let webView = try await makeEditableWebView(harness: harness)
-		try await run(webView, """
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Alpha and     more\n\nBeta")
+		try await harness.run("""
 			window.__mdPlaceCaret(9);
 			document.execCommand('insertText', false, 'X');
-			var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-			var n; while ((n = walker.nextNode())) { n.nodeValue = n.nodeValue.replace(/ {2}/g, ' \\u00A0'); }
 			""")
-		try await waitForEdits(1, in: harness)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
 		#expect(harness.source == "Alpha andX     more\n\nBeta")
 
-		// Re-place the caret (mutating nodeValue above reset the selection)
-		// and type into the now-mangled whitespace context.
-		try await run(webView, "window.__mdPlaceCaret(10); document.execCommand('insertText', false, 'Y');")
-		try await waitForEdits(2, in: harness)
+		// Mangle the freshly rendered page, then re-place the caret (mutating
+		// nodeValue resets the selection) and type into that whitespace context.
+		try await harness.run("""
+			var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+			var n; while ((n = walker.nextNode())) { n.nodeValue = n.nodeValue.replace(/ {2}/g, ' \\u00A0'); }
+			window.__mdPlaceCaret(10);
+			document.execCommand('insertText', false, 'Y');
+			""")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
 		#expect(harness.source == "Alpha andXY     more\n\nBeta")
-		#expect(harness.rejections.isEmpty)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(harness.coordinator.resyncCount == 0)
 	}
 
 	@Test func boldCommandWrapsTheSelection() async throws {

@@ -170,6 +170,8 @@ extension MarkdownWebView.Coordinator {
 		// The DOM took an edit the script couldn't map (e.g. an IME
 		// composition outside a stamped run); re-render so it can't drift.
 		if body["type"] as? String == "desync" {
+			lastResyncReason =
+				"page desync caret=\(body["caret"] ?? "?") rev=\(body["rev"] ?? "?") seq=\(body["seq"] ?? "?") detail=\(body["detail"] ?? "?")"
 			log("desync reported by page")
 			// A drift-triggered resync knows where the caret belongs, because
 			// the edit that caused it said so. Without that the caret would
@@ -181,6 +183,7 @@ extension MarkdownWebView.Coordinator {
 		// clear it never arrived — a lifecycle bug somewhere upstream. Resync
 		// so typing comes back instead of staying silently dead.
 		if body["type"] as? String == "frozenTimeout" {
+			lastResyncReason = "frozen timeout token=\(body["token"] ?? "?")"
 			log("frozen timeout (token \(body["token"] ?? "?")) — resyncing")
 			resync(caretAt: nil)
 			return

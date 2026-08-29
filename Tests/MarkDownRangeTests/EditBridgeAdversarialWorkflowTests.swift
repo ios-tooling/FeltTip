@@ -236,6 +236,36 @@ struct EditBridgeAdversarialWorkflowTests {
 		}
 	}
 
+	@Test func wordBackspaceDeletingAWholeListRunDoesNotNeedRecovery() async throws {
+		let source = "- la\n- ha\n\nTail"
+		let caret = (source as NSString).range(of: "ha").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.placeCaret(caret)
+		performResponderCommand("deleteWordBackward", in: harness)
+		try await harness.waitForSourceEdits(1)
+		try await assertHealthy(harness)
+
+		#expect(harness.source == "- la\n- \n\nTail")
+	}
+
+	@Test func deletingAtAListContentStartRefreshesAnActivatedHeading() async throws {
+		let source = "- os\n- a# A"
+		let caret = (source as NSString).range(of: "a# A").location
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"document.execCommand('forwardDelete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await assertHealthy(harness)
+
+		#expect(harness.source == "- os\n- # A")
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		#expect(
+			EditBridgeFuzzTests.normalizedVisibleText(try await harness.domVisibleText())
+				== EditBridgeFuzzTests.normalizedVisibleText(try await fresh.domVisibleText()))
+	}
+
 	@Test func unsupportedAppKitSoftLineDeletionCannotDesyncThePage() async throws {
 		for selector in ["deleteToBeginningOfLine", "deleteToEndOfLine"] {
 			let source = "alpha bravo charlie"

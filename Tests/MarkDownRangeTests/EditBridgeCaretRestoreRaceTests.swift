@@ -127,7 +127,10 @@ import WebKit
 		let freshText = EditBridgeFuzzTests.normalizedVisibleText(try await fresh.domVisibleText())
 		#expect(liveText == freshText)
 		#expect(try await harness.stampMismatches() == [])
-		#expect(harness.coordinator.resyncCount == 0)
+		#expect(
+			harness.coordinator.resyncCount == 0,
+			"unexpected bridge recovery: \(harness.coordinator.lastResyncReason ?? String(describing: harness.coordinator.bridgeIncidents))"
+		)
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 }

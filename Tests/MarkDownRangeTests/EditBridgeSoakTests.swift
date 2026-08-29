@@ -11,12 +11,24 @@ import Foundation
 import Testing
 @testable import MarkDownRange
 
+#if os(macOS)
+	import AppKit
+#endif
+
 private let editBridgeSoakSeeds: [UInt64] = {
 	if let value = ProcessInfo.processInfo.environment["MDR_SOAK_SEED"],
 	   let seed = UInt64(value) {
 		return [seed]
 	}
 	return Array(1000..<1040)
+}()
+
+private let editBridgeDeletionSoakSeeds: [UInt64] = {
+	if let value = ProcessInfo.processInfo.environment["MDR_DELETION_SOAK_SEED"],
+	   let seed = UInt64(value) {
+		return [seed]
+	}
+	return Array(2000..<2010)
 }()
 
 @Suite(.serialized) @MainActor struct EditBridgeSoakTests {
@@ -110,4 +122,97 @@ private let editBridgeSoakSeeds: [UInt64] = {
 			"source and DOM diverged after \(script)\nsource: \(harness.source.debugDescription)\nlive: \(live.debugDescription)\nrendered: \(rendered.debugDescription)"
 		)
 	}
+
+	#if os(macOS)
+		@Test(.enabled(if: ProcessInfo.processInfo.environment["MDR_DELETION_SOAK"] != nil),
+		      arguments: editBridgeDeletionSoakSeeds)
+		func deletionHeavyScriptsConvergeAfterEveryCommand(seed: UInt64) async throws {
+			var rng = SeededRNG(seed: seed)
+			let harness = try await CoordinatorBridgeHarness(
+				source: EditBridgeFuzzTests.generateDocument(&rng))
+			var opLog: [String] = []
+
+			for _ in 0..<60 {
+				guard let spot = try await EditBridgeFuzzTests.randomStampedOffset(harness, &rng)
+				else { break }
+				let sourceBeforeCommand = harness.source
+				let roll = Int.random(in: 0..<100, using: &rng)
+				switch roll {
+				case 0..<25:
+					opLog.append("backspace @\(spot)")
+					try await harness.batch([
+						"window.__mdPlaceCaret(\(spot))",
+						"document.execCommand('delete')",
+					])
+				case 25..<50:
+					opLog.append("forward delete @\(spot)")
+					try await harness.batch([
+						"window.__mdPlaceCaret(\(spot))",
+						"document.execCommand('forwardDelete')",
+					])
+				case 50..<70:
+					opLog.append("word backspace @\(spot)")
+					try await harness.placeCaret(spot)
+					harness.focusWebView()
+					harness.webView.perform(NSSelectorFromString("deleteWordBackward:"), with: nil)
+				case 70..<90:
+					opLog.append("word forward delete @\(spot)")
+					try await harness.placeCaret(spot)
+					harness.focusWebView()
+					harness.webView.perform(NSSelectorFromString("deleteWordForward:"), with: nil)
+				default:
+					let character = ["a", "é", "🙂", " "].randomElement(using: &rng)!
+					opLog.append("restore \(character) @\(spot)")
+					try await harness.type(character, at: spot)
+				}
+
+				try await Task.sleep(for: .milliseconds(20))
+				try await harness.waitQuiescent()
+				if harness.coordinator.resyncCount > 0 {
+					opLog.append("source before resync: \(sourceBeforeCommand.debugDescription)")
+					opLog.append(
+						"last resync: \(harness.coordinator.lastResyncReason ?? "unknown")")
+					opLog.append(
+						"incidents: " + harness.coordinator.bridgeIncidents.joined(separator: "; "))
+					break
+				}
+				let mismatches = try await harness.stampMismatches()
+				if !mismatches.isEmpty {
+					opLog.append("source before drift: \(sourceBeforeCommand.debugDescription)")
+					opLog.append("source after drift: \(harness.source.debugDescription)")
+					opLog.append(
+						"last rendered: \(harness.coordinator.lastRenderedText?.debugDescription ?? "nil"); "
+						+ "exact fragments: \(harness.coordinator.exactFragmentText?.debugDescription ?? "nil")")
+					opLog.append(
+						"DOM: " + ((try? await harness.evaluate("document.body.innerHTML")) ?? "nil"))
+					opLog.append("stamp drift: \(mismatches.joined(separator: "; "))")
+					break
+				}
+				let live = EditBridgeFuzzTests.normalizedVisibleText(
+					try await harness.domVisibleText())
+				let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+				let rendered = EditBridgeFuzzTests.normalizedVisibleText(
+					try await fresh.domVisibleText())
+				if live != rendered {
+					opLog.append("source before divergence: \(sourceBeforeCommand.debugDescription)")
+					opLog.append("source after divergence: \(harness.source.debugDescription)")
+					opLog.append(
+						"DOM: " + ((try? await harness.evaluate("document.body.innerHTML")) ?? "nil"))
+					opLog.append(
+						"visible divergence; live \(live.debugDescription); "
+						+ "rendered \(rendered.debugDescription)")
+					break
+				}
+			}
+
+			let script = "deletion soak seed \(seed):\n" + opLog.joined(separator: "\n")
+			#expect(try await harness.stampMismatches() == [], "stamp drift during \(script)")
+			let live = EditBridgeFuzzTests.normalizedVisibleText(try await harness.domVisibleText())
+			let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+			let rendered = EditBridgeFuzzTests.normalizedVisibleText(try await fresh.domVisibleText())
+			#expect(live == rendered, "source and DOM diverged after \(script)")
+			#expect(harness.coordinator.resyncCount == 0, "resync during \(script)")
+			#expect(harness.coordinator.hardRejections == 0, "rejection during \(script)")
+		}
+	#endif
 }

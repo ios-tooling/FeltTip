@@ -95,8 +95,12 @@ final class CoordinatorBridgeHarness {
 		#endif
 		wireRoundTrip(text: source)
 		coordinator.load(into: webView)
-		try await waitUntil("initial stamped content") {
-			try await self.evaluate("document.querySelector('[data-s]') && typeof window.__mdPlaceCaret === 'function' ? 'yes' : 'no'") == "yes"
+		try await waitUntil("initial editable content") {
+			let pageRev = try await self.evaluate(
+				"window.__mdGetRev ? String(window.__mdGetRev()) : 'none'")
+			guard pageRev == String(self.coordinator.currentRev) else { return false }
+			return try await self.evaluate(
+				"document.body && typeof window.__mdPlaceCaret === 'function' ? 'yes' : 'no'") == "yes"
 		}
 	}
 
@@ -242,15 +246,17 @@ final class CoordinatorBridgeHarness {
 	/// Wait until the emulated round-trip settles: renders happen off the main
 	/// actor now, so "settled" means the page ADDRESSES the coordinator's
 	/// current revision (a stale page's stamped content must not count) and
-	/// has stamped content again.
+	/// has its editor script again. A valid empty or syntax-only document has no
+	/// stamped visible runs, so stamps cannot be a readiness requirement.
 	func waitQuiescent() async throws {
 		try await Task.sleep(for: .milliseconds(80))
-		try await waitUntil("page at current revision with stamped content") {
+		try await waitUntil("page at current revision with editable content") {
 			let frozen = try await self.evaluate("window.__mdIsFrozen ? String(window.__mdIsFrozen()) : 'false'")
 			guard frozen == "false" else { return false }
 			let pageRev = try await self.evaluate("window.__mdGetRev ? String(window.__mdGetRev()) : 'none'")
 			guard pageRev == String(self.coordinator.currentRev) else { return false }
-			return try await self.evaluate("document.querySelector('[data-s]') ? 'yes' : 'no'") == "yes"
+			return try await self.evaluate(
+				"document.body && typeof window.__mdPlaceCaret === 'function' ? 'yes' : 'no'") == "yes"
 		}
 	}
 

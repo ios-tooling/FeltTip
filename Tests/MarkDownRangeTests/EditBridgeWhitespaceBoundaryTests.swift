@@ -11,6 +11,10 @@ import Foundation
 import Testing
 @testable import MarkDownRange
 
+#if os(macOS)
+	import AppKit
+#endif
+
 @Suite(.serialized) @MainActor
 struct EditBridgeWhitespaceBoundaryTests {
 	private func assertHealthy(
@@ -113,6 +117,132 @@ struct EditBridgeWhitespaceBoundaryTests {
 		#expect(harness.source == "Alpha  Beta\n\nTail")
 		try await assertHealthy(harness)
 	}
+
+	@Test func forwardDeleteOfOneRepeatedSpaceDoesNotNeedRecovery() async throws {
+		let source = "text de ewor samle  beta"
+		let caret = (source as NSString).range(of: "samle").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"document.execCommand('forwardDelete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "text de ewor samle beta")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func insertingAnotherRepeatedSpaceDoesNotNeedRecovery() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "b  pl")
+		try await harness.type(" ", at: 3)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "b   pl")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func backspaceExposingRepeatedSpacesDoesNotNeedRecovery() async throws {
+		let source = "gamm  gamma"
+		let caret = (source as NSString).range(of: "gamma").location + 1
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "gamm  amma")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func typingTextAfterRepeatedSpacesDoesNotNeedRecovery() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "ma  tet")
+		try await harness.type("é", at: 4)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "ma  étet")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func insertingThenDeletingARepeatedSpaceRestoresTheRenderedBaseline() async throws {
+		let source = "eta ds **gmma**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.type(" ", at: 3)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "eta  ds **gmma**")
+
+		try await harness.batch([
+			"window.__mdPlaceCaret(4)",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source)
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+		let fresh = try await CoordinatorBridgeHarness(source: source)
+		#expect(
+			EditBridgeFuzzTests.normalizedVisibleText(try await harness.domVisibleText())
+				== EditBridgeFuzzTests.normalizedVisibleText(try await fresh.domVisibleText()))
+	}
+
+	@Test func forwardDeleteDuringAWhitespaceRenderFreezeIsReplayed() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "eta ds")
+		try await harness.batch([
+			"window.__mdPlaceCaret(4)",
+			"document.execCommand('insertText', false, ' ')",
+			"document.execCommand('forwardDelete')",
+		])
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "eta  s")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func mixedTypingAndDeletionQueuedAcrossSuccessiveFreezesKeepTheirOrder() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "eta ds")
+		try await harness.batch([
+			"window.__mdPlaceCaret(4)",
+			"document.execCommand('insertText', false, ' ')",
+			"document.execCommand('insertText', false, 'X')",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "eta  ds")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	#if os(macOS)
+		@Test func wordBackspaceExposingTrailingSpacesDoesNotNeedRecovery() async throws {
+			let source = "ex de  bea\n\nTail"
+			let caret = (source as NSString).range(of: "bea").upperBound
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.placeCaret(caret)
+			harness.focusWebView()
+			harness.webView.perform(
+				NSSelectorFromString("deleteWordBackward:"), with: nil)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == "ex de  \n\nTail")
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(try await harness.stampMismatches() == [])
+		}
+	#endif
 
 	@Test func insertionAtVisibleLineStartPreservesHiddenLeadingWhitespace() async throws {
 		let source = "Alpha\n\n  Beta\n\nTail"
