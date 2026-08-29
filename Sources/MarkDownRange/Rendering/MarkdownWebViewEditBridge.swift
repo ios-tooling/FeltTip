@@ -222,13 +222,10 @@ extension MarkdownWebView.Coordinator {
 		var payload = body
 		if body["op"] as? String == "neutralWordDelete" {
 			guard let caret = body["start"] as? Int,
-			      let wrapperRange = Self.emptyUnderlineRange(
+			      let wrapperRange = Self.emptyUnderlineClusterRange(
 					in: source as NSString,
 					caret: caret,
 					afterWrapper: body["afterWrapper"] as? Bool == true),
-			      (source as NSString).substring(with: NSRange(
-					location: wrapperRange.location, length: wrapperRange.length))
-					.caseInsensitiveCompare("<u></u>") == .orderedSame,
 			      let range = Self.adjacentWordDeletionRange(
 					in: source,
 					boundary: body["backward"] as? Bool == true
@@ -548,14 +545,22 @@ extension MarkdownWebView.Coordinator {
 			caret: caret)
 	}
 
-	private static func emptyUnderlineRange(
+	private static func emptyUnderlineClusterRange(
 		in source: NSString,
 		caret: Int,
 		afterWrapper: Bool
 	) -> NSRange? {
-		let location = afterWrapper ? caret - 7 : caret - 3
-		guard location >= 0, location + 7 <= source.length else { return nil }
-		return NSRange(location: location, length: 7)
+		func isEmptyUnderline(at location: Int) -> Bool {
+			guard location >= 0, location + 7 <= source.length else { return false }
+			return source.substring(with: NSRange(location: location, length: 7))
+				.caseInsensitiveCompare("<u></u>") == .orderedSame
+		}
+		var start = afterWrapper ? caret - 7 : caret - 3
+		guard isEmptyUnderline(at: start) else { return nil }
+		var end = start + 7
+		while isEmptyUnderline(at: start - 7) { start -= 7 }
+		while isEmptyUnderline(at: end) { end += 7 }
+		return NSRange(location: start, length: end - start)
 	}
 
 	/// Finds the native word-deletion target next to a source-neutral inline

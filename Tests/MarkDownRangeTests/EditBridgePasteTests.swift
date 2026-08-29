@@ -401,6 +401,65 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(direction: "backward", copied: "A", expected: "P<u></u><u></u>B"),
+		(direction: "forward", copied: "B", expected: "A<u></u><u></u>P"),
+	])
+	func pasteOverASelectionBesideAdjacentRestoredEmptyUnderlines(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let source = "A<u></u><u></u>B"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 8, token: 712))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("adjacent empty-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "8"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(pasted: "P", afterPaste: "Alpha<u></u>P Tail",
 		 afterTyping: "Alpha<u></u>PX Tail"),
 		(pasted: "One\n\nTwo", afterPaste: "Alpha<u></u>One\n\nTwo Tail",
@@ -683,6 +742,66 @@ import Testing
 		try await harness.waitForSourceEdits(4)
 		try await harness.waitQuiescent()
 		#expect(harness.source == formattedSource + "X")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func partialCrossBlockCutContainingAnEmptyWrapperRoundTripsExactSource() async throws {
+		let source = "Before\n\nAlpha<u></u> Tail\n\nAfter"
+		let nsSource = source as NSString
+		let start = 2
+		let end = nsSource.range(of: "After").location + 2
+		let selectedSource = nsSource.substring(
+			with: NSRange(location: start, length: end - start))
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: start, length: end - start)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == "fore\n\nAlpha Tail\n\nAf")
+			#expect(MarkdownPasteboard.source == selectedSource)
+			#expect(harness.source == "Beter")
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: start)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Before\n\nAlpha<u></u> Tail\n\nAfXter")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [false, true])
+	func multilinePasteOverAPartialCrossBlockSelectionContainingAnEmptyWrapper(
+		backward: Bool
+	) async throws {
+		let source = "Before\n\nAlpha<u></u> Tail\n\nAfter"
+		let nsSource = source as NSString
+		let start = 2
+		let end = nsSource.range(of: "After").location + 2
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(
+			harness, start: start, length: end - start, backward: backward)
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "BeOne\n\nTwoter", "backward=\(backward)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "BeOne\n\nTwoXter", "backward=\(backward)")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

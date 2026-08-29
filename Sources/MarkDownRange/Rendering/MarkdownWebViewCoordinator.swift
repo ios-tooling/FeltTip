@@ -538,16 +538,29 @@ extension MarkdownWebView {
 						source.substring(with: NSRange(location: wrapperStart, length: 7))))
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
-				if wrapperStart > 0 {
-					let range = source.rangeOfComposedCharacterSequence(at: wrapperStart - 1)
-					if range.upperBound == wrapperStart {
+				func isEmptyUnderline(at location: Int) -> Bool {
+					guard location >= 0, location + 7 <= source.length else { return false }
+					return source.substring(with: NSRange(location: location, length: 7))
+						.caseInsensitiveCompare("<u></u>") == .orderedSame
+				}
+				var visibleWrapperStart = wrapperStart
+				var visibleWrapperEnd = wrapperEnd
+				while isEmptyUnderline(at: visibleWrapperStart - 7) {
+					visibleWrapperStart -= 7
+				}
+				while isEmptyUnderline(at: visibleWrapperEnd) {
+					visibleWrapperEnd += 7
+				}
+				if visibleWrapperStart > 0 {
+					let range = source.rangeOfComposedCharacterSequence(at: visibleWrapperStart - 1)
+					if range.upperBound == visibleWrapperStart {
 						neutralPreviousOffset = String(range.location)
 						neutralPreviousCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
 							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 					}
 				}
-				if wrapperEnd < source.length {
-					let range = source.rangeOfComposedCharacterSequence(at: wrapperEnd)
+				if visibleWrapperEnd < source.length {
+					let range = source.rangeOfComposedCharacterSequence(at: visibleWrapperEnd)
 					neutralNextOffset = String(range.location)
 					neutralNextCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
