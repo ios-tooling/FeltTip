@@ -78,5 +78,25 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 		#expect(try await harness.stampMismatches() == [])
 	}
+
+	@Test func syntaxSensitiveEditInALargeDocumentPatchesBeforeTheFreezeDeadline() async throws {
+		let base = Self.largeDocument(blocks: 800)
+		let source = base.replacingOccurrences(
+			of: "Paragraph 400 with enough text to make a realistically sized block.",
+			with: "Paragraph 400 with enough text to make a realistically sized block. b**")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let delimiter = (source as NSString).range(of: "b**").location
+
+		let start = ContinuousClock.now
+		try await harness.type("a", at: delimiter + 2)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let settle = ContinuousClock.now - start
+
+		#expect(harness.source.contains("b*a*"))
+		#expect(settle < .milliseconds(1800), "syntax refresh took \(settle) in an 800-block document")
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
 }
 #endif
