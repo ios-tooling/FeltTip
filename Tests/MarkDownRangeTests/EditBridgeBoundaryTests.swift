@@ -1017,6 +1017,41 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func aWrapperAfterUnmatchedLinkPunctuationKeepsItsExactCaret() async throws {
+		let source = "Text ](stuff<u></u>) Tail"
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 719))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("unmatched-link wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Text ](stuff<u></u>X) Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test(arguments: [
 		(direction: "backward", expected: "AlphXa<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u> XTail"),

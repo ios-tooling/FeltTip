@@ -543,6 +543,12 @@ extension MarkdownWebView {
 				guard opener.location != NSNotFound, !isEscaped(at: opener.location) else {
 					return false
 				}
+				let labelPrefix = NSRange(
+					location: lineStart, length: opener.location - lineStart)
+				let labelOpen = source.range(of: "[", options: .backwards, range: labelPrefix)
+				guard labelOpen.location != NSNotFound, !isEscaped(at: labelOpen.location) else {
+					return false
+				}
 				let destinationStart = opener.upperBound
 				var cursor = destinationStart
 				var depth = 1
