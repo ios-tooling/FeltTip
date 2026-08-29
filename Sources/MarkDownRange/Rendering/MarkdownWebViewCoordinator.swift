@@ -401,9 +401,18 @@ extension MarkdownWebView {
 					      revision == self.currentRev else { return }
 					self.renderTask = nil
 					self.log("body swap: \(fragments.count) blocks rev=\(revision)")
+					let caretCall = selection.map {
+						"window.__mdPlaceCaret && window.__mdPlaceCaret(\(self.caretPlacementArguments($0)));"
+					} ?? ""
 					do {
-						_ = try await webView.evaluateJavaScript(
-							"window.__mdSwapContent && window.__mdSwapContent(\(bodyJSON), \(revision));")
+						_ = try await webView.evaluateJavaScript("""
+							(function () {
+							  if (!window.__mdSwapContent) return false;
+							  window.__mdSwapContent(\(bodyJSON), \(revision));
+							  \(caretCall)
+							  return true;
+							})()
+							""")
 					} catch {
 						return
 					}
@@ -411,7 +420,6 @@ extension MarkdownWebView {
 					      revision == self.currentRev else { return }
 					self.lastFragments = fragments
 					self.exactFragmentText = text
-					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				}
 			}
@@ -437,14 +445,24 @@ extension MarkdownWebView {
 			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchors \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp)…\(patch.tailEndAnchorOffset)@\(patch.tailEndAnchorStamp), rev \(revision)")
 			let deltaArgument = tailSourceDelta.map(String.init) ?? "null"
 			let boundaryArgument = tailSourceBoundary.map(String.init) ?? "null"
-			let call = "window.__mdPatchBlocks ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.tailEndAnchorOffset), \(patch.tailEndAnchorStamp), \(deltaArgument), \(boundaryArgument), \(patch.expectedOldCount), \(revision)) : false"
+			let caretCall = selection.map {
+				"window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments($0)));"
+			} ?? ""
+			let call = """
+				(function () {
+				  var patched = window.__mdPatchBlocks
+				    ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.tailEndAnchorOffset), \(patch.tailEndAnchorStamp), \(deltaArgument), \(boundaryArgument), \(patch.expectedOldCount), \(revision))
+				    : false;
+				  if (patched) { \(caretCall) }
+				  return patched;
+				})()
+				"""
 			webView.evaluateJavaScript(call) { [weak self, weak webView] result, error in
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
 				if (result as? Bool) == true, error == nil {
 					self.lastFragments = fragments
 					self.exactFragmentText = tailSourceDelta == nil ? text : nil
-					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				} else {
 					self.log("patch refused by page — full swap fallback")
