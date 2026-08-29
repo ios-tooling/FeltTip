@@ -43,13 +43,17 @@ attached Markdown formatting characters into the source pane.
 
 1. `beforeinput` in the page maps the target range to source offsets and reads
    the surrounding DOM text as context.
-2. **In-place edits** (typing/deleting inside one stamped run) let the browser
+2. **In-place edits** (typing/deleting inside one stable stamped run) let the browser
    mutate the DOM, post the edit, and shift later `data-s` stamps by the length
    delta immediately — so a batched second command in the same turn already reads
    post-edit coordinates. No re-render. An end-of-turn watchdog requires every
    allowed `beforeinput` to receive its matching `input`; an orphaned event
    discards the queued edit and resyncs before another command can flush it.
-3. **Structural edits** (anything crossing runs, Enter, style toggles, paste)
+   Edits near visible Markdown delimiters, or whitespace edits at a hidden
+   inline-syntax boundary, are excluded because they can change how the run
+   parses even though they do not cross a DOM node.
+3. **Structural edits** (anything crossing runs, syntax-sensitive single-run
+   edits, Enter, style toggles, paste)
    `preventDefault()`, freeze the page, and post. The host splices the source and
    re-renders; the freeze is what stops a keystroke from mapping against a DOM
    that's about to change shape. Every early-out on the host side must thaw
@@ -84,7 +88,7 @@ pre-restore source — typing the undo straight back out.
 
 | Input | Route | Notes |
 | --- | --- | --- |
-| Typing, delete, forward/word delete | in-place | cross-run variants go structural |
+| Typing, delete, forward/word delete | in-place | cross-run and Markdown-syntax-sensitive variants go structural |
 | Typing / Return in fenced code | in-place / structural | mapped only when the rendered code is one exact source slice; Return inserts one source newline and syntax highlighting is preserved after re-render |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
 | Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix and the caret move down with the text |
@@ -215,9 +219,12 @@ underneath it, not in what the page asks for.
   relative to its first, so a pure offset shift doesn't make later blocks look
   changed. `MarkdownBlockDiff` turns two fragment lists into a contiguous block
   replacement the page applies with `__mdPatchBlocks` — no navigation, no flash.
-- The page computes the tail's stamp delta from its **own live stamps**, because
-  fast-path typing shifts stamps without re-rendering, leaving the host's
-  fragment baseline stale.
+- Structural page edits shift a wholly surviving tail by the edit's **exact
+  UTF-16 source delta**. If the fragment diff's tail straddles the old edit
+  boundary (because prior fast-path typing left the fragment baseline stale),
+  the patch is refused before mutation and a full swap restamps it. Host-driven
+  patches without an exact edit delta instead validate their first and last
+  live anchors before applying a uniform shift.
 - A patch the live DOM doesn't recognize returns `false` and falls back to a full
   swap, so a mis-patch is impossible by construction.
 - Patch/full-swap callbacks are generation- and revision-gated, and the fragment
@@ -240,9 +247,10 @@ underneath it, not in what the page asks for.
    actual behavior gets pinned down; prefer it over reasoning about WebKit.
 4. `EditBridgeFuzzTests` — random edit scripts, asserting DOM/source convergence.
 
-A healthy session records **zero** resyncs, dropped edits and hard rejections;
-the suites assert those counters, so a regression that still "works" but churns
-shows up as a failure.
+A healthy session records **zero** dropped edits and hard rejections. WebKit may
+legitimately force a recovery resync after rebalancing whitespace around a
+deletion, so fuzz coverage treats exact DOM/source convergence and honest stamps
+as the contract instead of constraining that platform/version-dependent count.
 
 Selected deletion (Cut, Backspace, or Forward Delete) carries `syntaxStart`,
 `syntaxEnd`, and `blockPrefixes` only when the DOM selection owns the complete

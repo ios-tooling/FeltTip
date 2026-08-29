@@ -61,6 +61,22 @@ import Testing
 		#expect(patch.tailAnchorStamp == new[1].firstStamp)
 	}
 
+	@Test func insertingCollapsedBlankLinesStillRestampsTheSurvivingTail() {
+		let prefix = "Alpha paragraph"
+		let tail = "Beta paragraph **tail**"
+		let old = fragments(prefix + "\n\n" + tail)
+		let new = fragments(prefix + "\n\n\n\n" + tail)
+		let oldStamp = try! #require(old.last?.firstStamp)
+		let newStamp = try! #require(new.last?.firstStamp)
+		#expect(newStamp == oldStamp + 2)
+
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.removeCount == 0)
+		#expect(patch.html.isEmpty)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == newStamp)
+	}
+
 	@Test func appendingABlockPatchesAtTheEnd() {
 		let old = fragments("Alpha\n\nBeta")
 		let new = fragments("Alpha\n\nBeta\n\nGamma")

@@ -23,6 +23,71 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
+	@Test(arguments: [
+		("**Bold**", "**Bold**\n\nX"),
+		("_Italic_", "_Italic_\n\nX"),
+		("[Link](https://example.com)", "[Link](https://example.com)\n\nX"),
+	])
+	func returnAfterCollapsingSelectAllToTheRightExitsTerminalInlineSyntax(
+		source: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"document.execCommand('selectAll')",
+			"window.getSelection().collapseToEnd()",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("X", at: (harness.source as NSString).length)
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == expected)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func returnAtAnInternalPlainBlockStartRestampsTheMovedBlock() async throws {
+		let source = "Alpha paragraph\n\nBeta paragraph **tail**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let caret = (source as NSString).range(of: "Beta").location
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha paragraph\n\n\n\nBeta paragraph **tail**")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func insertingBetweenLiteralDelimitersRefreshesTheirMarkdownMeaning() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "b**")
+		try await harness.type("a", at: 2)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "b*a*")
+		#expect(Self.compactVisible(try await harness.domVisibleText()) == "ba")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func whitespaceAtAnEmphasisBoundaryRefreshesInvalidatedSyntax() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "*a*")
+		try await harness.type(" ", at: 1)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "* a*")
+		let visible = Self.compactVisible(try await harness.domVisibleText())
+		#expect(visible == "a*", "\(visible.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	private static func compactVisible(_ text: String) -> String {
+		text.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
 	@Test func enterInListItemContinuesTheList() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "- one\n- two")
 		try await harness.batch(["window.__mdPlaceCaret(5)", "document.execCommand('insertParagraph')"])

@@ -109,6 +109,20 @@ extension MarkdownWebView {
 		/// The per-block fragments of the page currently shown — the baseline
 		/// incremental patches diff against. Nil until a full render lands.
 		var lastFragments: [MarkdownBlockFragment]?
+		/// Source that produced `lastFragments`. Fast-path edits deliberately
+		/// advance `lastRenderedText` without rebuilding fragments, so these two
+		/// values can differ.
+		var lastFragmentText: String?
+		/// Exact UTF-16 length change for an accepted structural page edit. The
+		/// live tail must move by this amount even when Markdown whitespace
+		/// normalization makes a fresh-render anchor appear one character away.
+		var pendingStructuralTailDelta: Int?
+		/// End of the structural edit in the pre-edit source. A surviving patch
+		/// tail that straddles this boundary cannot be shifted uniformly.
+		var pendingStructuralTailBoundary: Int?
+		/// Exact source expected back from the host for the pending page edit.
+		/// A different host value supersedes the edit and its caret/delta metadata.
+		var pendingStructuralText: String?
 		/// Logs the edit bridge to the console (every message, splice, and
 		/// rejection). Toggle without rebuilding:
 		/// `defaults write <bundle-id> MDRDebugEditing -bool true`.
@@ -158,6 +172,12 @@ extension MarkdownWebView {
 		func load(into webView: WKWebView) {
 			// Our own edit coming back round-trip — the DOM already shows it.
 			let config = configSignature()
+			if let expected = pendingStructuralText, parent.text != expected {
+				pendingSelection = nil
+				pendingStructuralTailDelta = nil
+				pendingStructuralTailBoundary = nil
+				pendingStructuralText = nil
+			}
 			if let edit = selfEdit, parent.text == edit.text, currentRev == edit.rev {
 				selfEdit = nil
 				if parent.text == lastRenderedText, config == lastConfigSignature { return }
@@ -205,6 +225,9 @@ extension MarkdownWebView {
 				lastConfigSignature = config
 				log("reload: textLen=\((parent.text as NSString).length)")
 				currentSource = parent.text
+				pendingStructuralTailDelta = nil
+				pendingStructuralTailBoundary = nil
+				pendingStructuralText = nil
 				bumpEpoch()
 				loadHTML(for: parent.text, into: webView)
 				return
@@ -227,6 +250,9 @@ extension MarkdownWebView {
 			pendingHostText = text
 			currentSource = text
 			selfEdit = nil
+			pendingStructuralTailDelta = nil
+			pendingStructuralTailBoundary = nil
+			pendingStructuralText = nil
 			renderTask?.cancel()
 			renderTask = nil
 			renderGeneration += 1
@@ -256,7 +282,7 @@ extension MarkdownWebView {
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
-			let baseline = lastFragments
+			let baseline = lastFragmentText == lastRenderedText ? lastFragments : nil
 			let renderService = renderService
 			renderTask = Task { @MainActor [weak self, weak webView] in
 				let rendered = await renderService.blockResult(
@@ -274,7 +300,7 @@ extension MarkdownWebView {
 				self.lastRenderedText = text
 				self.currentSource = text
 				self.pendingHostText = nil
-				self.apply(rendered, into: webView, thenPlaceCaret: nil)
+				self.apply(rendered, text: text, into: webView, thenPlaceCaret: nil)
 			}
 		}
 
@@ -283,6 +309,8 @@ extension MarkdownWebView {
 		/// patch can't be computed or the live DOM refuses it.
 		private func applyStructuralPatch(into webView: WKWebView) {
 			let text = parent.text
+			let tailSourceDelta = pendingStructuralTailDelta
+			let tailSourceBoundary = pendingStructuralTailBoundary
 			lastRenderedText = text
 			// Close the revision epoch NOW, before awaiting the render. Until the
 			// patch lands, the page still shows the previous DOM and still
@@ -313,14 +341,26 @@ extension MarkdownWebView {
 				guard let self, let webView, generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.pendingSelection = nil
-				self.apply(rendered, into: webView, thenPlaceCaret: selection)
+				self.pendingStructuralTailDelta = nil
+				self.pendingStructuralTailBoundary = nil
+				self.pendingStructuralText = nil
+				self.apply(rendered, text: text, into: webView, thenPlaceCaret: selection,
+				           tailSourceDelta: tailSourceDelta,
+				           tailSourceBoundary: tailSourceBoundary)
 			}
 		}
 
 		/// Land freshly rendered fragments on the page: patch the changed span
 		/// when the baseline allows it, otherwise swap the whole body. Assumes
 		/// the caller has already committed coordinator state (text, epoch).
-		func apply(_ rendered: MarkdownRenderService.BlockResult, into webView: WKWebView, thenPlaceCaret selection: NSRange?) {
+		func apply(
+			_ rendered: MarkdownRenderService.BlockResult,
+			text: String,
+			into webView: WKWebView,
+			thenPlaceCaret selection: NSRange?,
+			tailSourceDelta: Int? = nil,
+			tailSourceBoundary: Int? = nil
+		) {
 			let fragments = rendered.fragments
 			let generation = renderGeneration
 			let revision = currentRev
@@ -351,6 +391,7 @@ extension MarkdownWebView {
 					guard generation == self.renderGeneration,
 					      revision == self.currentRev else { return }
 					self.lastFragments = fragments
+					self.lastFragmentText = text
 					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				}
@@ -360,13 +401,16 @@ extension MarkdownWebView {
 				fullSwap()
 				return
 			}
-			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchor \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp), rev \(revision)")
-			let call = "window.__mdPatchBlocks ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.expectedOldCount), \(revision)) : false"
+			log("patch: \(patch.removeCount)→\(patch.html.count) blocks at \(patch.start), tail anchors \(patch.tailAnchorOffset)@\(patch.tailAnchorStamp)…\(patch.tailEndAnchorOffset)@\(patch.tailEndAnchorStamp), rev \(revision)")
+			let deltaArgument = tailSourceDelta.map(String.init) ?? "null"
+			let boundaryArgument = tailSourceBoundary.map(String.init) ?? "null"
+			let call = "window.__mdPatchBlocks ? window.__mdPatchBlocks(\(patch.start), \(patch.removeCount), \(htmlJSON), \(patch.tailAnchorOffset), \(patch.tailAnchorStamp), \(patch.tailEndAnchorOffset), \(patch.tailEndAnchorStamp), \(deltaArgument), \(boundaryArgument), \(patch.expectedOldCount), \(revision)) : false"
 			webView.evaluateJavaScript(call) { [weak self, weak webView] result, error in
 				guard let self, let webView else { return }
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
 				if (result as? Bool) == true, error == nil {
 					self.lastFragments = fragments
+					self.lastFragmentText = text
 					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				} else {
@@ -492,6 +536,7 @@ extension MarkdownWebView {
 			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
 			if let rendered = preparedRender?.completedResult(matching: preparedConfiguration) {
 				lastFragments = rendered.fragments
+				lastFragmentText = text
 				reportInitialRenderProgress(0.25)
 				initialDocumentNavigation = webView.loadHTMLString(rendered.html, baseURL: baseURL)
 				return
@@ -512,6 +557,7 @@ extension MarkdownWebView {
 				      generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.lastFragments = rendered.fragments
+				self.lastFragmentText = text
 				self.reportInitialRenderProgress(0.25)
 				// Load under the custom resource scheme (when we have a document
 				// folder) so relative <img> paths resolve to the scheme handler,
@@ -653,6 +699,9 @@ extension MarkdownWebView {
 			guard isFirstResponder else { return }
 			lastCaretToken = target.token
 			pendingSelection = NSRange(location: target.offset, length: 0)
+			pendingStructuralTailDelta = nil
+			pendingStructuralTailBoundary = nil
+			pendingStructuralText = nil
 			selfEdit = nil
 		}
 
@@ -671,6 +720,9 @@ extension MarkdownWebView {
 				placeCaretAfterUpdate(selection, into: webView)
 			} else {
 				pendingSelection = selection
+				pendingStructuralTailDelta = nil
+				pendingStructuralTailBoundary = nil
+				pendingStructuralText = nil
 			}
 			selfEdit = nil
 		}

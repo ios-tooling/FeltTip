@@ -52,6 +52,51 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
+	@Test func aNonUniformLiveTailFallsBackBeforeItCanDriftStamps() async throws {
+		let source = "Alpha\n\nBeta\n\nGamma **tail**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		// Leave the fragment baseline stale by one fast-path character near the
+		// front, then make an offset-only structural change near the end. A single
+		// uniform tail delta cannot represent both regions.
+		try await harness.type("X", at: 1)
+		try await harness.waitForSourceEdits(1)
+		let gamma = (harness.source as NSString).range(of: "Gamma").location
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(gamma))",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "AXlpha\n\nBeta\n\n\n\nGamma **tail**")
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], "\(mismatches)")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func aCollapsedLeadingSpaceUsesTheStructuralSourceDelta() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\n# Text")
+
+		// The live editor retains this second heading space in its stamped run,
+		// while a fresh Markdown render collapses it and advances the first stamp.
+		// A later structural patch must move the live run by the actual insertion
+		// length, not by that misleading fresh-render anchor difference.
+		try await harness.type(" ", at: 9)
+		try await harness.waitForSourceEdits(1)
+		try await harness.batch([
+			"window.__mdPlaceCaret(0)",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "\n\nAlpha\n\n#  Text")
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], "\(mismatches)")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func oneCharacterHostEditPatchesOneBlockInALargeDocumentWithoutBlockingOrMoving() async throws {
 		let paragraphs = (0..<800).map { "Paragraph \($0) with enough text to make this a realistically tall styled document." }
 		let source = paragraphs.joined(separator: "\n\n")
@@ -101,7 +146,8 @@ import Testing
 		#expect(scrollDelta < 60, "scroll moved \(scrollDelta)px during a one-block patch")
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
-		#expect(try await harness.stampMismatches() == [])
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], "\(mismatches)")
 	}
 
 	@Test func rapidHostUpdatesApplyOnlyTheNewestRender() async throws {
@@ -129,7 +175,8 @@ import Testing
 		#expect(try await harness.evaluate("window.__testNonce === 1 ? 'alive' : 'gone'") == "alive")
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
-		#expect(try await harness.stampMismatches() == [])
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], "\(mismatches)")
 	}
 
 	@Test func typingAgainstAStalePageCannotOverwriteNewerHostText() async throws {
@@ -149,7 +196,8 @@ import Testing
 
 		#expect(harness.source == hostText)
 		#expect(harness.sourceEditCount == 0)
-		#expect(try await harness.stampMismatches() == [])
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], "\(mismatches)")
 
 		// The freeze ends with the patch and normal styled editing resumes.
 		try await harness.type("Q", at: 0)

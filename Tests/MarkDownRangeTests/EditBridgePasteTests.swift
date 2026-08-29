@@ -24,6 +24,8 @@ import Testing
 	/// Puts `text` on the pasteboard for the duration of `body`, restoring
 	/// whatever the user had there.
 	private func withPasteboard(_ text: String, _ body: () async throws -> Void) async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let saved = TestPasteboard.string
 		defer {
 			TestPasteboard.string = saved
@@ -33,6 +35,8 @@ import Testing
 	}
 
 	private func withClearedPasteboard(_ body: () async throws -> Void) async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let saved = TestPasteboard.string
 		defer {
 			TestPasteboard.string = saved
@@ -94,7 +98,9 @@ import Testing
 	// own suite because they touch the same system pasteboard the tests above
 	// do, and a separate suite races them.
 
-	@Test func pastedTextNormalizesNonBreakingSpaces() {
+	@Test func pastedTextNormalizesNonBreakingSpaces() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let saved = TestPasteboard.string
 		defer { TestPasteboard.string = saved }
 
@@ -102,7 +108,9 @@ import Testing
 		#expect(MarkdownWebView.Coordinator.pasteboardText(foldingNewlines: false) == "Alpha bravo")
 	}
 
-	@Test func normalizationSurvivesTheTableCellFold() {
+	@Test func normalizationSurvivesTheTableCellFold() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let saved = TestPasteboard.string
 		defer { TestPasteboard.string = saved }
 
@@ -113,7 +121,9 @@ import Testing
 		#expect(MarkdownWebView.Coordinator.pasteboardText(foldingNewlines: true) == "one two three")
 	}
 
-	@Test func matchStylePasteIgnoresTheSourceFaithfulFlavor() {
+	@Test func matchStylePasteIgnoresTheSourceFaithfulFlavor() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let savedText = MarkdownPasteboard.substitute
 		let savedSource = MarkdownPasteboard.sourceSubstitute
 		defer {
@@ -129,7 +139,9 @@ import Testing
 			foldingNewlines: false, preferringSource: false) == "visible prose")
 	}
 
-	@Test func delayedCutDoesNotAttachSourceToAChangedPasteboard() {
+	@Test func delayedCutDoesNotAttachSourceToAChangedPasteboard() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let saved = TestPasteboard.string
 		defer { TestPasteboard.string = saved }
 		TestPasteboard.string = "new clipboard contents"
@@ -141,7 +153,9 @@ import Testing
 		#expect(TestPasteboard.source == nil)
 	}
 
-	@Test func delayedCutDoesNotIgnoreRemovedClipboardWhitespace() {
+	@Test func delayedCutDoesNotIgnoreRemovedClipboardWhitespace() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		let saved = TestPasteboard.string
 		defer { TestPasteboard.string = saved }
 		TestPasteboard.string = "oldselection"
@@ -154,6 +168,8 @@ import Testing
 	}
 
 	@Test func cuttingAndPastingASingleSpaceIsANoOp() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		// Marker #3: the space between two words, cut and pasted straight back.
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha bravo charlie\n")
 		let space = ("Alpha bravo charlie\n" as NSString).range(of: " ").location
@@ -174,6 +190,8 @@ import Testing
 	}
 
 	@Test func cuttingAndPastingAWordInAHeadingAddsNoMarkup() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		// Marker #4: the round trip is visually invisible but was writing
 		// emphasis markers into the source.
 		let source = "# Styled Clipboard Stress\n"
@@ -194,6 +212,8 @@ import Testing
 	}
 
 	@Test func cuttingAndPastingABlockSeparatorKeepsTheBlocksApart() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		// Marker #2: the blank line between a heading and the paragraph under
 		// it, cut and pasted back. Joining them would turn two blocks into one.
 		let source = "# Styled Clipboard Stress\n\nAlpha bravo charlie.\n"
@@ -218,6 +238,8 @@ import Testing
 	}
 
 	@Test func aLargeCutAndPasteLeavesNoExtraBlankLinesInTheDOM() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		// Marker #5: the source round-tripped exactly but the render kept
 		// visible blank lines the markdown doesn't have. Compare the live DOM
 		// against a fresh render of the same source — the convergence oracle.
@@ -340,6 +362,8 @@ import Testing
 	}
 
 	@Test func pastingWithNothingPastableThawsThePage() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		// The page freezes before posting, so a paste the host can't fulfil must
 		// still thaw it — otherwise typing stays silently dead until the
 		// frozen-timeout safety net fires seconds later.

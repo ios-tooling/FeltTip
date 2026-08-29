@@ -32,6 +32,15 @@ struct SeededRNG: RandomNumberGenerator {
 }
 
 @Suite(.serialized) @MainActor struct EditBridgeFuzzTests {
+	@Test func randomEditOffsetsNeverSplitUnicodeScalars() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "A🙂B")
+		var rng = SeededRNG(seed: 0xC0FFEE)
+		for _ in 0..<200 {
+			let offset = try #require(try await Self.randomStampedOffset(harness, &rng))
+			#expect(offset != 2, "random edit offset split the emoji surrogate pair")
+		}
+	}
+
 	@Test(arguments: [UInt64(1), 2, 3, 4, 5]) func randomEditScriptConverges(seed: UInt64) async throws {
 		var rng = SeededRNG(seed: seed)
 		let source = Self.generateDocument(&rng)
@@ -76,11 +85,12 @@ struct SeededRNG: RandomNumberGenerator {
 		// the count is not the contract. Convergence below remains strict, as
 		// does the absence of hard rejections above.
 
-		// Convergence: a fresh render of the final source must project the
-		// same text as the live DOM (modulo WebKit's NBSP churn).
-		let live = Self.plain(try await harness.domProjectedText())
+		// Convergence: a fresh render of the final source must show the same
+		// laid-out content as the live DOM. WebKit retains editable whitespace
+		// and empty caret blocks that a static render legitimately collapses.
+		let live = Self.normalizedVisibleText(try await harness.domVisibleText())
 		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
-		let rendered = Self.plain(try await fresh.domProjectedText())
+		let rendered = Self.normalizedVisibleText(try await fresh.domVisibleText())
 		#expect(live == rendered, "source and DOM diverged after \(script)\nlive:     \(live)\nrendered: \(rendered)")
 	}
 
@@ -122,6 +132,10 @@ struct SeededRNG: RandomNumberGenerator {
 				in: NSRange(location: start, length: selectedLength),
 				with: replacement)
 			#expect(harness.source == expected, "seed \(seed):\n\(opLog.joined(separator: "\n"))")
+			// A same-run edit can still require a structural refresh when it
+			// changes how nearby Markdown delimiters parse. Do not choose the next
+			// random range until that frozen render has landed.
+			try await harness.waitQuiescent()
 		}
 
 		try await harness.waitQuiescent()
@@ -237,6 +251,8 @@ struct SeededRNG: RandomNumberGenerator {
 
 	@Test(arguments: [UInt64(9101), 9102, 9103])
 	func repeatedCrossBlockCutPasteMovesStaySynchronized(seed: UInt64) async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		var rng = SeededRNG(seed: seed)
 		var expected = (0..<9)
 			.map { "paragraph \($0) alpha bravo charlie delta" }
@@ -301,6 +317,8 @@ struct SeededRNG: RandomNumberGenerator {
 
 	@Test(arguments: [UInt64(9201), 9202, 9203])
 	func repeatedTableCellCutPasteMovesNeverDamagePipes(seed: UInt64) async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
 		var rng = SeededRNG(seed: seed)
 		var expected = """
 			| Name | Role | Score |
@@ -393,15 +411,18 @@ struct SeededRNG: RandomNumberGenerator {
 	static func randomStampedOffset(_ harness: CoordinatorBridgeHarness, _ rng: inout SeededRNG) async throws -> Int? {
 		guard let raw = try await harness.evaluate("""
 			Array.from(document.querySelectorAll('[data-s]'))
-				.map(e => e.getAttribute('data-s') + ':' + e.textContent.length).join(',')
+				.flatMap(function (e) {
+					var base = parseInt(e.getAttribute('data-s'), 10);
+					var offsets = [base], offset = 0;
+					for (var character of e.textContent) {
+						offset += character.length;
+						offsets.push(base + offset);
+					}
+					return offsets;
+				}).join(',')
 			"""), !raw.isEmpty else { return nil }
-		let runs: [(Int, Int)] = raw.split(separator: ",").compactMap {
-			let parts = $0.split(separator: ":")
-			guard parts.count == 2, let base = Int(parts[0]), let len = Int(parts[1]) else { return nil }
-			return (base, len)
-		}
-		guard let run = runs.randomElement(using: &rng) else { return nil }
-		return run.0 + Int.random(in: 0...run.1, using: &rng)
+		let offsets = raw.split(separator: ",").compactMap { Int($0) }
+		return offsets.randomElement(using: &rng)
 	}
 
 	static func randomNonEmptyStampedRun(
@@ -453,6 +474,15 @@ struct SeededRNG: RandomNumberGenerator {
 
 	static func plain(_ s: String) -> String {
 		s.replacingOccurrences(of: "\u{00A0}", with: " ")
+	}
+
+	static func normalizedVisibleText(_ text: String) -> String {
+		plain(text)
+			.split(separator: "\n", omittingEmptySubsequences: false)
+			.map { $0.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression) }
+			.map { $0.trimmingCharacters(in: .whitespaces) }
+			.filter { !$0.isEmpty }
+			.joined(separator: "\n")
 	}
 
 	static func performResponderCommand(

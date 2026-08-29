@@ -154,30 +154,60 @@
   // touches nothing) when the live DOM doesn't look like the page the patch
   // was computed against — caret holder paragraphs, unexpected structure —
   // in which case the host falls back to a full swap/reload.
-  window.__mdPatchBlocks = function (start, removeCount, htmlArray, tailAnchorOffset, tailAnchorStamp, expectedOldCount, rev) {
+  window.__mdPatchBlocks = function (start, removeCount, htmlArray, tailAnchorOffset, tailAnchorStamp, tailEndAnchorOffset, tailEndAnchorStamp, tailSourceDelta, tailSourceBoundary, expectedOldCount, rev) {
     var blocks = Array.prototype.filter.call(document.body.children, function (el) {
       return !el.classList.contains('mdr-change-marker');
     });
     if (blocks.length !== expectedOldCount) { return false; }
     if (start + removeCount > blocks.length) { return false; }
+    // Structural edits use their exact source delta when the whole surviving
+    // tail lies on one side of the old edit boundary. Host-driven patches use
+    // fresh-render anchors instead. All decisions read LIVE stamps because
+    // fast-path typing can leave the host's fragment baseline stale.
+    var tail = blocks.slice(start + removeCount);
+    var delta = 0;
+    if (tailSourceDelta != null) {
+      var firstLiveStamp = null, lastLiveStamp = null;
+      tail.forEach(function (block) {
+        var stamped = block.hasAttribute('data-s') ? [block] : [];
+        stamped = stamped.concat(Array.from(block.querySelectorAll('[data-s]')));
+        stamped.forEach(function (element) {
+          var stamp = parseInt(element.getAttribute('data-s'), 10);
+          if (firstLiveStamp == null) { firstLiveStamp = stamp; }
+          lastLiveStamp = stamp;
+        });
+      });
+      if (firstLiveStamp != null && firstLiveStamp < tailSourceBoundary &&
+          lastLiveStamp >= tailSourceBoundary) {
+        return false;
+      }
+      delta = firstLiveStamp != null && firstLiveStamp >= tailSourceBoundary
+        ? tailSourceDelta : 0;
+    } else if (tailAnchorOffset >= 0) {
+      var anchorEl = tail[tailAnchorOffset];
+      var firstStamped = anchorEl
+        ? (anchorEl.hasAttribute('data-s') ? anchorEl : anchorEl.querySelector('[data-s]'))
+        : null;
+      if (!firstStamped) { return false; }
+      delta = tailAnchorStamp - parseInt(firstStamped.getAttribute('data-s'), 10);
+      var endAnchorEl = tail[tailEndAnchorOffset];
+      var endStamped = endAnchorEl
+        ? (endAnchorEl.hasAttribute('data-s') ? endAnchorEl : endAnchorEl.querySelector('[data-s]'))
+        : null;
+      if (!endStamped ||
+          tailEndAnchorStamp - parseInt(endStamped.getAttribute('data-s'), 10) !== delta) {
+        return false;
+      }
+    }
+    // All validation precedes mutation: a refused patch must leave a pristine
+    // old DOM for the coordinator's full-swap fallback.
     for (var i = 0; i < removeCount; i++) { blocks[start + i].remove(); }
     var anchor = start + removeCount < blocks.length ? blocks[start + removeCount] : null;
     var tpl = document.createElement('template');
     tpl.innerHTML = htmlArray.join('');
     document.body.insertBefore(tpl.content, anchor);
     invalidateDimensions();
-    // Shift the surviving tail so its anchor block's first stamp equals the
-    // target the host computed from the fresh render. The delta comes from
-    // the LIVE stamps — the host's baseline can be stale by fast-path
-    // typing, whose shifts only exist here.
     if (tailAnchorOffset >= 0) {
-      var tail = blocks.slice(start + removeCount);
-      var anchorEl = tail[tailAnchorOffset];
-      var firstStamped = anchorEl
-        ? (anchorEl.hasAttribute('data-s') ? anchorEl : anchorEl.querySelector('[data-s]'))
-        : null;
-      if (!firstStamped) { return false; }
-      var delta = tailAnchorStamp - parseInt(firstStamped.getAttribute('data-s'), 10);
       if (delta) {
         tail.forEach(function (block) {
           if (block.hasAttribute('data-s')) {

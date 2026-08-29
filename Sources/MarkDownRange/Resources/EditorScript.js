@@ -840,6 +840,19 @@
     }
     return tags;
   }
+  // A native single-run mutation is only visually complete while it cannot
+  // change how Markdown parses that run. Literal delimiter characters can
+  // become formatting after an insertion (`b**` → `b*a*`), and whitespace at
+  // a formatted run edge can invalidate the hidden delimiter pair. Those
+  // edits must splice source first and re-render instead of leaving the live
+  // DOM with yesterday's interpretation.
+  function needsStructuralInlineRefresh(range, replacement, before, after) {
+    var nearby = before.slice(-4) + replacement + after.slice(0, 4);
+    if (/[*_~`\[\]<>\\]/.test(nearby)) return true;
+    var atSyntaxBoundary = selectedSyntaxBoundaries(range, true).length ||
+      selectedSyntaxBoundaries(range, false).length;
+    return !!atSyntaxBoundary && (replacement === '' || /\s/.test(replacement));
+  }
   function selectedBlockPrefixes(range) {
     var node = range.startContainer;
     var element = node.nodeType === 1 ? node : node.parentElement;
@@ -1054,10 +1067,10 @@
       if (data == null && e.dataTransfer) data = e.dataTransfer.getData('text/plain');
       if (data == null) { e.preventDefault(); return; }
       data = plain(data);
-      if (crossRun) {
+      if (crossRun || needsStructuralInlineRefresh(range, data, before, after)) {
         e.preventDefault();
         freeze();
-        post({ start: start, end: end, text: data, expected: expected, crossRun: true, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, caret: start + data.length, rev: stampRev, seq: seq++ });
+        post({ start: start, end: end, text: data, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, caret: start + data.length, rev: stampRev, seq: seq++ });
         return;
       }
       queueFastEdit({ start: start, end: end, text: data, expected: expected, before: before, after: after },
@@ -1082,7 +1095,8 @@
       // Backspace removes only the separator, not an opener such as `**`.
       var deleteEndAtBlockStart = endAtBlockStart ||
         (!selected && crossRun && isVisualBlockStart(endPos.node, endPos.offset));
-      if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length) {
+      if (crossRun || syntaxStart.length || syntaxEnd.length || blockPrefixes.length ||
+          needsStructuralInlineRefresh(range, '', before, after)) {
         e.preventDefault();
         freeze();
         post({ op: type === 'deleteByCut' ? 'cut' : undefined,
@@ -1145,6 +1159,7 @@
       post({ start: start, end: end, text: marker, expected: expected,
              crossRun: crossRun, selected: selected,
              endAtBlockStart: endAtBlockStart, before: before, after: after,
+             collapsedSyntaxEnd: selected ? [] : selectedSyntaxBoundaries(range, false),
              caret: start + marker.length, listBreak: !!listMarker,
              blockStartBreak: blockStartBreak,
              rev: stampRev, seq: seq++ });

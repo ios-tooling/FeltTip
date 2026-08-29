@@ -110,7 +110,7 @@ struct RenderHardeningTests {
 			patchHTMLJSON: nil,
 			bodyJSON: nil)
 
-		coordinator.apply(rendered, into: webView, thenPlaceCaret: nil)
+		coordinator.apply(rendered, text: "document", into: webView, thenPlaceCaret: nil)
 		let fallbackTask = coordinator.renderTask
 
 		#expect(fallbackTask != nil)

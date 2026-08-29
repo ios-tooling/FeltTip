@@ -237,6 +237,9 @@ extension MarkdownWebView.Coordinator {
 				// the selection (style toggles keep their selection alive;
 				// other edits collapse to a caret). Don't suppress the reload.
 				pendingSelection = selection
+				pendingStructuralTailDelta = (newSource as NSString).length - (source as NSString).length
+				pendingStructuralTailBoundary = edit.end
+				pendingStructuralText = newSource
 				parent.onSourceEdit?(newSource, caretHint)
 			} else {
 				// In-place edit: the DOM already shows it (and the page shifted
@@ -379,6 +382,9 @@ extension MarkdownWebView.Coordinator {
 		// The renderer stamps an empty cell's caret home on its second padding
 		// column — lineEnd + "\n|" + one space puts that at lineEnd + 3.
 		pendingSelection = NSRange(location: lineEnd + 3, length: 0)
+		pendingStructuralTailDelta = (row as NSString).length
+		pendingStructuralTailBoundary = lineEnd
+		pendingStructuralText = currentSource
 		parent.onSourceEdit?(currentSource ?? "", lineEnd + 3)
 	}
 
@@ -397,6 +403,9 @@ extension MarkdownWebView.Coordinator {
 		renderTask = nil
 		selfEdit = nil
 		pendingSelection = caret.map { NSRange(location: $0, length: 0) }
+		pendingStructuralTailDelta = nil
+		pendingStructuralTailBoundary = nil
+		pendingStructuralText = nil
 		lastRenderedText = source
 		lastConfigSignature = configSignature()
 		bumpEpoch()

@@ -81,7 +81,7 @@ import Testing
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("var pendingEdits = [];"))
 		#expect(script.contains("queueFastEdit({ start: start, end: end, text: data"))
-		#expect(script.contains("queueFastEdit({ start: start, end: end, text: ''"))
+		#expect(script.contains("queueFastEdit({ op: type === 'deleteByCut' ? 'cut' : undefined"))
 		#expect(script.contains("while (pendingEdits.length) {"))
 	}
 
@@ -114,7 +114,8 @@ import Testing
 		#expect(script.contains("function normalizePosition(node, offset, preferForward)"))
 		#expect(script.contains("normalizePosition(range.startContainer, range.startOffset, true)"))
 		#expect(script.contains("normalizePosition(range.endContainer, range.endOffset, range.collapsed)"))
-		#expect(script.contains("crossRun: true"))
+		#expect(script.contains("function needsStructuralInlineRefresh(range, replacement, before, after)"))
+		#expect(script.contains("crossRun: crossRun"))
 	}
 
 	@Test @MainActor func contentSwapsInPlaceWithEditorStateReset() {

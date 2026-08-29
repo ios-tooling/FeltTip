@@ -113,7 +113,10 @@ final class CoordinatorBridgeHarness {
 				guard !self.suppressRoundTrip else { return }
 				// SwiftUI delivers the state change on a later main-actor turn.
 				Task { @MainActor in
-					self.wireRoundTrip(text: newText)
+					// SwiftUI re-evaluates the binding's latest value; it cannot
+					// publish an older captured edit after a newer one. Mirror that
+					// coalescing here so queued harness tasks never regress `parent`.
+					self.wireRoundTrip(text: self.source)
 					self.coordinator.load(into: self.webView)
 				}
 			}
@@ -183,6 +186,13 @@ final class CoordinatorBridgeHarness {
 		try await evaluate("Array.from(document.querySelectorAll('[data-s]')).map(e => e.textContent).filter(t => t.length).join('|')") ?? ""
 	}
 
+	/// Text as WebKit lays it out. Unlike raw textContent, innerText applies
+	/// HTML whitespace collapsing, so source-only trailing spaces do not look
+	/// like visible divergence between a fast-path DOM and a fresh render.
+	func domVisibleText() async throws -> String {
+		try await evaluate("document.body.innerText") ?? ""
+	}
+
 	/// Every stamped run's text must equal the source at its own stamp — the
 	/// invariant the whole offset-mapping scheme rests on. Returns a
 	/// description of each violation (empty when the page and source agree),
@@ -236,6 +246,8 @@ final class CoordinatorBridgeHarness {
 	func waitQuiescent() async throws {
 		try await Task.sleep(for: .milliseconds(80))
 		try await waitUntil("page at current revision with stamped content") {
+			let frozen = try await self.evaluate("window.__mdIsFrozen ? String(window.__mdIsFrozen()) : 'false'")
+			guard frozen == "false" else { return false }
 			let pageRev = try await self.evaluate("window.__mdGetRev ? String(window.__mdGetRev()) : 'none'")
 			guard pageRev == String(self.coordinator.currentRev) else { return false }
 			return try await self.evaluate("document.querySelector('[data-s]') ? 'yes' : 'no'") == "yes"

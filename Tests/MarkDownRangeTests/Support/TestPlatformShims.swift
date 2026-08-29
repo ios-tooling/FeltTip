@@ -136,6 +136,31 @@ extension CoordinatorBridgeHarness {
 /// thing. So iOS stands MarkdownPasteboard's substitute up instead, holding the
 /// text in-process where both the test and the bridge can reach it.
 enum TestPasteboard {
+	@MainActor private static var accessHeld = false
+	@MainActor private static var accessWaiters: [CheckedContinuation<Void, Never>] = []
+
+	/// The system pasteboard is process-global, while Swift Testing runs
+	/// separate serialized suites concurrently. Hold this lease across an
+	/// entire copy/cut/paste scenario so another suite cannot replace its
+	/// payload during an await.
+	@MainActor
+	static func acquireExclusiveAccess() async {
+		if !accessHeld {
+			accessHeld = true
+			return
+		}
+		await withCheckedContinuation { accessWaiters.append($0) }
+	}
+
+	@MainActor
+	static func releaseExclusiveAccess() {
+		if accessWaiters.isEmpty {
+			accessHeld = false
+		} else {
+			accessWaiters.removeFirst().resume()
+		}
+	}
+
 	#if !os(macOS)
 		nonisolated(unsafe) private static var held: String?
 		nonisolated(unsafe) private static var heldSource: String?

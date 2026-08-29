@@ -42,6 +42,10 @@ enum MarkdownEditSplicer {
 		/// must be consumed with the visible text to avoid orphan delimiters.
 		var syntaxStart: [String] = []
 		var syntaxEnd: [String] = []
+		/// Inline syntax immediately after a collapsed caret at the visible end
+		/// of a formatted run. Structural insertion commands such as Return must
+		/// land after those verified hidden delimiters, not inside them.
+		var collapsedSyntaxEnd: [String] = []
 		/// Block markers whose complete visible block was selected for deletion.
 		var blockPrefixes: [String] = []
 		/// Source offset to restore the caret to after a structural re-render;
@@ -201,6 +205,19 @@ enum MarkdownEditSplicer {
 		// renderer strips that whitespace, and a stamped run whose text has lost
 		// characters the source still has no longer addresses its own offset.
 		var spliceRange = range
+		if range.length == 0, !edit.collapsedSyntaxEnd.isEmpty {
+			guard let expanded = syntaxExpandedRange(
+				range,
+				syntaxStart: [],
+				syntaxEnd: edit.collapsedSyntaxEnd,
+				in: text
+			) else {
+				return .rejected("collapsed-caret syntax boundary does not match source")
+			}
+			let shift = expanded.upperBound - range.location
+			spliceRange = NSRange(location: expanded.upperBound, length: 0)
+			caret = caret.map { $0 + shift }
+		}
 		if edit.crossRun, replacement.isEmpty, !edit.selected,
 		   range.length > 0 {
 			let deleted = text.substring(with: range) as NSString
@@ -651,6 +668,7 @@ extension MarkdownEditSplicer.Edit {
 		self.after = body["after"] as? String ?? ""
 		self.syntaxStart = body["syntaxStart"] as? [String] ?? []
 		self.syntaxEnd = body["syntaxEnd"] as? [String] ?? []
+		self.collapsedSyntaxEnd = body["collapsedSyntaxEnd"] as? [String] ?? []
 		self.blockPrefixes = body["blockPrefixes"] as? [String] ?? []
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
