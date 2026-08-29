@@ -1266,15 +1266,21 @@
         }
       }
     }
-    // Paste, like Cut, acts on the live selection. WebKit can expose a stale
-    // collapsed StaticRange while the user still has an extended selection;
-    // trusting that target inserts beside the selected text instead of
-    // replacing it. Keep the reported target only for a collapsed live caret.
-    if (e.inputType === 'insertFromPaste') {
-      var livePasteSelection = window.getSelection();
-      if (livePasteSelection && livePasteSelection.rangeCount &&
-          !livePasteSelection.isCollapsed) {
-        range = livePasteSelection.getRangeAt(0);
+    // Selection-driven commands act on the live selection. WebKit can expose
+    // a stale collapsed StaticRange while the user still has an extended
+    // selection; trusting that target inserts beside the selected text or
+    // drops the command instead of replacing it. Keep the reported target for
+    // a collapsed live caret and for insertReplacementText, whose explicit
+    // autocorrect/substitution range can intentionally differ from selection.
+    var selectionDrivenInput = e.inputType === 'insertFromPaste' ||
+      e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak' ||
+      e.inputType === 'formatBold' || e.inputType === 'formatItalic' ||
+      e.inputType === 'formatStrikeThrough';
+    if (selectionDrivenInput) {
+      var liveCommandSelection = window.getSelection();
+      if (liveCommandSelection && liveCommandSelection.rangeCount &&
+          !liveCommandSelection.isCollapsed) {
+        range = liveCommandSelection.getRangeAt(0);
       }
     }
     // Physical Backspace can expose a collapsed StaticRange even though the

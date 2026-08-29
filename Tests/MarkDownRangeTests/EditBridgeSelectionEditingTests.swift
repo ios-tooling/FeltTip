@@ -589,4 +589,46 @@ import Testing
 				in: NSRange(location: range.location + 2, length: 0), with: "Q"))
 		}
 	}
+
+	@Test func structuralBreaksUseTheLiveSelectionWhenWebKitReportsACollapsedTarget() async throws {
+		let source = "Alpha bravo\n\nCharlie delta\n\nTail"
+		let selected = "bravo\n\nCharlie"
+		let range = (source as NSString).range(of: selected)
+		let cases = [
+			(inputType: "insertParagraph", replacement: "\n\n",
+				expected: "Alpha \n\n delta\n\nTail"),
+			(inputType: "insertLineBreak", replacement: "\\\n",
+				expected: "Alpha \\\ndelta\n\nTail"),
+		]
+
+		for item in cases {
+			for direction in Direction.allCases {
+				let harness = try await CoordinatorBridgeHarness(source: source)
+				var commands = selectionCommands(
+					start: range.location,
+					length: range.length,
+					direction: direction)
+				commands.append("""
+					var live = window.getSelection().getRangeAt(0)
+					var stale = document.createRange()
+					stale.setStart(live.startContainer, live.startOffset)
+					stale.collapse(true)
+					document.addEventListener('beforeinput', function sabotage(event) {
+					  Object.defineProperty(event, 'getTargetRanges', {
+					    value: function () { return [stale] }
+					  })
+					}, { capture: true, once: true })
+					document.execCommand('\(item.inputType)')
+					""")
+				try await harness.batch(commands)
+				try await harness.waitForSourceEdits(1)
+
+				#expect(
+					harness.source == item.expected,
+					"inputType=\(item.inputType), direction=\(direction.rawValue)")
+				#expect(harness.lastCaretHint == range.location + (item.replacement as NSString).length)
+				try await assertHealthy(harness)
+			}
+		}
+	}
 }
