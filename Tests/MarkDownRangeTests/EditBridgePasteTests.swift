@@ -302,6 +302,43 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func selectAllCutFromAnEmptyUnderlineCaretKeepsPublicTextCleanAndRoundTripsSource() async throws {
+		let formattedSource = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == formattedSource)
+		#expect(try await harness.evaluate(
+			"String(document.querySelectorAll('[data-md-inline-caret-source-neutral]').length)"
+		) == "1")
+		try await harness.run("document.execCommand('selectAll')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(TestPasteboard.string == "Alpha Tail")
+			#expect(MarkdownPasteboard.source == formattedSource)
+			#expect(harness.source.isEmpty)
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(3)
+		}
+
+		#expect(harness.source == formattedSource)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(4)
+		try await harness.waitQuiescent()
+		#expect(harness.source == formattedSource + "X")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	// MARK: Non-breaking spaces
 	//
 	// contentEditable renders a lone space as U+00A0 so layout can't collapse
