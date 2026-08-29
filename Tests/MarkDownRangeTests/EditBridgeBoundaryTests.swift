@@ -596,6 +596,81 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(command: "deleteWordBackward", source: "alpha Tail", caret: 5,
+		 expected: "<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha bravo Tail", caret: 5,
+		 expected: "Alpha<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha bravo", caret: 5,
+		 expected: "Alpha<u>X</u>"),
+	])
+	func wordDeletionFromAnEmptyUnderlineCaretUsesTheAdjacentVisibleWord(
+		command: String,
+		source: String,
+		caret: Int,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("""
+			document.body.dispatchEvent(new InputEvent('beforeinput', {
+			  inputType: '\(command)', bubbles: true, cancelable: true
+			}))
+			""")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "deleteWordBackward", source: "Tail", caret: 0,
+		 expected: "<u>X</u>Tail"),
+		(command: "deleteWordForward", source: "Alpha", caret: 5,
+		 expected: "Alpha<u>X</u>"),
+	])
+	func wordDeletionWithoutAnAdjacentWordLeavesTheEmptyCaretLive(
+		command: String,
+		source: String,
+		caret: Int,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("""
+			document.body.dispatchEvent(new InputEvent('beforeinput', {
+			  inputType: '\(command)', bubbles: true, cancelable: true
+			}))
+			""")
+		try await harness.waitQuiescent()
+		#expect(harness.sourceEditCount == 1)
+		#expect(try await harness.evaluate("window.__mdIsFrozen() ? 'yes' : 'no'") == "no")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(command: "bold", formatted: "<u>**X**</u>"),
 		(command: "italic", formatted: "<u>*X*</u>"),
 		(command: "strikeThrough", formatted: "<u>~~X~~</u>"),

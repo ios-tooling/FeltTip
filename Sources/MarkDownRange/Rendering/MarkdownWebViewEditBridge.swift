@@ -220,6 +220,33 @@ extension MarkdownWebView.Coordinator {
 		}
 		let source = currentSource ?? parent.text
 		var payload = body
+		if body["op"] as? String == "neutralWordDelete" {
+			guard let caret = body["start"] as? Int,
+			      caret >= 3, caret + 4 <= (source as NSString).length,
+			      (source as NSString).substring(with: NSRange(
+					location: caret - 3, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame,
+			      let range = Self.adjacentWordDeletionRange(
+					in: source,
+					boundary: body["backward"] as? Bool == true ? caret - 3 : caret + 4,
+					backward: body["backward"] as? Bool == true)
+			else {
+				if let token = body["seq"] as? Int {
+					webView?.evaluateJavaScript(
+						"window.__mdUnfreeze && window.__mdUnfreeze(\(token));",
+						completionHandler: nil)
+				}
+				return
+			}
+			payload["start"] = range.location
+			payload["end"] = range.upperBound
+			payload["text"] = ""
+			payload["expected"] = (source as NSString).substring(with: range)
+			payload["before"] = ""
+			payload["after"] = ""
+			payload["caret"] = body["backward"] as? Bool == true
+				? caret - range.length : caret
+		}
 		// A paste carries no text: the page can't read the clipboard faithfully
 		// (WebKit sanitizes the plain-text flavor of a paste's dataTransfer, and
 		// a multi-line paste reaches the page with its newlines stripped), so it
@@ -437,6 +464,46 @@ extension MarkdownWebView.Coordinator {
 			}
 		}
 		return nil
+	}
+
+	/// Finds the native word-deletion target next to a source-neutral inline
+	/// caret. The empty HTML wrapper is invisible in the DOM, so WebKit cannot
+	/// produce a useful target range for Option-Backspace/Delete itself.
+	private static func adjacentWordDeletionRange(
+		in source: String,
+		boundary: Int,
+		backward: Bool
+	) -> NSRange? {
+		let text = source as NSString
+		guard boundary >= 0, boundary <= text.length else { return nil }
+		var lineStart = boundary
+		while lineStart > 0 {
+			let unit = text.character(at: lineStart - 1)
+			if unit == 0x0A || unit == 0x0D { break }
+			lineStart -= 1
+		}
+		var lineEnd = boundary
+		while lineEnd < text.length {
+			let unit = text.character(at: lineEnd)
+			if unit == 0x0A || unit == 0x0D { break }
+			lineEnd += 1
+		}
+		guard let line = Range(
+			NSRange(location: lineStart, length: lineEnd - lineStart),
+			in: source) else { return nil }
+		var word: NSRange?
+		let options: String.EnumerationOptions = backward ? [.byWords, .reverse] : [.byWords]
+		source.enumerateSubstrings(in: line, options: options) { _, range, _, stop in
+			let candidate = NSRange(range, in: source)
+			if backward ? candidate.upperBound <= boundary : candidate.location >= boundary {
+				word = candidate
+				stop = true
+			}
+		}
+		guard let word else { return nil }
+		return backward
+			? NSRange(location: word.location, length: boundary - word.location)
+			: NSRange(location: boundary, length: word.upperBound - boundary)
 	}
 
 	/// State of the document-wide indexed task-list marker. Checkbox messages

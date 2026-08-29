@@ -518,10 +518,10 @@
            before: '', after: '', rev: stampRev, seq: seq++ });
     return true;
   }
-  function placeInlineCaretHomeBefore(span, offset, previousSourceCharacter, sourceNeutral,
-                                      neutralPreviousOffset, neutralPreviousCharacter,
-                                      neutralNextOffset, neutralNextCharacter,
-                                      neutralWrapperSource) {
+  function placeInlineCaretHome(span, offset, previousSourceCharacter, sourceNeutral,
+                                neutralPreviousOffset, neutralPreviousCharacter,
+                                neutralNextOffset, neutralNextCharacter,
+                                neutralWrapperSource, afterSpan) {
     if (!span || !span.parentNode) return false;
     var inlineHolder = document.createElement('span');
     inlineHolder.setAttribute('data-s', String(offset - 1));
@@ -537,12 +537,12 @@
     inlineHolder.__mdNeutralWrapperSource = neutralWrapperSource || '';
     var inlineCaretText = document.createTextNode('\u200B');
     inlineHolder.appendChild(inlineCaretText);
-    var insertionReference = span;
+    var insertionReference = afterSpan ? span.nextSibling : span;
     var nextBase = parseInt(span.getAttribute('data-s'), 10);
     // If source whitespace follows the empty wrapper, the renderer leaves it
     // as an unstamped text node before the next run. The semantic caret is
     // before that whitespace, not merely before the stamped run after it.
-    if (sourceNeutral && Number.isFinite(neutralNextOffset) &&
+    if (!afterSpan && sourceNeutral && Number.isFinite(neutralNextOffset) &&
         Number.isFinite(nextBase) && neutralNextOffset < nextBase &&
         span.previousSibling && span.previousSibling.nodeType === 3) {
       insertionReference = span.previousSibling;
@@ -581,7 +581,7 @@
       if (offset === startBase && previousSibling &&
           previousSibling.nodeType === 3 && previousSibling.nodeValue.length &&
           start.span.parentNode) {
-        placeInlineCaretHomeBefore(
+        placeInlineCaretHome(
           start.span, offset, previousSourceCharacter, false, null, '', null, '', '');
         return;
       }
@@ -612,12 +612,18 @@
       // is nevertheless a real source insertion point between <u> and </u>;
       // keep that exact offset typable instead of snapping it onto the next
       // visible run, where WebKit silently drops the first character.
-      if (sourceNeutralCaretHome && nextOnLine &&
-          placeInlineCaretHomeBefore(
-            next, offset, '', true,
-            neutralPreviousOffset, neutralPreviousCharacter,
-            neutralNextOffset, neutralNextCharacter,
-            neutralWrapperSource)) return;
+      if (sourceNeutralCaretHome) {
+        if (nextOnLine && placeInlineCaretHome(
+              next, offset, '', true,
+              neutralPreviousOffset, neutralPreviousCharacter,
+              neutralNextOffset, neutralNextCharacter,
+              neutralWrapperSource, false)) return;
+        if (prevOnLine && placeInlineCaretHome(
+              prev, offset, '', true,
+              neutralPreviousOffset, neutralPreviousCharacter,
+              neutralNextOffset, neutralNextCharacter,
+              neutralWrapperSource, true)) return;
+      }
       // With runs on both sides, the caret can intentionally sit inside an
       // empty inline construct (`Alpha<u>|</u> Tail`). Preserve the existing
       // synthetic caret home for that case so typing remains formatted.
@@ -1407,6 +1413,15 @@
         inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
       var neutralBackward = e.inputType === 'deleteContentBackward';
       var neutralForward = e.inputType === 'deleteContentForward';
+      var neutralWordBackward = e.inputType === 'deleteWordBackward';
+      var neutralWordForward = e.inputType === 'deleteWordForward';
+      if ((neutralWordBackward || neutralWordForward) &&
+          Number.isFinite(neutralCaretOffset)) {
+        freeze();
+        post({ op: 'neutralWordDelete', start: neutralCaretOffset,
+               backward: neutralWordBackward, rev: stampRev, seq: seq++ });
+        return;
+      }
       var neutralOffset = neutralBackward
         ? inlineHome.__mdNeutralPreviousOffset : inlineHome.__mdNeutralNextOffset;
       var neutralCharacter = neutralBackward
