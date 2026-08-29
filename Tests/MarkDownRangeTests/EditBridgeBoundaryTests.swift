@@ -977,6 +977,47 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "[Link](https://example.com/<u></u>) Tail",
+		 expected: "[Link](https://example.com/<u></u>)X Tail"),
+		(source: "[Link](https://example.com/a(b)/<u></u>) Tail",
+		 expected: "[Link](https://example.com/a(b)/<u></u>)X Tail"),
+		(source: "[Link](https://example.com/a\\)/<u></u>) Tail",
+		 expected: "[Link](https://example.com/a\\)/<u></u>)X Tail"),
+	])
+	func aWrapperSpellingInsideALinkDestinationUsesHiddenSyntaxCaretSnapping(
+		source: String,
+		expected: String
+	) async throws {
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 718))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("""
+			document.querySelector('[data-md-inline-caret-after-empty-wrapper]')
+			  ? 'empty-wrapper' : 'hidden-syntax'
+			""") == "hidden-syntax")
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphXa<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u> XTail"),
 	])

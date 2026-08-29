@@ -638,7 +638,7 @@
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, caretAfterEmptyUnderline) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap) {
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
@@ -731,10 +731,10 @@
     if (snapHiddenSyntax && sourceLineStart != null && sourceLineEnd != null) {
       var prevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
       var nextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
-      // Empty underline markup renders no DOM node at all. Its formatter caret
-      // is nevertheless a real source insertion point between <u> and </u>;
-      // keep that exact offset typable instead of snapping it onto the next
-      // visible run, where WebKit silently drops the first character.
+      // Empty underline markup renders no stamped text run. Its formatter
+      // caret is nevertheless a real source insertion point between <u> and
+      // </u>; keep that exact offset typable instead of snapping it onto the
+      // next visible run, where WebKit silently drops the first character.
       if (sourceNeutralCaretHome) {
         if (nextOnLine && placeInlineCaretHome(
               next, offset, '', true,
@@ -747,10 +747,12 @@
               neutralNextOffset, neutralNextCharacter,
               neutralWrapperSource, true)) return;
       }
-      // With runs on both sides, the caret can intentionally sit inside an
-      // empty inline construct (`Alpha<u>|</u> Tail`). Preserve the existing
-      // synthetic caret home for that case so typing remains formatted.
-      if (!!prevOnLine !== !!nextOnLine) {
+      // Any remaining hidden syntax snaps to the nearest visible run on its
+      // source line. Actual empty underline constructs already took their
+      // exact synthetic-home route above.
+      if (forceVisibleSyntaxSnap
+            ? (prevOnLine || nextOnLine)
+            : (!!prevOnLine !== !!nextOnLine)) {
         if (nextOnLine && (!prevOnLine || nextBase - offset <= offset - prevEnd)) {
           ensureVisualBlankBefore(next, visualBlankOffset);
           var nextText = firstTextIn(next);

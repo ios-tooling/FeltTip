@@ -536,12 +536,42 @@ extension MarkdownWebView {
 					return false
 				}
 			}
+			func isInsideInlineLinkDestination(_ location: Int) -> Bool {
+				guard location >= lineStart, location <= lineEnd else { return false }
+				let prefix = NSRange(location: lineStart, length: location - lineStart)
+				let opener = source.range(of: "](", options: .backwards, range: prefix)
+				guard opener.location != NSNotFound, !isEscaped(at: opener.location) else {
+					return false
+				}
+				let destinationStart = opener.upperBound
+				var cursor = destinationStart
+				var depth = 1
+				while cursor < lineEnd {
+					let character = source.character(at: cursor)
+					if character == 0x5C, cursor + 1 < lineEnd {
+						cursor += 2
+						continue
+					}
+					if character == 0x28 { depth += 1 }
+					if character == 0x29 {
+						depth -= 1
+						if depth == 0 {
+							return location >= destinationStart && location <= cursor
+						}
+					}
+					cursor += 1
+				}
+				return false
+			}
+			let forceVisibleSyntaxSnap = isInsideInlineLinkDestination(offset)
 			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
 				!isEscaped(at: offset - 3) &&
+				!forceVisibleSyntaxSnap &&
 				source.substring(with: NSRange(location: offset - 3, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			let caretAfterEmptyUnderline = offset >= 7 &&
 				!isEscaped(at: offset - 7) &&
+				!forceVisibleSyntaxSnap &&
 				source.substring(with: NSRange(location: offset - 7, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			var neutralPreviousOffset = "null"
@@ -600,7 +630,7 @@ extension MarkdownWebView {
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(caretAfterEmptyUnderline)"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {
