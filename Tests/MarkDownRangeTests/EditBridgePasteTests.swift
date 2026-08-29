@@ -292,6 +292,53 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(direction: "backward", copied: "ha", expected: "AlpP<u></u> Bravo"),
+		(direction: "forward", copied: " B", expected: "Alpha<u></u>Pravo"),
+	])
+	func pasteOverTwoCharactersExtendedFromAnEmptyUnderlineCaret(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Bravo")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			for (var index = 0; index < 2; index += 1) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", copied: "a", expected: "AlphP<u></u> Tail"),
 		(direction: "forward", copied: " ", expected: "Alpha<u></u>PTail"),
 	])
