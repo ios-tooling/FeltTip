@@ -257,7 +257,11 @@ enum MarkdownEditSplicer {
 			// down and keeps the insertion point with its first visible character.
 			caret = lineStart + (replacement as NSString).length
 		}
-		let replacementOwnsInlineSyntax = edit.selected && (replacement.isEmpty || edit.crossRun)
+		// A multiline replacement cannot remain inside an inline Markdown
+		// wrapper. Even when both DOM endpoints belong to one styled run, consume
+		// the complete owned delimiters just as a cross-run replacement does.
+		let replacementOwnsInlineSyntax = edit.selected &&
+			(replacement.isEmpty || edit.crossRun || replacement.contains("\n") || replacement.contains("\r"))
 		let replacementOwnsBlockPrefix = edit.selected && replacement.isEmpty
 		let replacementSyntaxStart = replacementOwnsInlineSyntax ? edit.syntaxStart : []
 		let replacementSyntaxEnd = replacementOwnsInlineSyntax ? edit.syntaxEnd : []

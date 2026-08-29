@@ -821,6 +821,45 @@ import Testing
 		}
 	}
 
+	@Test func multiParagraphPasteOverAWholeStyledRunExitsItsInlineSyntax() async throws {
+		let cases = [
+			(source: "**Alpha** Tail", expected: "One\n\nTwo Tail"),
+			(source: "_Alpha_ Tail", expected: "One\n\nTwo Tail"),
+			(source: "~~Alpha~~ Tail", expected: "One\n\nTwo Tail"),
+			(source: "`Alpha` Tail", expected: "One\n\nTwo Tail"),
+			(source: "==Alpha== Tail", expected: "One\n\nTwo Tail"),
+			(source: "^Alpha^ Tail", expected: "One\n\nTwo Tail"),
+			(source: "~Alpha~ Tail", expected: "One\n\nTwo Tail"),
+			(source: "<u>Alpha</u> Tail", expected: "One\n\nTwo Tail"),
+			(source: "[Alpha](https://example.com) Tail", expected: "One\n\nTwo Tail"),
+			(source: "[**Alpha**](https://example.com) Tail", expected: "One\n\nTwo Tail"),
+		]
+		for (index, item) in cases.enumerated() {
+			let alpha = (item.source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
+			try await select(
+				harness,
+				start: alpha.location,
+				length: alpha.length,
+				backward: index.isMultiple(of: 2))
+
+			try await withPasteboard("One\n\nTwo") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == item.expected,
+				"source=\(item.source), incidents=\(harness.coordinator.bridgeIncidents)")
+			try await harness.type("Z")
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == "One\n\nTwoZ Tail", "source=\(item.source)")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
 	@Test func pastingMarkdownKeepsItAsSourceNotAsMarkup() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "head\n")
 		try await withPasteboard("**bold**") {
