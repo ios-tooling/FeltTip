@@ -231,6 +231,11 @@ underneath it, not in what the page asks for.
   baseline advances only after WebKit acknowledges the DOM transaction. A late
   callback can never overwrite newer HTML or make future diffs target a page
   that never accepted their baseline.
+- A structural patch that preserves a live editable tail clears the
+  `exactFragmentText` marker. Its fragments remain safe for the next
+  boundary-checked structural patch, but a later host-driven update uses a full
+  swap rather than assuming renderer-normalized whitespace exactly matches the
+  live tail.
 - Documents are untrusted input: `HTMLPassthroughSanitizer` strips script,
   framing, event handlers and network-capable attributes such as `ping` from
   the one seam (`.htmlBlock`) where a document's own markup reaches the page.

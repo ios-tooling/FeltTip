@@ -82,7 +82,7 @@ import Testing
 		// while a fresh Markdown render collapses it and advances the first stamp.
 		// A later structural patch must move the live run by the actual insertion
 		// length, not by that misleading fresh-render anchor difference.
-		try await harness.type(" ", at: 9)
+		try await harness.type("\u{00A0}", at: 9)
 		try await harness.waitForSourceEdits(1)
 		try await harness.batch([
 			"window.__mdPlaceCaret(0)",
@@ -92,6 +92,27 @@ import Testing
 		try await harness.waitQuiescent()
 
 		#expect(harness.source == "\n\nAlpha\n\n#  Text")
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], "\(mismatches)")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func hostUpdateAfterAWhitespacePreservingStructuralPatchRestampsExactly() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\n# Text")
+		try await harness.type("\u{00A0}", at: 9)
+		try await harness.waitForSourceEdits(1)
+		try await harness.batch([
+			"window.__mdPlaceCaret(0, 5)",
+			"document.execCommand('bold')",
+		])
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		let hostText = harness.source.replacingOccurrences(of: "Alpha", with: "AlphaX")
+		try await harness.replaceExternally(hostText)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == hostText)
 		let mismatches = try await harness.stampMismatches()
 		#expect(mismatches == [], "\(mismatches)")
 		#expect(harness.coordinator.hardRejections == 0)

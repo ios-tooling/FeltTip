@@ -109,10 +109,11 @@ extension MarkdownWebView {
 		/// The per-block fragments of the page currently shown — the baseline
 		/// incremental patches diff against. Nil until a full render lands.
 		var lastFragments: [MarkdownBlockFragment]?
-		/// Source that produced `lastFragments`. Fast-path edits deliberately
-		/// advance `lastRenderedText` without rebuilding fragments, so these two
-		/// values can differ.
-		var lastFragmentText: String?
+		/// Source for which `lastFragments` exactly describes the live DOM.
+		/// Fast-path edits and structural patches that preserve an editable tail
+		/// deliberately clear this even though the fragments remain useful for a
+		/// boundary-checked structural diff.
+		var exactFragmentText: String?
 		/// Exact UTF-16 length change for an accepted structural page edit. The
 		/// live tail must move by this amount even when Markdown whitespace
 		/// normalization makes a fresh-render anchor appear one character away.
@@ -282,7 +283,7 @@ extension MarkdownWebView {
 			let fontSize = parent.fontSize
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
-			let baseline = lastFragmentText == lastRenderedText ? lastFragments : nil
+			let baseline = exactFragmentText == lastRenderedText ? lastFragments : nil
 			let renderService = renderService
 			renderTask = Task { @MainActor [weak self, weak webView] in
 				let rendered = await renderService.blockResult(
@@ -391,7 +392,7 @@ extension MarkdownWebView {
 					guard generation == self.renderGeneration,
 					      revision == self.currentRev else { return }
 					self.lastFragments = fragments
-					self.lastFragmentText = text
+					self.exactFragmentText = text
 					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				}
@@ -410,7 +411,7 @@ extension MarkdownWebView {
 				guard generation == self.renderGeneration, revision == self.currentRev else { return }
 				if (result as? Bool) == true, error == nil {
 					self.lastFragments = fragments
-					self.lastFragmentText = text
+					self.exactFragmentText = tailSourceDelta == nil ? text : nil
 					self.placeCaretAfterUpdate(selection, into: webView)
 					self.applyLineChanges(to: webView, force: true)
 				} else {
@@ -536,7 +537,7 @@ extension MarkdownWebView {
 			let baseURL = resourceBaseURL(for: parent.baseURL) ?? parent.baseURL
 			if let rendered = preparedRender?.completedResult(matching: preparedConfiguration) {
 				lastFragments = rendered.fragments
-				lastFragmentText = text
+				exactFragmentText = text
 				reportInitialRenderProgress(0.25)
 				initialDocumentNavigation = webView.loadHTMLString(rendered.html, baseURL: baseURL)
 				return
@@ -557,7 +558,7 @@ extension MarkdownWebView {
 				      generation == self.renderGeneration else { return }
 				self.renderTask = nil
 				self.lastFragments = rendered.fragments
-				self.lastFragmentText = text
+				self.exactFragmentText = text
 				self.reportInitialRenderProgress(0.25)
 				// Load under the custom resource scheme (when we have a document
 				// folder) so relative <img> paths resolve to the scheme handler,
