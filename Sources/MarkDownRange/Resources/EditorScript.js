@@ -535,7 +535,17 @@
     inlineHolder.__mdNeutralNextCharacter = neutralNextCharacter || '';
     var inlineCaretText = document.createTextNode('\u200B');
     inlineHolder.appendChild(inlineCaretText);
-    span.parentNode.insertBefore(inlineHolder, span);
+    var insertionReference = span;
+    var nextBase = parseInt(span.getAttribute('data-s'), 10);
+    // If source whitespace follows the empty wrapper, the renderer leaves it
+    // as an unstamped text node before the next run. The semantic caret is
+    // before that whitespace, not merely before the stamped run after it.
+    if (sourceNeutral && Number.isFinite(neutralNextOffset) &&
+        Number.isFinite(nextBase) && neutralNextOffset < nextBase &&
+        span.previousSibling && span.previousSibling.nodeType === 3) {
+      insertionReference = span.previousSibling;
+    }
+    span.parentNode.insertBefore(inlineHolder, insertionReference);
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;

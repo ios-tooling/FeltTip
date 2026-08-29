@@ -541,6 +541,60 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func emptyUnderlineCaretStaysBeforeFollowingUnstampedWhitespace() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		let adjacency = try await harness.evaluate("""
+			var home = document.querySelector('[data-md-inline-caret-source-neutral]')
+			home && home.nextSibling
+			  ? String(home.nextSibling.textContent.charCodeAt(0))
+			  : 'missing'
+			""")
+		#expect(adjacency == "32", "caret adjacency was \(adjacency.debugDescription)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Alpha<u>X</u> Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "delete", expected: "<u>X</u> Tail"),
+		(command: "forwardDelete", expected: "🙂<u>X</u>Tail"),
+	])
+	func deletionFromAnEmptyUnderlineCaretKeepsComposedCharacterOffsetsExact(
+		command: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "🙂 Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(2)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func deletionThatActivatesAThematicBreakRerenders() async throws {
 		let harness = try await CoordinatorBridgeHarness(
 			source: "Term\n--x-\n\nTail")
