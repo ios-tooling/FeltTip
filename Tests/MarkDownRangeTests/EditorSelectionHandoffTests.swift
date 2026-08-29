@@ -98,6 +98,41 @@ struct EditorSelectionHandoffTests {
 		}
 	}
 
+	@Test func staleAndOutOfBoundsSelectionMessagesAreDroppedWithoutCrashing() async throws {
+		let source = "**Alpha** Tail"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let reportCount = harness.sourceSelectionReportCount
+		let currentRevision = harness.coordinator.currentRev
+		try await harness.run("""
+			window.webkit.messageHandlers.mdedit.postMessage({
+			  type: 'selection', start: 2, length: 5,
+			  syntaxStart: ['strong'], syntaxEnd: ['strong'],
+			  rev: \(currentRevision - 1)
+			})
+			window.webkit.messageHandlers.mdedit.postMessage({
+			  type: 'selection', start: 999999, length: 20,
+			  syntaxStart: ['strong'], syntaxEnd: ['strong'],
+			  rev: \(currentRevision)
+			})
+			""")
+		try await Task.sleep(for: .milliseconds(150))
+		#expect(harness.sourceSelectionReportCount == reportCount)
+
+		// A valid current-revision report still works after both rejected inputs.
+		try await harness.run("""
+			window.webkit.messageHandlers.mdedit.postMessage({
+			  type: 'selection', start: 2, length: 5,
+			  syntaxStart: ['strong'], syntaxEnd: ['strong'],
+			  rev: \(currentRevision)
+			})
+			""")
+		try await harness.waitUntil("valid selection after rejected metadata") {
+			harness.sourceSelectionReportCount > reportCount
+		}
+		#expect(harness.lastReportedSourceSelection == NSRange(
+			location: 0, length: ("**Alpha**" as NSString).length))
+	}
+
 	@Test func styledViewInstallsTokenGatedCaretAndSelectionTargets() async throws {
 		let source = "Zero alpha **bravo** charlie omega"
 		let harness = try await CoordinatorBridgeHarness(source: source)

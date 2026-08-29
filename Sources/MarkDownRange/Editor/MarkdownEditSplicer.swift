@@ -381,6 +381,9 @@ enum MarkdownEditSplicer {
 		syntaxEnd: [String],
 		in text: NSString
 	) -> NSRange? {
+		guard range.location >= 0, range.length >= 0,
+		      range.location <= text.length,
+		      range.length <= text.length - range.location else { return nil }
 		var start = range.location
 		var end = range.upperBound
 		// Attribute rendering may normalize nested DOM tags into an order that
@@ -516,6 +519,7 @@ enum MarkdownEditSplicer {
 		cursor: inout Int,
 		in text: NSString
 	) -> Bool {
+		guard cursor >= 0, cursor <= text.length else { return false }
 		for candidate in candidates {
 			let length = (candidate as NSString).length
 			guard cursor >= length else { continue }
@@ -532,9 +536,10 @@ enum MarkdownEditSplicer {
 		cursor: inout Int,
 		in text: NSString
 	) -> Bool {
+		guard cursor >= 0, cursor <= text.length else { return false }
 		for candidate in candidates {
 			let length = (candidate as NSString).length
-			guard cursor + length <= text.length else { continue }
+			guard length <= text.length - cursor else { continue }
 			if text.substring(with: NSRange(location: cursor, length: length)) == candidate {
 				cursor += length
 				return true
@@ -544,6 +549,7 @@ enum MarkdownEditSplicer {
 	}
 
 	private static func consumeCodeDelimiterBefore(cursor: inout Int, in text: NSString) -> Bool {
+		guard cursor >= 0, cursor <= text.length else { return false }
 		var scan = cursor
 		if scan > 0, text.character(at: scan - 1) == 0x20 { scan -= 1 }
 		let contentEnd = scan
@@ -554,6 +560,7 @@ enum MarkdownEditSplicer {
 	}
 
 	private static func consumeCodeDelimiterAfter(cursor: inout Int, in text: NSString) -> Bool {
+		guard cursor >= 0, cursor <= text.length else { return false }
 		var scan = cursor
 		if scan < text.length, text.character(at: scan) == 0x20 { scan += 1 }
 		let contentStart = scan
@@ -564,6 +571,7 @@ enum MarkdownEditSplicer {
 	}
 
 	private static func consumeHeadingPrefixBefore(cursor: inout Int, in text: NSString) -> Bool {
+		guard cursor >= 0, cursor <= text.length else { return false }
 		var scan = cursor
 		guard scan > 0, isHorizontalSpace(text.character(at: scan - 1)) else { return false }
 		while scan > 0, isHorizontalSpace(text.character(at: scan - 1)) { scan -= 1 }
@@ -575,6 +583,7 @@ enum MarkdownEditSplicer {
 	}
 
 	private static func consumeListPrefixBefore(cursor: inout Int, in text: NSString) -> Bool {
+		guard cursor >= 0, cursor <= text.length else { return false }
 		var lineStart = cursor
 		while lineStart > 0 {
 			let character = text.character(at: lineStart - 1)
@@ -595,7 +604,8 @@ enum MarkdownEditSplicer {
 	}
 
 	private static func consumeLinkSuffix(cursor: inout Int, in text: NSString) -> Bool {
-		guard cursor + 2 <= text.length,
+		guard cursor >= 0, cursor <= text.length,
+		      2 <= text.length - cursor,
 			  text.character(at: cursor) == 0x5D,
 			  text.character(at: cursor + 1) == 0x28 else { return false }
 		var scan = cursor + 2
@@ -633,7 +643,8 @@ enum MarkdownEditSplicer {
 		}
 		let afterLength = (edit.after as NSString).length
 		if afterLength > 0 {
-			guard edit.end + afterLength <= text.length,
+			guard edit.end <= text.length,
+			      afterLength <= text.length - edit.end,
 				  plain(text.substring(with: NSRange(location: edit.end, length: afterLength))) == plain(edit.after) else {
 				return "after-context mismatch at \(edit.end): \(quoted(edit.after))"
 			}

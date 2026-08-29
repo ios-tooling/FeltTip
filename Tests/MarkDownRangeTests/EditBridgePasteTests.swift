@@ -558,7 +558,9 @@ import Testing
 
 		try await withClearedPasteboard {
 			try await performResponderCommand(.copy, in: harness)
-			try await Task.sleep(for: .milliseconds(80))
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
 			#expect(harness.source == source)
 			#expect(harness.sourceEditCount == 0)
 			let copied = try #require(TestPasteboard.string)

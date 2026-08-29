@@ -57,11 +57,20 @@ extension MarkdownWebView.Coordinator {
 		}
 		if body["type"] as? String == "selection" {
 			log("selection message start=\(body["start"] ?? "nil") length=\(body["length"] ?? "nil") handler=\(parent.onSelectionChanged != nil || parent.onSourceSelectionChanged != nil)")
+			if let revision = body["rev"] as? Int, revision != currentRev {
+				log("dropping stale selection rev=\(revision) currentRev=\(currentRev)")
+				return
+			}
 			if let start = body["start"] as? Int, let length = body["length"] as? Int {
+				let source = (currentSource ?? parent.text) as NSString
+				guard start >= 0, length >= 0, start <= source.length,
+				      length <= source.length - start else {
+					log("dropping out-of-bounds selection start=\(start) length=\(length) sourceLen=\(source.length)")
+					return
+				}
 				var range = NSRange(location: start, length: length)
 				if body["endAtBlockStart"] as? Bool == true,
 				   length > 0 {
-					let source = (currentSource ?? parent.text) as NSString
 					if let blockStart = MarkdownEditSplicer.verifiedBlockStart(
 						in: source, visibleStart: range.upperBound),
 					   blockStart >= start {
@@ -87,7 +96,7 @@ extension MarkdownWebView.Coordinator {
 					range,
 					syntaxStart: body["syntaxStart"] as? [String] ?? [],
 					syntaxEnd: body["syntaxEnd"] as? [String] ?? [],
-					in: (currentSource ?? parent.text) as NSString) {
+					in: source) {
 					range = expanded
 				}
 				parent.onSourceSelectionChanged?(range)

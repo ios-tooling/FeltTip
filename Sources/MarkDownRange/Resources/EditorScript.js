@@ -356,17 +356,21 @@
   function reportSelection(force) {
     if (!force && !document.hasFocus()) { return; }
     var sel = window.getSelection();
-    if (!sel || !sel.rangeCount) { post({ type: 'selection' }); return; }
+    if (!sel || !sel.rangeCount) { post({ type: 'selection', rev: stampRev }); return; }
     var r = sel.getRangeAt(0);
     var startPos = normalizePosition(r.startContainer, r.startOffset, true);
     var endPos = normalizePosition(r.endContainer, r.endOffset, r.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
-    if (start == null || end == null || end < start) { post({ type: 'selection' }); return; }
+    if (start == null || end == null || end < start) {
+      post({ type: 'selection', rev: stampRev });
+      return;
+    }
     post({ type: 'selection', start: start, length: end - start,
            endAtBlockStart: !r.collapsed && isVisualBlockStart(endPos.node, endPos.offset),
            syntaxStart: r.collapsed ? [] : selectedSyntaxBoundaries(r, true),
-           syntaxEnd: r.collapsed ? [] : selectedSyntaxBoundaries(r, false) });
+           syntaxEnd: r.collapsed ? [] : selectedSyntaxBoundaries(r, false),
+           rev: stampRev });
   }
   var selectionReportTimer = null;
   document.addEventListener('selectionchange', function () {

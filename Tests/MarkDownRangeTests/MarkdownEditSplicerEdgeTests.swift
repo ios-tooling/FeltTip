@@ -277,6 +277,21 @@ import Testing
 		#expect(rejection(outcome)?.contains("syntax boundaries") == true)
 	}
 
+	@Test func syntaxExpansionRejectsOutOfBoundsSelectionMetadataWithoutCallingFoundation() {
+		let source = "**Alpha**" as NSString
+		for range in [
+			NSRange(location: source.length + 1, length: 0),
+			NSRange(location: source.length, length: 1),
+			NSRange(location: Int.max, length: 1),
+		] {
+			#expect(MarkdownEditSplicer.syntaxExpandedRange(
+				range,
+				syntaxStart: ["strong"],
+				syntaxEnd: ["strong"],
+				in: source) == nil)
+		}
+	}
+
 	@Test func cutConsumesPaddedVariableLengthCodeDelimiters() {
 		let source = "`` `Alpha` `` Tail"
 		let outcome = MarkdownEditSplicer.apply(
