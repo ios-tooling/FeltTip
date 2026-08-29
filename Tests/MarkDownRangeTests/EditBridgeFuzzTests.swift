@@ -31,6 +31,22 @@ struct SeededRNG: RandomNumberGenerator {
 	}
 }
 
+private let editBridgeChunkMoveSeeds: [UInt64] = {
+	if let value = ProcessInfo.processInfo.environment["MDR_CHUNK_MOVE_SEED"],
+	   let seed = UInt64(value) {
+		return [seed]
+	}
+	return [9101, 9102, 9103]
+}()
+
+private let editBridgeTableMoveSeeds: [UInt64] = {
+	if let value = ProcessInfo.processInfo.environment["MDR_TABLE_MOVE_SEED"],
+	   let seed = UInt64(value) {
+		return [seed]
+	}
+	return [9201, 9202, 9203]
+}()
+
 @Suite(.serialized) @MainActor struct EditBridgeFuzzTests {
 	@Test func randomEditOffsetsNeverSplitUnicodeScalars() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "A🙂B")
@@ -289,7 +305,7 @@ struct SeededRNG: RandomNumberGenerator {
 		#expect(harness.coordinator.bridgeIncidents == [], "table fuzz: \(script)")
 	}
 
-	@Test(arguments: [UInt64(9101), 9102, 9103])
+	@Test(arguments: editBridgeChunkMoveSeeds)
 	func repeatedCrossBlockCutPasteMovesStaySynchronized(seed: UInt64) async throws {
 		await TestPasteboard.acquireExclusiveAccess()
 		defer { TestPasteboard.releaseExclusiveAccess() }
@@ -365,7 +381,7 @@ struct SeededRNG: RandomNumberGenerator {
 		#expect(harness.coordinator.bridgeIncidents == [], "chunk-move fuzz: \(script)")
 	}
 
-	@Test(arguments: [UInt64(9201), 9202, 9203])
+	@Test(arguments: editBridgeTableMoveSeeds)
 	func repeatedTableCellCutPasteMovesNeverDamagePipes(seed: UInt64) async throws {
 		await TestPasteboard.acquireExclusiveAccess()
 		defer { TestPasteboard.releaseExclusiveAccess() }
