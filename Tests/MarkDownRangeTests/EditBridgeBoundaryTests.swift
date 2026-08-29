@@ -27,6 +27,9 @@ import Testing
 		("**Bold**", "**Bold**\n\nX"),
 		("_Italic_", "_Italic_\n\nX"),
 		("[Link](https://example.com)", "[Link](https://example.com)\n\nX"),
+		("***Bold Italic***", "***Bold Italic***\n\nX"),
+		("[**Bold Link**](https://example.com)", "[**Bold Link**](https://example.com)\n\nX"),
+		("~~**Bold Strike**~~", "~~**Bold Strike**~~\n\nX"),
 	])
 	func returnAfterCollapsingSelectAllToTheRightExitsTerminalInlineSyntax(
 		source: String,
