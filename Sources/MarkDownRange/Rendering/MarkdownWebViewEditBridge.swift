@@ -236,7 +236,15 @@ extension MarkdownWebView.Coordinator {
 				return
 			}
 			payload["text"] = pasted
-			guard let start = body["start"] as? Int,
+			if pasted.contains("\n"),
+			   let wrapperStart = body["multilineWrapperStart"] as? Int,
+			   let wrapperEnd = body["multilineWrapperEnd"] as? Int,
+			   let wrapperExpected = body["multilineWrapperExpected"] as? String {
+				payload["start"] = wrapperStart
+				payload["end"] = wrapperEnd
+				payload["expected"] = wrapperExpected
+			}
+			guard let start = payload["start"] as? Int,
 			      let caret = Self.caretAfterInsertion(start: start, text: pasted) else {
 				log("paste with invalid or overflowing start \(body["start"] ?? "nil")")
 				if let token = body["seq"] as? Int {

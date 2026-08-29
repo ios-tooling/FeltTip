@@ -364,6 +364,64 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func multiParagraphPasteAtAnEmptyUnderlineCaretExitsTheWrapperCleanly() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "AlphaOne\n\nTwo Tail")
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "AlphaOne\n\nTwoZ Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func largeMultiBlockPasteOverASelectionPreservesTheLongTailAndNextCaret() async throws {
+		let tail = (0..<400).map {
+			"Tail paragraph \($0) with **style** and café 🙂."
+		}.joined(separator: "\n\n")
+		let source = "Intro\n\nreplace me\n\n" + tail
+		let replaced = (source as NSString).range(of: "replace me")
+		let payload = (0..<180).map {
+			"Pasted block \($0) with [link](https://example.com/\($0))."
+		}.joined(separator: "\n\n")
+		let expected = (source as NSString).replacingCharacters(
+			in: replaced, with: payload)
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: replaced.location, length: replaced.length)
+
+		try await withPasteboard(payload) {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected)
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		let insertion = replaced.location + (payload as NSString).length
+		let expectedAfterTyping = (expected as NSString).replacingCharacters(
+			in: NSRange(location: insertion, length: 0), with: "Z")
+		#expect(harness.source == expectedAfterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	// MARK: Non-breaking spaces
 	//
 	// contentEditable renders a lone space as U+00A0 so layout can't collapse
