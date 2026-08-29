@@ -59,6 +59,7 @@
   // buffered command so it does not replay at the previous edit's caret.
   // Ordinary rapid typing never sets this and follows the restored caret.
   var frozenRequestedSelection = null;
+  var inlineNavigationSelection = null;
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -459,12 +460,58 @@
   // holder and following visible character in one native move.
   document.body.addEventListener('keydown', function (event) {
     if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
-        event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+        event.altKey || event.ctrlKey || event.metaKey) return;
     var home = activeInlineCaretHome();
     if (!home || !home.hasAttribute('data-md-inline-caret-source-neutral')) return;
     var selection = window.getSelection();
     if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
     event.preventDefault();
+    if (event.shiftKey) {
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      walker.currentNode = home;
+      var adjacent = event.key === 'ArrowLeft'
+        ? walker.previousNode() : walker.nextNode();
+      while (adjacent && (home.contains(adjacent) || !adjacent.nodeValue.length)) {
+        adjacent = event.key === 'ArrowLeft'
+          ? walker.previousNode() : walker.nextNode();
+      }
+      if (adjacent) {
+        selection.collapse(
+          adjacent,
+          event.key === 'ArrowLeft' ? adjacent.nodeValue.length : 0);
+        selection.modify(
+          'extend', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+        // Whitespace adjacent to hidden inline syntax is rendered as an
+        // unstamped text node. Give just the selected visible character its
+        // exact source stamp so Copy and replacement typing can address it
+        // without accidentally owning the hidden wrapper delimiters.
+        if (!spanOf(adjacent, 0)) {
+          var navigationOffset = event.key === 'ArrowLeft'
+            ? home.__mdNeutralPreviousOffset : home.__mdNeutralNextOffset;
+          if (Number.isFinite(navigationOffset)) {
+            var selectedRange = selection.getRangeAt(0).cloneRange();
+            var navigationSpan = document.createElement('span');
+            navigationSpan.setAttribute('data-s', String(navigationOffset));
+            navigationSpan.setAttribute('data-md-inline-navigation', '1');
+            try {
+              selectedRange.surroundContents(navigationSpan);
+              selection.selectAllChildren(navigationSpan);
+              if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
+            } catch (_) {}
+          }
+        }
+        var selectedOffset = event.key === 'ArrowLeft'
+          ? home.__mdNeutralPreviousOffset : home.__mdNeutralNextOffset;
+        if (Number.isFinite(selectedOffset)) {
+          inlineNavigationSelection = {
+            start: selectedOffset,
+            expected: plain(selection.toString()),
+            range: selection.getRangeAt(0).cloneRange()
+          };
+        }
+      }
+      return;
+    }
     selection.modify('move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
     if (event.key === 'ArrowLeft') {
       selection.modify('move', 'backward', 'character');
@@ -489,6 +536,7 @@
   }
   function activeInlineCaretHome() {
     var selection = window.getSelection();
+    if (!selection || !selection.isCollapsed) return null;
     var node = selection && selection.anchorNode;
     var element = node && node.nodeType === 1
       ? node : node && node.parentElement;
@@ -1321,9 +1369,9 @@
   // native Copy would expose its zero-width character on the system clipboard.
   // Override only that exceptional copy and keep every ordinary copy native.
   document.body.addEventListener('copy', function (e) {
+    var selection = window.getSelection();
     var inlineHome = selectedInlineCaretHome();
     if (!inlineHome || !e.clipboardData) return;
-    var selection = window.getSelection();
     var copied = plain(selection && selection.rangeCount
       ? rangeTextWithoutInlineCaretHome(selection.getRangeAt(0), inlineHome)
       : '');
@@ -1336,6 +1384,34 @@
   // source operation ourselves; the normal handler below owns the deletion,
   // syntax-boundary expansion, freeze, and caret restoration.
   document.body.addEventListener('cut', function (e) {
+    var liveSelection = window.getSelection();
+    var navigation = inlineNavigationSelection;
+    var liveText = plain(liveSelection ? liveSelection.toString() : '');
+    var liveRange = liveSelection && liveSelection.rangeCount
+      ? liveSelection.getRangeAt(0) : null;
+    var sameNavigationRange = navigation && liveRange &&
+      liveRange.startContainer === navigation.range.startContainer &&
+      liveRange.startOffset === navigation.range.startOffset &&
+      liveRange.endContainer === navigation.range.endContainer &&
+      liveRange.endOffset === navigation.range.endOffset;
+    if (sameNavigationRange && liveText === navigation.expected && e.clipboardData) {
+      inlineNavigationSelection = null;
+      e.clipboardData.setData('text/plain', navigation.expected);
+      e.preventDefault();
+      if (frozen || frozenInputReplayTimer) return;
+      setTimeout(function () {
+        if (frozen || frozenInputReplayTimer) return;
+        freeze();
+        post({ op: 'cut', start: navigation.start,
+               end: navigation.start + navigation.expected.length,
+               text: '', expected: navigation.expected,
+               crossRun: false, selected: true, endAtBlockStart: false,
+               syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
+               before: '', after: '', caret: navigation.start,
+               rev: stampRev, seq: seq++ });
+      }, 0);
+      return;
+    }
     var inlineHome = selectedInlineCaretHome();
     if (!inlineHome || !e.clipboardData) return;
     var selection = window.getSelection();

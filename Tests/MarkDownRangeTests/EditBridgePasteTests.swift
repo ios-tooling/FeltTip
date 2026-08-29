@@ -202,6 +202,58 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test(arguments: [
+		(direction: "backward", copied: "a", expected: "Alph<u></u> Tail"),
+		(direction: "forward", copied: " ", expected: "Alpha<u></u>Tail"),
+	])
+	func extendingASelectionFromAnEmptyUnderlineCaretOwnsOneVisibleCharacter(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		let selectedBeforeTyping = try await harness.evaluate("window.getSelection().toString()")
+		#expect(selectedBeforeTyping == copied,
+			"selection collapsed after Copy for direction=\(direction)")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("native Cut pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func selectAllCutAfterAnIndentedSoftLineDeletionRoundTripsWithoutCopyingTheCaretHome() async throws {
 		let expectedSource = "Term\n  : Definition\n\nTail"
 		let harness = try await CoordinatorBridgeHarness(
