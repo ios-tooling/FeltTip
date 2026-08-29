@@ -1266,6 +1266,17 @@
         }
       }
     }
+    // Paste, like Cut, acts on the live selection. WebKit can expose a stale
+    // collapsed StaticRange while the user still has an extended selection;
+    // trusting that target inserts beside the selected text instead of
+    // replacing it. Keep the reported target only for a collapsed live caret.
+    if (e.inputType === 'insertFromPaste') {
+      var livePasteSelection = window.getSelection();
+      if (livePasteSelection && livePasteSelection.rangeCount &&
+          !livePasteSelection.isCollapsed) {
+        range = livePasteSelection.getRangeAt(0);
+      }
+    }
     // Physical Backspace can expose a collapsed StaticRange even though the
     // live selection is extended (notably at PRE/CODE element boundaries).
     // A selected deletion acts on that live selection, just like Cut; using

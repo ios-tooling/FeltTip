@@ -338,6 +338,43 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func pasteUsesTheLiveSelectionWhenWebKitReportsACollapsedTarget() async throws {
+		let source = "alpha bravo charlie\n"
+		let bravo = (source as NSString).range(of: "bravo")
+		for backward in [false, true] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(
+				harness,
+				start: bravo.location,
+				length: bravo.length,
+				backward: backward)
+
+			try await withPasteboard("X") {
+				try await harness.run("""
+					var live = window.getSelection().getRangeAt(0)
+					var stale = document.createRange()
+					stale.setStart(live.startContainer, live.startOffset)
+					stale.collapse(true)
+					var paste = new InputEvent('beforeinput', {
+					  inputType: 'insertFromPaste', bubbles: true, cancelable: true
+					})
+					Object.defineProperty(paste, 'getTargetRanges', {
+					  value: function () { return [stale] }
+					})
+					document.body.dispatchEvent(paste)
+					""")
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == "alpha X charlie\n", "backward=\(backward)")
+			#expect(harness.lastCaretHint == 7, "backward=\(backward)")
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
 	@Test func pastingOverMultipleStyledRunsConsumesTheirHiddenSyntax() async throws {
 		let source = "Before **Alpha** and _Beta_ after"
 		let start = (source as NSString).range(of: "Alpha").location
