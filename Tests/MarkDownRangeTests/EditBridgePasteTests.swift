@@ -139,6 +139,12 @@ import Testing
 			foldingNewlines: false, preferringSource: false) == "visible prose")
 	}
 
+	@Test func pasteCaretArithmeticRejectsNegativeAndOverflowingStarts() {
+		#expect(MarkdownWebView.Coordinator.caretAfterInsertion(start: -1, text: "X") == nil)
+		#expect(MarkdownWebView.Coordinator.caretAfterInsertion(start: Int.max, text: "X") == nil)
+		#expect(MarkdownWebView.Coordinator.caretAfterInsertion(start: 7, text: "😀") == 9)
+	}
+
 	@Test func delayedCutDoesNotAttachSourceToAChangedPasteboard() async {
 		await TestPasteboard.acquireExclusiveAccess()
 		defer { TestPasteboard.releaseExclusiveAccess() }

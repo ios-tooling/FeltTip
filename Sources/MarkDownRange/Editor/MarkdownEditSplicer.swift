@@ -164,7 +164,8 @@ enum MarkdownEditSplicer {
 			let alternates = marker == "**" ? ["**", "__"] : marker == "*" ? ["*", "_"] : [marker]
 			for alternate in alternates {
 				let length = (alternate as NSString).length
-				if edit.start >= length, edit.end + length <= text.length,
+				if edit.start >= length, edit.end <= text.length,
+				   length <= text.length - edit.end,
 				   text.substring(with: NSRange(location: edit.start - length, length: length)) == alternate,
 				   text.substring(with: NSRange(location: edit.end, length: length)) == alternate {
 					let unwrapped = text.substring(to: edit.start - length) + actual + text.substring(from: edit.end + length)

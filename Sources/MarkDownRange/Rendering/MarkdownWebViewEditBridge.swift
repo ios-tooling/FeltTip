@@ -206,7 +206,17 @@ extension MarkdownWebView.Coordinator {
 				return
 			}
 			payload["text"] = pasted
-			payload["caret"] = (body["start"] as? Int ?? 0) + (pasted as NSString).length
+			guard let start = body["start"] as? Int,
+			      let caret = Self.caretAfterInsertion(start: start, text: pasted) else {
+				log("paste with invalid or overflowing start \(body["start"] ?? "nil")")
+				if let token = body["seq"] as? Int {
+					webView?.evaluateJavaScript(
+						"window.__mdUnfreeze && window.__mdUnfreeze(\(token));",
+						completionHandler: nil)
+				}
+				return
+			}
+			payload["caret"] = caret
 		}
 		guard let edit = MarkdownEditSplicer.Edit(body: payload) else { return }
 		// Revision gate. Every edit declares the source revision its offsets
@@ -326,6 +336,12 @@ extension MarkdownWebView.Coordinator {
 				.joined(separator: " ")
 		}
 		return text.isEmpty ? nil : text
+	}
+
+	static func caretAfterInsertion(start: Int, text: String) -> Int? {
+		guard start >= 0 else { return nil }
+		let (caret, overflow) = start.addingReportingOverflow((text as NSString).length)
+		return overflow ? nil : caret
 	}
 
 	/// State of the document-wide indexed task-list marker. Checkbox messages
