@@ -329,6 +329,36 @@ import Testing
 		}
 	}
 
+	@Test func typingAcrossNestedStyledEndpointsConsumesEveryOwnedDelimiter() async throws {
+		let cases = [
+			(source: "[**Alpha**](https://example.com) and ~~Beta~~ Tail", expected: "X Tail"),
+			(source: "<u>**Alpha**</u> and [Beta](https://example.com) Tail", expected: "X Tail"),
+			(source: "~~**Alpha**~~ and _Beta_ Tail", expected: "X Tail"),
+		]
+		for item in cases {
+			let start = (item.source as NSString).range(of: "Alpha").location
+			let beta = (item.source as NSString).range(of: "Beta")
+			for direction in Direction.allCases {
+				let harness = try await CoordinatorBridgeHarness(source: item.source)
+				var commands = selectionCommands(
+					start: start,
+					length: beta.upperBound - start,
+					direction: direction)
+				commands.append("document.execCommand('insertText', false, 'X')")
+				try await harness.batch(commands)
+				try await harness.waitForSourceEdits(1)
+
+				#expect(harness.source == item.expected)
+				#expect(harness.lastCaretHint == 1)
+				try await assertHealthy(harness)
+				try await harness.type("!")
+				try await harness.waitForSourceEdits(2)
+				#expect(harness.source == "X! Tail")
+				try await assertHealthy(harness)
+			}
+		}
+	}
+
 	@Test func typingBurstAfterCrossRunReplacementReplaysAfterCaretRestore() async throws {
 		let source = "Before **Alpha** and _Beta_ after"
 		let start = (source as NSString).range(of: "Alpha").location
