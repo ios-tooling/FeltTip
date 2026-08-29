@@ -172,6 +172,17 @@ struct EditBridgeWhitespaceBoundaryTests {
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func typingTextBetweenRepeatedSpacesDoesNotNeedRecovery() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "h de  bea")
+		try await harness.type("é", at: 5)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "h de é bea")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func insertingThenDeletingARepeatedSpaceRestoresTheRenderedBaseline() async throws {
 		let source = "eta ds **gmma**"
 		let harness = try await CoordinatorBridgeHarness(source: source)

@@ -1029,6 +1029,7 @@
   function needsStructuralWhitespaceInsertion(replacement, before, after) {
     if (replacement === '') return false;
     if (/[ \t]{2}$/.test(before) || /^[ \t]{2}/.test(after)) return true;
+    if (/[ \t]$/.test(before) && /^[ \t]/.test(after)) return true;
     return /^[ \t]+$/.test(replacement) &&
       (/[ \t]$/.test(before) || /^[ \t]/.test(after));
   }
