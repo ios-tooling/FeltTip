@@ -848,6 +848,135 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(command: "delete", caret: 6,
+		 expected: "A `<u</u>` B", afterTyping: "A `<uX</u>` B"),
+		(command: "forwardDelete", caret: 6,
+		 expected: "A `<u>/u>` B", afterTyping: "A `<u>X/u>` B"),
+		(command: "delete", caret: 10,
+		 expected: "A `<u></u` B", afterTyping: "A `<u></uX` B"),
+	])
+	func deletionBesideAVisibleEmptyUnderlineLiteralInCodeTargetsVisibleCharacters(
+		command: String,
+		caret: Int,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let source = "A `<u></u>` B"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 714))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("inline-code caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  return selection && selection.anchorNode
+				    ? selection.anchorNode.parentElement.tagName : 'missing'
+				})()
+				""") == "CODE"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "command=\(command), caret=\(caret)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == afterTyping, "command=\(command), caret=\(caret)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func backspaceAfterAnEscapedEmptyUnderlineLiteralTargetsItsVisibleText() async throws {
+		let source = "A \\<u></u> B"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 10, token: 715))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("escaped literal caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.anchorNode) return 'missing'
+				  return document.querySelector(
+				    '[data-md-inline-caret-source-neutral], ' +
+				    '[data-md-inline-caret-after-empty-wrapper]') ? 'empty-wrapper' : 'ordinary'
+				})()
+				""") == "ordinary"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("document.execCommand('delete')")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "A \\<u></u B")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "A \\<u></uX B")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func backspaceAfterAnEmptyUnderlineWithAnEscapedBackslashDeletesTheVisibleSlash() async throws {
+		let source = #"A \\<u></u> B"#
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 11, token: 716))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("post-wrapper escaped-backslash caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "11"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("document.execCommand('delete')")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "A <u></u> B")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "A <u></u>X B")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphXa<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u> XTail"),
 	])

@@ -504,10 +504,13 @@
         }
         var selectedOffset = event.key === 'ArrowLeft'
           ? home.__mdNeutralPreviousOffset : home.__mdNeutralNextOffset;
+        var selectedSource = event.key === 'ArrowLeft'
+          ? home.__mdNeutralPreviousCharacter : home.__mdNeutralNextCharacter;
         if (Number.isFinite(selectedOffset)) {
           inlineNavigationSelection = {
             start: selectedOffset,
             expected: plain(selection.toString()),
+            sourceExpected: selectedSource || plain(selection.toString()),
             range: selection.getRangeAt(0).cloneRange()
           };
         }
@@ -642,8 +645,26 @@
     }
     // An offset immediately after an empty wrapper has no rendered character
     // of its own. `spotFor` gives that hidden boundary left affinity and snaps
-    // it to the preceding run; let the dedicated exact-offset home below own it.
-    var start = caretAfterEmptyUnderline ? null : spotFor(offset);
+    // it to the preceding run; let the dedicated exact-offset home below own
+    // it. The same source spelling can be visible text inside inline code,
+    // though. An exact stamped DOM position wins in that case and must keep its
+    // ordinary visible-character behavior.
+    var mappedStart = spotFor(offset);
+    var visibleWrapperText = false;
+    if (caretAfterEmptyUnderline && offset >= 7) {
+      var mappedSpans = document.querySelectorAll('[data-s]');
+      for (var mappedIndex = 0; mappedIndex < mappedSpans.length; mappedIndex++) {
+        var mappedBase = parseInt(mappedSpans[mappedIndex].getAttribute('data-s'), 10);
+        if (mappedBase <= offset - 7 &&
+            mappedBase + textLength(mappedSpans[mappedIndex]) >= offset) {
+          visibleWrapperText = true;
+          break;
+        }
+      }
+    }
+    var useAfterEmptyUnderlineHome = caretAfterEmptyUnderline &&
+      !visibleWrapperText;
+    var start = useAfterEmptyUnderlineHome ? null : mappedStart;
     if (start && length) {
       var end = spotFor(offset + length) || start;
       document.body.focus({ preventScroll: true });
@@ -681,13 +702,13 @@
       var base = parseInt(spans[i].getAttribute('data-s'), 10);
       var len = textLength(spans[i]);
       if (base + len < offset) { prev = spans[i]; prevEnd = base + len; }
-      if ((base > offset || (caretAfterEmptyUnderline && base === offset)) && !next) {
+      if ((base > offset || (useAfterEmptyUnderlineHome && base === offset)) && !next) {
         next = spans[i]; nextBase = base;
       }
     }
     var prevBlock = prev ? blockOf(prev) : null;
     var nextBlock = next ? blockOf(next) : null;
-    if (caretAfterEmptyUnderline && sourceLineStart != null && sourceLineEnd != null) {
+    if (useAfterEmptyUnderlineHome && sourceLineStart != null && sourceLineEnd != null) {
       var afterNextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
       var afterPrevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
       if (afterNextOnLine && placeInlineCaretHome(
@@ -1400,8 +1421,8 @@
       freeze();
       post({ op: 'paste', matchStyle: navigationMatchStyle, inCell: false,
              start: navigation.start,
-             end: navigation.start + navigation.expected.length,
-             expected: navigation.expected, crossRun: false, selected: true,
+             end: navigation.start + navigation.sourceExpected.length,
+             expected: navigation.sourceExpected, crossRun: false, selected: true,
              endAtBlockStart: false, syntaxStart: [], syntaxEnd: [],
              blockPrefixes: [], before: '', after: '',
              rev: stampRev, seq: seq++ });
@@ -1447,8 +1468,8 @@
         if (frozen || frozenInputReplayTimer) return;
         freeze();
         post({ op: 'cut', start: navigation.start,
-               end: navigation.start + navigation.expected.length,
-               text: '', expected: navigation.expected,
+               end: navigation.start + navigation.sourceExpected.length,
+               text: '', expected: navigation.sourceExpected,
                crossRun: false, selected: true, endAtBlockStart: false,
                syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
                before: '', after: '', caret: navigation.start,

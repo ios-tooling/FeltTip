@@ -519,10 +519,29 @@ extension MarkdownWebView {
 			}
 			let previousCharacterJSON = (try? JSONEncoder().encode(previousCharacter))
 				.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+			func isEscaped(at location: Int) -> Bool {
+				var slashCount = 0
+				var cursor = location - 1
+				while cursor >= 0, source.character(at: cursor) == 0x5C {
+					slashCount += 1
+					cursor -= 1
+				}
+				return !slashCount.isMultiple(of: 2)
+			}
+			func isASCIIPunctuation(_ character: unichar) -> Bool {
+				switch character {
+				case 0x21...0x2F, 0x3A...0x40, 0x5B...0x60, 0x7B...0x7E:
+					return true
+				default:
+					return false
+				}
+			}
 			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
+				!isEscaped(at: offset - 3) &&
 				source.substring(with: NSRange(location: offset - 3, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			let caretAfterEmptyUnderline = offset >= 7 &&
+				!isEscaped(at: offset - 7) &&
 				source.substring(with: NSRange(location: offset - 7, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			var neutralPreviousOffset = "null"
@@ -552,7 +571,15 @@ extension MarkdownWebView {
 					visibleWrapperEnd += 7
 				}
 				if visibleWrapperStart > 0 {
-					let range = source.rangeOfComposedCharacterSequence(at: visibleWrapperStart - 1)
+					let previousLocation = visibleWrapperStart - 1
+					let range: NSRange
+					if previousLocation > 0,
+					   isASCIIPunctuation(source.character(at: previousLocation)),
+					   isEscaped(at: previousLocation) {
+						range = NSRange(location: previousLocation - 1, length: 2)
+					} else {
+						range = source.rangeOfComposedCharacterSequence(at: previousLocation)
+					}
 					if range.upperBound == visibleWrapperStart {
 						neutralPreviousOffset = String(range.location)
 						neutralPreviousCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
@@ -560,7 +587,14 @@ extension MarkdownWebView {
 					}
 				}
 				if visibleWrapperEnd < source.length {
-					let range = source.rangeOfComposedCharacterSequence(at: visibleWrapperEnd)
+					let range: NSRange
+					if visibleWrapperEnd + 1 < source.length,
+					   source.character(at: visibleWrapperEnd) == 0x5C,
+					   isASCIIPunctuation(source.character(at: visibleWrapperEnd + 1)) {
+						range = NSRange(location: visibleWrapperEnd, length: 2)
+					} else {
+						range = source.rangeOfComposedCharacterSequence(at: visibleWrapperEnd)
+					}
 					neutralNextOffset = String(range.location)
 					neutralNextCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""

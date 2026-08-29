@@ -458,6 +458,66 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: #"A \\<u></u> B"#, caret: 11, key: "ArrowLeft",
+		 direction: "backward", copied: "\\", expected: "A P<u></u> B"),
+		(source: #"A<u></u>\* B"#, caret: 8, key: "ArrowRight",
+		 direction: "forward", copied: "*", expected: "A<u></u>P B"),
+	])
+	func pasteOverAnEscapedVisibleCharacterBesideAnEmptyUnderlineReplacesItsSourcePair(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 717))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("escaped-character wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied)
+		try await withPasteboard("P") {
+			try await harness.run("""
+				document.body.dispatchEvent(new ClipboardEvent('paste', {
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(pasted: "P", afterPaste: "Alpha<u></u>P Tail",
 		 afterTyping: "Alpha<u></u>PX Tail"),
 		(pasted: "One\n\nTwo", afterPaste: "Alpha<u></u>One\n\nTwo Tail",
