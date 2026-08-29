@@ -86,6 +86,7 @@ import Testing
 		try await harness.type("Z", at: 13)
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "text\n\n```\nletZ x = 1\n```\n")
+		try await harness.waitQuiescent()
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
 		#expect(try await harness.stampMismatches() == [])
