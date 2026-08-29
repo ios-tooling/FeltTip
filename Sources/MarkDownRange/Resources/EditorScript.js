@@ -453,16 +453,18 @@
     }
     reportSelection(true);
   });
-  // The source-neutral caret home represents an invisible empty wrapper. A
-  // native left-arrow move otherwise lands at the wrapper's hidden opening
-  // boundary—the same visual caret stop—and appears not to move. Consume that
-  // hidden stop plus one real character; right-arrow already crosses the
-  // holder and following visible character in one native move.
+  // Empty-wrapper caret homes represent invisible source syntax. A native
+  // left-arrow move otherwise lands at a hidden wrapper boundary—the same
+  // visual caret stop—and appears not to move. Consume that hidden stop plus
+  // one real character; right-arrow already crosses the holder and following
+  // visible character in one native move.
   document.body.addEventListener('keydown', function (event) {
     if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
         event.altKey || event.ctrlKey || event.metaKey) return;
     var home = activeInlineCaretHome();
-    if (!home || !home.hasAttribute('data-md-inline-caret-source-neutral')) return;
+    if (!home ||
+        (!home.hasAttribute('data-md-inline-caret-source-neutral') &&
+         !home.hasAttribute('data-md-inline-caret-after-empty-wrapper'))) return;
     var selection = window.getSelection();
     if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
     event.preventDefault();

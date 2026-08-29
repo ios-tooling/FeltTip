@@ -291,6 +291,118 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test(arguments: [
+		(direction: "backward", copied: "a", expected: "AlphP<u></u> Tail"),
+		(direction: "forward", copied: " ", expected: "Alpha<u></u>PTail"),
+	])
+	func pasteOverASelectionFromAHostRestoredPostWrapperCaretReplacesVisibleText(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 705))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied)
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(pasted: "P", afterPaste: "Alpha<u></u>P Tail",
+		 afterTyping: "Alpha<u></u>PX Tail"),
+		(pasted: "One\n\nTwo", afterPaste: "Alpha<u></u>One\n\nTwo Tail",
+		 afterTyping: "Alpha<u></u>One\n\nTwoX Tail"),
+	])
+	func pasteAtAHostRestoredPostWrapperCaretKeepsItsExactInsertionPoint(
+		pasted: String,
+		afterPaste: String,
+		afterTyping: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 706))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		try await withPasteboard(pasted) {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterPaste, "pasted=\(pasted.debugDescription)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == afterTyping, "pasted=\(pasted.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func restoringACharacterCutBesideAnEmptyUnderlineKeepsTheCaretTypable() async throws {
 		let formatted = "Alpha<u></u> Tail"
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")

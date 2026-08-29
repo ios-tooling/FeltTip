@@ -759,6 +759,56 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(direction: "backward", expected: "AlphXa<u></u> Tail"),
+		(direction: "forward", expected: "Alpha<u></u> XTail"),
+	])
+	func arrowingAwayFromAHostRestoredPostWrapperCaretMovesByAVisibleCharacter(
+		direction: String,
+		expected: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 704))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('move', '\(direction)', 'character')
+			}
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(command: "bold", formatted: "<u>**X**</u>"),
 		(command: "italic", formatted: "<u>*X*</u>"),
 		(command: "strikeThrough", formatted: "<u>~~X~~</u>"),
@@ -810,6 +860,50 @@ import Testing
 		try await harness.waitQuiescent()
 
 		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "insertParagraph", expected: "Alpha<u></u>\n\nX Tail"),
+		(command: "insertLineBreak", expected: "Alpha<u></u>\\\nXTail"),
+	])
+	func lineBreaksAfterAHostRestoredEmptyUnderlineStayAfterTheWrapper(
+		command: String,
+		expected: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 707))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "command=\(command)")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
