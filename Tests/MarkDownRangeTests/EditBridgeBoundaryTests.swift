@@ -671,6 +671,40 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(direction: "backward", expected: "AlphXa<u></u> Tail"),
+		(direction: "forward", expected: "Alpha<u></u> XTail"),
+	])
+	func arrowingAwayFromAnEmptyUnderlineCaretMovesByAVisibleCharacter(
+		direction: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('move', '\(direction)', 'character')
+			}
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(command: "bold", formatted: "<u>**X**</u>"),
 		(command: "italic", formatted: "<u>*X*</u>"),
 		(command: "strikeThrough", formatted: "<u>~~X~~</u>"),

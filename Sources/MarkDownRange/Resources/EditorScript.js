@@ -452,6 +452,24 @@
     }
     reportSelection(true);
   });
+  // The source-neutral caret home represents an invisible empty wrapper. A
+  // native left-arrow move otherwise lands at the wrapper's hidden opening
+  // boundary—the same visual caret stop—and appears not to move. Consume that
+  // hidden stop plus one real character; right-arrow already crosses the
+  // holder and following visible character in one native move.
+  document.body.addEventListener('keydown', function (event) {
+    if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
+        event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    var home = activeInlineCaretHome();
+    if (!home || !home.hasAttribute('data-md-inline-caret-source-neutral')) return;
+    var selection = window.getSelection();
+    if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
+    event.preventDefault();
+    selection.modify('move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+    if (event.key === 'ArrowLeft') {
+      selection.modify('move', 'backward', 'character');
+    }
+  });
   // Restore the caret — or, with a length, the full selection (style
   // toggles keep their selection alive) — after a structural re-render.
   function ensureVisualBlankBefore(span, sourceOffset) {
