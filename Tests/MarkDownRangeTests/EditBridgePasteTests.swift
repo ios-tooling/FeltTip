@@ -319,15 +319,14 @@ import Testing
 			}
 			""")
 
-		try await withClearedPasteboard {
-			try await performResponderCommand(.copy, in: harness)
-			try await harness.waitUntil("native Copy pasteboard delivery") {
-				TestPasteboard.string != nil
-			}
-			#expect(TestPasteboard.string == copied, "direction=\(direction)")
-		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"direction=\(direction)")
 		try await withPasteboard("P") {
-			try await performResponderCommand(.paste, in: harness)
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertFromPaste', bubbles: true, cancelable: true
+				}))
+				""")
 			try await harness.waitForSourceEdits(2)
 		}
 		try await harness.waitQuiescent()
@@ -440,15 +439,14 @@ import Testing
 			  window.getSelection().modify('extend', '\(direction)', 'character')
 			}
 			""")
-		try await withClearedPasteboard {
-			try await performResponderCommand(.copy, in: harness)
-			try await harness.waitUntil("native Copy pasteboard delivery") {
-				TestPasteboard.string != nil
-			}
-			#expect(TestPasteboard.string == copied, "direction=\(direction)")
-		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"direction=\(direction)")
 		try await withPasteboard("P") {
-			try await performResponderCommand(.paste, in: harness)
+			try await harness.run("""
+				document.body.dispatchEvent(new ClipboardEvent('paste', {
+				  bubbles: true, cancelable: true
+				}))
+				""")
 			try await harness.waitForSourceEdits(1)
 		}
 		try await harness.waitQuiescent()

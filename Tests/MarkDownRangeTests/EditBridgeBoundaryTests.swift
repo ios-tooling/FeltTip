@@ -725,19 +725,28 @@ import Testing
 	}
 
 	@Test(arguments: [
-		(command: "forwardDelete", caret: 4, expected: "A<u></u><u></u>"),
-		(command: "deleteWordForward", caret: 4, expected: "A<u></u><u></u>"),
-		(command: "forwardDelete", caret: 8, expected: "A<u></u><u></u>"),
-		(command: "deleteWordForward", caret: 8, expected: "A<u></u><u></u>"),
-		(command: "delete", caret: 11, expected: "<u></u><u></u>B"),
-		(command: "deleteWordBackward", caret: 11, expected: "<u></u><u></u>B"),
-		(command: "delete", caret: 15, expected: "<u></u><u></u>B"),
-		(command: "deleteWordBackward", caret: 15, expected: "<u></u><u></u>B"),
+		(command: "forwardDelete", caret: 4, expected: "A<u></u><u></u>",
+		 afterTyping: "A<u>X</u><u></u>"),
+		(command: "deleteWordForward", caret: 4, expected: "A<u></u><u></u>",
+		 afterTyping: "A<u>X</u><u></u>"),
+		(command: "forwardDelete", caret: 8, expected: "A<u></u><u></u>",
+		 afterTyping: "A<u></u>X<u></u>"),
+		(command: "deleteWordForward", caret: 8, expected: "A<u></u><u></u>",
+		 afterTyping: "A<u></u>X<u></u>"),
+		(command: "delete", caret: 11, expected: "<u></u><u></u>B",
+		 afterTyping: "<u></u><u>X</u>B"),
+		(command: "deleteWordBackward", caret: 11, expected: "<u></u><u></u>B",
+		 afterTyping: "<u></u><u>X</u>B"),
+		(command: "delete", caret: 15, expected: "<u></u><u></u>B",
+		 afterTyping: "<u></u><u></u>XB"),
+		(command: "deleteWordBackward", caret: 15, expected: "<u></u><u></u>B",
+		 afterTyping: "<u></u><u></u>XB"),
 	])
 	func deletionBesideAdjacentRestoredEmptyUnderlinesSkipsAllHiddenWrappers(
 		command: String,
 		caret: Int,
-		expected: String
+		expected: String,
+		afterTyping: String
 	) async throws {
 		let source = "A<u></u><u></u>B"
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
@@ -753,6 +762,65 @@ import Testing
 		harness.coordinator.load(into: harness.webView)
 		harness.adoptHostText(source)
 		try await harness.waitUntil("adjacent empty-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		if command.contains("Word") {
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: '\(command)', bubbles: true, cancelable: true
+				}))
+				""")
+		} else {
+			try await harness.run("document.execCommand('\(command)')")
+		}
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "command=\(command), caret=\(caret)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "command=\(command), caret=\(caret)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "forwardDelete", caret: 15,
+		 expected: "A<U></U><u></u><U></U>"),
+		(command: "deleteWordForward", caret: 15,
+		 expected: "A<U></U><u></u><U></U>"),
+		(command: "delete", caret: 22,
+		 expected: "<U></U><u></u><U></U>B"),
+		(command: "deleteWordBackward", caret: 22,
+		 expected: "<U></U><u></u><U></U>B"),
+	])
+	func deletionBesideThreeCaseVaryingEmptyUnderlinesSkipsTheWholeCluster(
+		command: String,
+		caret: Int,
+		expected: String
+	) async throws {
+		let source = "A<U></U><u></u><U></U>B"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 713))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("case-varying empty-wrapper caret") {
 			try await harness.evaluate("""
 				(function () {
 				  var home = document.querySelector('[data-md-inline-caret-home]')
