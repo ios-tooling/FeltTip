@@ -886,6 +886,13 @@
     }
     return tags;
   }
+  function isInlineSyntaxElement(element) {
+    if (!element || !element.tagName) return false;
+    var tag = element.tagName.toLowerCase();
+    var isInlineCode = tag === 'code' && !element.closest('pre');
+    return tag === 'strong' || tag === 'em' || tag === 'u' || tag === 'del' ||
+      tag === 'mark' || tag === 'sup' || tag === 'sub' || isInlineCode || tag === 'a';
+  }
   // Unlike ownership metadata above, syntax invalidation cares whether an edit
   // merely TOUCHES a formatted run edge. Deleting the first character of
   // `**é a**`, for example, leaves `** a**`: the delimiters become literal even
@@ -901,31 +908,57 @@
       var element = position.node.nodeType === 1
         ? position.node : position.node.parentElement;
       while (element && element !== document.body) {
-        var tag = element.tagName ? element.tagName.toLowerCase() : '';
-        var isInlineCode = tag === 'code' && !element.closest('pre');
-        if (tag === 'strong' || tag === 'em' || tag === 'u' || tag === 'del' ||
-            tag === 'mark' || tag === 'sup' || tag === 'sub' ||
-            isInlineCode || tag === 'a') {
+        if (isInlineSyntaxElement(element)) {
           var relative = textOffsetWithin(
             element, position.node, position.offset);
-          if (relative === 0 || relative === textLength(element)) return true;
+          if (relative === 0 || relative === textLength(element)) return 'inside';
         }
         element = element.parentElement;
       }
+      // A caret at a rendered run boundary often belongs to the neighbouring
+      // plain span or to their common parent, rather than to the <strong>/<em>
+      // element whose hidden delimiter it touches. Compare visible offsets in
+      // the containing block so both DOM affinities identify the same syntax
+      // edge.
+      var owner = position.node.nodeType === 1
+        ? position.node : position.node.parentElement;
+      var block = owner && owner.closest
+        ? owner.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th') : null;
+      var blockOffset = block
+        ? textOffsetWithin(block, position.node, position.offset) : null;
+      if (block && blockOffset != null) {
+        var inlineElements = block.querySelectorAll(
+          'strong, em, u, del, mark, sup, sub, code, a');
+        for (var j = 0; j < inlineElements.length; j++) {
+          var inlineElement = inlineElements[j];
+          if (!isInlineSyntaxElement(inlineElement)) continue;
+          var inlineStart = textOffsetWithin(block, inlineElement, 0);
+          var inlineEnd = textOffsetWithin(
+            block, inlineElement, inlineElement.childNodes.length);
+          if (blockOffset === inlineStart || blockOffset === inlineEnd) return 'adjacent';
+        }
+      }
     }
-    return false;
+    return '';
   }
   // A native single-run mutation is only visually complete while it cannot
   // change how Markdown parses that run. Literal delimiter characters can
-  // become formatting after an insertion (`b**` → `b*a*`), and whitespace at
-  // a formatted run edge can invalidate the hidden delimiter pair. Those
+  // become formatting after an insertion (`b**` → `b*a*`). Whitespace at any
+  // formatted edge can invalidate its delimiter pair; a character inserted
+  // from the adjacent plain run can change delimiter flanking and pair with
+  // syntax elsewhere in the paragraph. Those
   // edits must splice source first and re-render instead of leaving the live
   // DOM with yesterday's interpretation.
   function needsStructuralInlineRefresh(range, replacement, before, after) {
     var nearby = before.slice(-4) + replacement + after.slice(0, 4);
     if (/[*_~`\[\]<>\\]/.test(nearby)) return true;
     var atSyntaxBoundary = touchesInlineSyntaxBoundary(range);
-    return !!atSyntaxBoundary && (replacement === '' || /\s/.test(replacement));
+    // CommonMark's delimiter flanking distinguishes Unicode letters/numbers
+    // from whitespace and punctuation/symbols. Adding only word characters
+    // from inside the styled run keeps that edge's flanking class; punctuation
+    // (including emoji symbols) can rebalance delimiter pairs across the block.
+    var wordOnly = replacement !== '' && /^[\p{L}\p{N}\p{M}]+$/u.test(replacement);
+    return atSyntaxBoundary === 'adjacent' || (!!atSyntaxBoundary && !wordOnly);
   }
   function selectedBlockPrefixes(range) {
     var node = range.startContainer;

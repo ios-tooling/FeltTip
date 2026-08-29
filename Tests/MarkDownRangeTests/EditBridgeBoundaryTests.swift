@@ -118,6 +118,39 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func typingBesideStyledRunRefreshesDistantDelimiterPairing() async throws {
+		let source = "text t**ext **delta gamma **beta**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let caret = (source as NSString).range(of: "beta").location
+		try await harness.type("z", at: caret)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "text t**ext **delta gamma z**beta**")
+		let live = Self.compactVisible(try await harness.domVisibleText())
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let rendered = Self.compactVisible(try await fresh.domVisibleText())
+		#expect(live == rendered, "live \(live.debugDescription), rendered \(rendered.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func punctuationAtStyledRunEndRefreshesDelimiterPairing() async throws {
+		let source = "**alpha**s ample**"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let alpha = (source as NSString).range(of: "alpha")
+		try await harness.type("\"", at: alpha.location + alpha.length)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "**alpha\"**s ample**")
+		let live = Self.compactVisible(try await harness.domVisibleText())
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let rendered = Self.compactVisible(try await fresh.domVisibleText())
+		#expect(live == rendered, "live \(live.debugDescription), rendered \(rendered.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	private static func compactVisible(_ text: String) -> String {
 		text.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
