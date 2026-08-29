@@ -1052,6 +1052,31 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func aCaretInAHiddenReferenceDestinationCannotEditAnInventedStyledLine() async throws {
+		let source = "[Link][id]\n\n[id]: https://example.com/<u></u>\n\nTail"
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 720))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('insertText', false, 'X')")
+		try await Task.sleep(for: .milliseconds(500))
+
+		#expect(harness.source == source)
+		#expect(harness.sourceEditCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test(arguments: [
 		(direction: "backward", expected: "AlphXa<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u> XTail"),

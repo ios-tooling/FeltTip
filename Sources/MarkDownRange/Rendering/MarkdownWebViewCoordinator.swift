@@ -569,7 +569,24 @@ extension MarkdownWebView {
 				}
 				return false
 			}
-			let forceVisibleSyntaxSnap = isInsideInlineLinkDestination(offset)
+			func isInsideReferenceDestination(_ location: Int) -> Bool {
+				guard location >= lineStart, location <= lineEnd else { return false }
+				let line = source.substring(with: NSRange(
+					location: lineStart, length: lineEnd - lineStart)) as NSString
+				let delimiter = line.range(of: "]:")
+				guard delimiter.location != NSNotFound else { return false }
+				var firstContent = 0
+				while firstContent < delimiter.location {
+					let character = line.character(at: firstContent)
+					if character != 0x20, character != 0x09 { break }
+					firstContent += 1
+				}
+				return firstContent < delimiter.location &&
+					line.character(at: firstContent) == 0x5B &&
+					location - lineStart >= delimiter.upperBound
+			}
+			let forceVisibleSyntaxSnap = isInsideInlineLinkDestination(offset) ||
+				isInsideReferenceDestination(offset)
 			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
 				!isEscaped(at: offset - 3) &&
 				!forceVisibleSyntaxSnap &&

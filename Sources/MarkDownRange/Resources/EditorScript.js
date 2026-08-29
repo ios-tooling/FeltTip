@@ -728,7 +728,8 @@
     // nearest edge. Treat only a genuinely empty source line as needing the
     // synthetic paragraph below; otherwise that placeholder becomes a blank
     // styled-only line even though the raw source is correct.
-    if (snapHiddenSyntax && sourceLineStart != null && sourceLineEnd != null) {
+    if ((snapHiddenSyntax || forceVisibleSyntaxSnap) &&
+        sourceLineStart != null && sourceLineEnd != null) {
       var prevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
       var nextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
       // Empty underline markup renders no stamped text run. Its formatter
@@ -763,6 +764,11 @@
           if (prevText) { placeCaretIn(prevText, prevText.nodeValue.length, prev); }
           else { placeCaretIn(prev, prev.childNodes.length, prev); }
         }
+        return;
+      }
+      if (forceVisibleSyntaxSnap) {
+        var hiddenSelection = window.getSelection();
+        if (hiddenSelection) hiddenSelection.removeAllRanges();
         return;
       }
     }
