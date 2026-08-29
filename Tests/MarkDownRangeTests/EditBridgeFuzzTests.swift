@@ -144,8 +144,18 @@ struct SeededRNG: RandomNumberGenerator {
 				// from the bridge's exact balanced source and continues checking
 				// convergence, stamps, incidents, and every nonempty replacement.
 				expected = harness.source
-			} else {
-				#expect(harness.source == expected, "seed \(seed):\n\(opLog.joined(separator: "\n"))")
+				} else {
+					#expect(harness.source == expected, "seed \(seed):\n\(opLog.joined(separator: "\n"))")
+				}
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_CHECK_EACH_EDIT"] != nil {
+				let live = Self.normalizedVisibleText(try await harness.domVisibleText())
+				let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+				let rendered = Self.normalizedVisibleText(try await fresh.domVisibleText())
+				let message = "selection seed \(seed) diverged after \(opLog.last ?? "unknown operation"); "
+					+ "live \(live.debugDescription), rendered \(rendered.debugDescription)"
+				#expect(
+					live == rendered,
+					Comment(rawValue: message))
 			}
 		}
 
@@ -200,6 +210,16 @@ struct SeededRNG: RandomNumberGenerator {
 			#expect(harness.source == expected,
 				"seed \(seed):\n\(log.joined(separator: "\n"))")
 			try await harness.waitQuiescent()
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_CHECK_EACH_EDIT"] != nil {
+				let live = Self.normalizedVisibleText(try await harness.domVisibleText())
+				let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+				let rendered = Self.normalizedVisibleText(try await fresh.domVisibleText())
+				let message = "cross-block seed \(seed) diverged after \(log.last ?? "unknown operation"); "
+					+ "live \(live.debugDescription), rendered \(rendered.debugDescription)"
+				#expect(
+					live == rendered,
+					Comment(rawValue: message))
+			}
 		}
 
 		let script = "seed \(seed):\n" + log.joined(separator: "\n")
