@@ -187,7 +187,7 @@ final class CoordinatorBridgeHarness {
 	func domProjectedText() async throws -> String {
 		// Empty runs are caret artifacts (__mdPlaceCaret's synthesized holder
 		// spans), not content — exclude them from the projection.
-		try await evaluate("Array.from(document.querySelectorAll('[data-s]')).map(e => e.textContent).filter(t => t.length).join('|')") ?? ""
+		try await evaluate("Array.from(document.querySelectorAll('[data-s]:not([data-md-inline-caret-home])')).map(e => e.textContent).filter(t => t.length).join('|')") ?? ""
 	}
 
 	/// Text as WebKit lays it out. Unlike raw textContent, innerText applies
@@ -203,7 +203,7 @@ final class CoordinatorBridgeHarness {
 	/// so a test can assert it after any edit sequence, however exotic.
 	func stampMismatches() async throws -> [String] {
 		let dump = try await evaluate("""
-			Array.from(document.querySelectorAll('[data-s]'))
+			Array.from(document.querySelectorAll('[data-s]:not([data-md-inline-caret-home])'))
 			  .map(e => e.getAttribute('data-s') + '\\u0001' + e.textContent)
 			  .join('\\u0002')
 			""") ?? ""

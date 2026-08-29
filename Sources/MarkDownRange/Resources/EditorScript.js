@@ -487,6 +487,28 @@
     }
     if (start) {
       ensureVisualBlankBefore(start.span, visualBlankOffset);
+      // A source line break plus indentation can collapse into an unstamped
+      // whitespace node before the next stamped run. At offset zero inside
+      // that run WebKit gives the caret left affinity and insertText becomes
+      // a silent no-op. Give the exact source offset a zero-width inline caret
+      // home; the next edit is routed by its explicit source offset, then the
+      // host render removes the DOM-only zero-width character.
+      var startBase = parseInt(start.span.getAttribute('data-s'), 10);
+      var previousSibling = start.span.previousSibling;
+      if (offset === startBase && previousSibling &&
+          previousSibling.nodeType === 3 && previousSibling.nodeValue.length &&
+          start.span.parentNode) {
+        var inlineHolder = document.createElement('span');
+        inlineHolder.setAttribute('data-s', String(offset - 1));
+        inlineHolder.setAttribute('data-md-inline-caret-home', '1');
+        inlineHolder.setAttribute('data-md-inline-caret-offset', String(offset));
+        var inlineCaretText = document.createTextNode('\u200B');
+        inlineHolder.appendChild(inlineCaretText);
+        start.span.parentNode.insertBefore(inlineHolder, start.span);
+        if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
+        placeCaretIn(inlineCaretText, 1, inlineHolder);
+        return;
+      }
       placeCaretIn(start.node, start.offset, start.span);
       return;
     }
@@ -1215,6 +1237,34 @@
       }
       e.preventDefault();
       return;
+    }
+    // WebKit reports the zero-width character inside an inline caret home as
+    // the replacement target, even though it is a DOM-only anchor and the
+    // source selection is collapsed. Route that one synthetic position by its
+    // explicit source offset so the first restored keystroke cannot disappear
+    // or be rejected as an attempt to replace text the source never contained.
+    if (e.inputType === 'insertText') {
+      var inlineHomeSelection = window.getSelection();
+      var inlineHomeNode = inlineHomeSelection && inlineHomeSelection.anchorNode;
+      var inlineHomeElement = inlineHomeNode && inlineHomeNode.nodeType === 1
+        ? inlineHomeNode : inlineHomeNode && inlineHomeNode.parentElement;
+      var inlineHome = inlineHomeElement && inlineHomeElement.closest
+        ? inlineHomeElement.closest('[data-md-inline-caret-home]') : null;
+      var inlineHomeData = e.data;
+      if (inlineHome && inlineHomeData != null) {
+        var inlineHomeOffset = parseInt(
+          inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+        if (Number.isFinite(inlineHomeOffset)) {
+          inlineHomeData = plain(inlineHomeData);
+          e.preventDefault();
+          freeze();
+          post({ start: inlineHomeOffset, end: inlineHomeOffset,
+                 text: inlineHomeData, expected: '', before: '', after: '',
+                 caret: inlineHomeOffset + inlineHomeData.length,
+                 rev: stampRev, seq: seq++ });
+          return;
+        }
+      }
     }
     var ranges = e.getTargetRanges();
     var range = ranges && ranges.length ? ranges[0] : null;

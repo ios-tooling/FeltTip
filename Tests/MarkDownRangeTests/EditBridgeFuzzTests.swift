@@ -569,7 +569,7 @@ private let editBridgeTableMoveSeeds: [UInt64] = {
 	}
 
 	static func normalizedVisibleText(_ text: String) -> String {
-		plain(text)
+		plain(text).replacingOccurrences(of: "\u{200B}", with: "")
 			.split(separator: "\n", omittingEmptySubsequences: false)
 			.map { $0.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression) }
 			.map { $0.trimmingCharacters(in: .whitespaces) }

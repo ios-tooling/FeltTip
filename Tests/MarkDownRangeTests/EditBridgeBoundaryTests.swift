@@ -300,6 +300,7 @@ import Testing
 
 	@Test(arguments: [
 		(source: "Term\nx: Definition\n\nTail", expected: "Term\n: Definition\n\nTail"),
+		(source: "Term\n  x: Definition\n\nTail", expected: "Term\n  : Definition\n\nTail"),
 		(source: "A reasonably long term\nx: Definition\n\nTail", expected: "A reasonably long term\n: Definition\n\nTail"),
 		(source: "Term\nx- Item\n\nTail", expected: "Term\n- Item\n\nTail"),
 		(source: "Term\nx1. Item\n\nTail", expected: "Term\n1. Item\n\nTail"),
@@ -310,7 +311,7 @@ import Testing
 		expected: String
 	) async throws {
 		let harness = try await CoordinatorBridgeHarness(source: source)
-		let deletionOffset = (source as NSString).range(of: "\nx").location + 1
+		let deletionOffset = (source as NSString).range(of: "x").location
 		try await harness.run("""
 			window.__mdPlaceCaret(\(deletionOffset), 1)
 			var target = window.getSelection().getRangeAt(0).cloneRange()
@@ -341,6 +342,18 @@ import Testing
 		#expect(liveVisible == freshVisible,
 			"live \(liveVisible.debugDescription), fresh \(freshVisible.debugDescription)")
 		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+
+		let editsBeforeRestore = harness.sourceEditCount
+		try await harness.type("x")
+		try await harness.waitForSourceEdits(editsBeforeRestore + 1)
+		try await harness.waitQuiescent()
+		let restored = try await CoordinatorBridgeHarness(source: harness.source)
+		let restoredLive = EditBridgeFuzzTests.normalizedVisibleText(
+			try await harness.domVisibleText())
+		let restoredFresh = EditBridgeFuzzTests.normalizedVisibleText(
+			try await restored.domVisibleText())
+		#expect(restoredLive == restoredFresh)
 		#expect(try await harness.stampMismatches() == [])
 	}
 
@@ -380,11 +393,18 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
-	@Test func deletionThatActivatesATableDelimiterRowRerenders() async throws {
-		let harness = try await CoordinatorBridgeHarness(
-			source: "| A |\n|x---|\n\nTail")
+	@Test(arguments: [
+		(source: "| A |\n|x---|\n\nTail", expected: "| A |\n|---|\n\nTail"),
+		(source: "| A |\n  |x---|\n\nTail", expected: "| A |\n  |---|\n\nTail"),
+	])
+	func deletionThatActivatesATableDelimiterRowRerenders(
+		source: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let deletionOffset = (source as NSString).range(of: "x").location
 		try await harness.run("""
-			window.__mdPlaceCaret(7, 1)
+			window.__mdPlaceCaret(\(deletionOffset), 1)
 			var target = window.getSelection().getRangeAt(0).cloneRange()
 			window.getSelection().collapseToStart()
 			var deletion = new InputEvent('beforeinput', {
@@ -404,7 +424,7 @@ import Testing
 		try await harness.waitForSourceEdits(1)
 		try await harness.waitQuiescent()
 
-		#expect(harness.source == "| A |\n|---|\n\nTail")
+		#expect(harness.source == expected)
 		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
 		let liveVisible = EditBridgeFuzzTests.normalizedVisibleText(
 			try await harness.domVisibleText())
