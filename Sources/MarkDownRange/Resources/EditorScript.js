@@ -167,6 +167,9 @@
     }
     return el && el.closest ? el.closest('[data-s]') : null;
   }
+  function isSyntheticCaretHolder(span) {
+    return !!(span && textLength(span) === 0 && span.querySelector('br'));
+  }
   function firstTextIn(n) {
     if (n.nodeType === 3) return n;
     for (var i = 0; i < n.childNodes.length; i++) { var t = firstTextIn(n.childNodes[i]); if (t) return t; }
@@ -1218,7 +1221,12 @@
       // the host retains these delimiters for a non-cross-run replacement.
       var ownsInlineRun = replacementSyntaxStart.length > 0 ||
         replacementSyntaxEnd.length > 0;
-      if (crossRun || ownsInlineRun ||
+      // The first character typed into a synthetic empty caret home can alter
+      // the surrounding block parse. In particular, a holder before stripped
+      // leading whitespace is a separate live <p>, but adding text before that
+      // whitespace makes it part of the following source paragraph. Re-render
+      // this first insertion; subsequent characters use the normal fast path.
+      if (crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
         var replacementBlockPrefixes = selected
           ? selectedBlockPrefixes(range) : [];

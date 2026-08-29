@@ -116,6 +116,25 @@ struct EditBridgePrefixedBlockStartTests {
 		try await assertHealthy(harness)
 	}
 
+	@Test func typingIntoHiddenLeadingWhitespaceRefreshesItsParagraph() async throws {
+		let source = "Before\n\n   ** zwo**\n\nAfter"
+		let caret = (source as NSString).range(of: "   ** zwo**").location
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(caret))",
+			"document.execCommand('insertText', false, 'a')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Before\n\na   ** zwo**\n\nAfter")
+
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let liveText = EditBridgeFuzzTests.normalizedVisibleText(try await harness.domVisibleText())
+		let freshText = EditBridgeFuzzTests.normalizedVisibleText(try await fresh.domVisibleText())
+		#expect(liveText == freshText)
+		try await assertHealthy(harness)
+	}
+
 	private func assertHealthy(_ harness: CoordinatorBridgeHarness) async throws {
 		try await harness.waitQuiescent()
 		#expect(harness.coordinator.resyncCount == 0)

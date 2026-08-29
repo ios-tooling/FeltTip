@@ -75,6 +75,11 @@ import Testing
 		// And typing must work immediately afterwards.
 		try await harness.type("Z")
 		try await harness.waitForSourceEdits(2)
+		// The split leaves the caret before a stripped leading space. Its first
+		// character now takes the structural route so the live DOM joins that
+		// text to the following paragraph exactly as a fresh Markdown parse does.
+		try await harness.waitQuiescent()
+		#expect(harness.source.contains("Paragraph 400\n\nZ with enough text"))
 		#expect(harness.coordinator.hardRejections == 0)
 		#expect(try await harness.stampMismatches() == [])
 	}
