@@ -151,7 +151,9 @@ private let editBridgeTableMoveSeeds: [UInt64] = {
 				]
 			}
 			let encoded = String(data: try! JSONEncoder().encode(replacement), encoding: .utf8)!
-			commands.append("document.execCommand('insertText', false, \(encoded))")
+			commands.append(replacement.isEmpty
+				? "document.execCommand('delete')"
+				: "document.execCommand('insertText', false, \(encoded))")
 			try await harness.batch(commands)
 			edits += 1
 			try await harness.waitForSourceEdits(edits)
@@ -162,10 +164,16 @@ private let editBridgeTableMoveSeeds: [UInt64] = {
 			// changes how nearby Markdown delimiters parse. Do not choose the next
 			// random range until that frozen render has landed.
 			try await harness.waitQuiescent()
-			#expect(harness.coordinator.resyncCount == 0,
-				"selection seed \(seed) first resynced after \(opLog.last ?? "unknown operation")")
+			let resyncMessage =
+				"selection seed \(seed) first resynced after \(opLog.last ?? "unknown operation"); "
+				+ "\(harness.coordinator.lastResyncReason ?? "unknown recovery")"
+			#expect(
+				harness.coordinator.resyncCount == 0,
+				Comment(rawValue: resyncMessage))
 			if harness.coordinator.resyncCount > 0 {
-				print("selection resync incidents: \(harness.coordinator.bridgeIncidents)")
+				print(
+					"selection resync: \(harness.coordinator.lastResyncReason ?? "unknown"); "
+					+ "incidents: \(harness.coordinator.bridgeIncidents)")
 				break
 			}
 			if harness.source != expected, replacement.isEmpty {

@@ -1241,8 +1241,14 @@
     // substitutions may intentionally replace text while selection is collapsed.
     if (e.inputType === 'insertText') {
       var liveInsertionSelection = window.getSelection();
-      if (range.collapsed && liveInsertionSelection &&
-          liveInsertionSelection.rangeCount && liveInsertionSelection.isCollapsed) {
+      if (liveInsertionSelection && liveInsertionSelection.rangeCount &&
+          !liveInsertionSelection.isCollapsed) {
+        // An empty insertText used as a selection deletion can report a
+        // collapsed StaticRange even though WebKit removes the live selection.
+        // The live range is the operation the user actually requested.
+        range = liveInsertionSelection.getRangeAt(0);
+      } else if (range.collapsed && liveInsertionSelection &&
+                 liveInsertionSelection.rangeCount && liveInsertionSelection.isCollapsed) {
         var liveInsertionRange = liveInsertionSelection.getRangeAt(0);
         var targetInsertionPos = normalizePosition(
           range.startContainer, range.startOffset, true);
