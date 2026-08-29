@@ -102,6 +102,22 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func deletingFirstStyledCharacterThatRevealsWhitespaceRefreshesSyntax() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "m**é a 3**")
+		try await harness.batch([
+			"window.__mdPlaceCaret(4)",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "m** a 3**")
+		let visible = Self.compactVisible(try await harness.domVisibleText())
+		#expect(visible == "m** a 3**", "\(visible.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	private static func compactVisible(_ text: String) -> String {
 		text.trimmingCharacters(in: .whitespacesAndNewlines)
 	}

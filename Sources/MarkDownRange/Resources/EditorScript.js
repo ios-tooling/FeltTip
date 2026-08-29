@@ -886,6 +886,35 @@
     }
     return tags;
   }
+  // Unlike ownership metadata above, syntax invalidation cares whether an edit
+  // merely TOUCHES a formatted run edge. Deleting the first character of
+  // `**é a**`, for example, leaves `** a**`: the delimiters become literal even
+  // though the deletion did not own the whole strong element. That operation
+  // must re-render instead of retaining the old DOM styling.
+  function touchesInlineSyntaxBoundary(range) {
+    var positions = [
+      { node: range.startContainer, offset: range.startOffset },
+      { node: range.endContainer, offset: range.endOffset }
+    ];
+    for (var i = 0; i < positions.length; i++) {
+      var position = positions[i];
+      var element = position.node.nodeType === 1
+        ? position.node : position.node.parentElement;
+      while (element && element !== document.body) {
+        var tag = element.tagName ? element.tagName.toLowerCase() : '';
+        var isInlineCode = tag === 'code' && !element.closest('pre');
+        if (tag === 'strong' || tag === 'em' || tag === 'u' || tag === 'del' ||
+            tag === 'mark' || tag === 'sup' || tag === 'sub' ||
+            isInlineCode || tag === 'a') {
+          var relative = textOffsetWithin(
+            element, position.node, position.offset);
+          if (relative === 0 || relative === textLength(element)) return true;
+        }
+        element = element.parentElement;
+      }
+    }
+    return false;
+  }
   // A native single-run mutation is only visually complete while it cannot
   // change how Markdown parses that run. Literal delimiter characters can
   // become formatting after an insertion (`b**` → `b*a*`), and whitespace at
@@ -895,8 +924,7 @@
   function needsStructuralInlineRefresh(range, replacement, before, after) {
     var nearby = before.slice(-4) + replacement + after.slice(0, 4);
     if (/[*_~`\[\]<>\\]/.test(nearby)) return true;
-    var atSyntaxBoundary = selectedSyntaxBoundaries(range, true).length ||
-      selectedSyntaxBoundaries(range, false).length;
+    var atSyntaxBoundary = touchesInlineSyntaxBoundary(range);
     return !!atSyntaxBoundary && (replacement === '' || /\s/.test(replacement));
   }
   function selectedBlockPrefixes(range) {
