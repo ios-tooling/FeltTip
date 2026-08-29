@@ -348,6 +348,30 @@ import Testing
 		try await assertHealthy(harness)
 	}
 
+	@Test func unicodeTypingBurstAfterCrossRunReplacementKeepsUTF16CaretExact() async throws {
+		let source = "Before **Alpha** and _Beta_ after Tail"
+		let start = (source as NSString).range(of: "Alpha").location
+		let beta = (source as NSString).range(of: "Beta")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(start), \(beta.upperBound - start))",
+			"document.execCommand('insertText', false, 'X')",
+			"document.execCommand('insertText', false, '😀')",
+			"document.execCommand('insertText', false, 'e\\u0301')",
+		])
+
+		try await harness.waitForSourceEdits(2)
+		let expectedPrefix = "Before X😀e\u{301}"
+		#expect(harness.source == expectedPrefix + " after Tail")
+		#expect(harness.lastCaretHint == (expectedPrefix as NSString).length)
+		try await assertHealthy(harness)
+
+		try await harness.type("!", at: (harness.source as NSString).range(of: "Tail").upperBound)
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source.hasSuffix("Tail!"))
+		try await assertHealthy(harness)
+	}
+
 	@Test func partialStyledSelectionsNeverConsumeAnUnselectedDelimiter() async throws {
 		let cases = [
 			(selected: "Al", replacement: "X", expected: "Before **Xpha** after"),
