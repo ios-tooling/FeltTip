@@ -468,7 +468,13 @@ extension MarkdownWebView {
 				return "\(selection.location), \(selection.length), null, null, false, null"
 			}
 			let source = (currentSource ?? parent.text) as NSString
-			let offset = min(max(0, selection.location), source.length)
+			var offset = min(max(0, selection.location), source.length)
+			if offset < source.length {
+				let composed = source.rangeOfComposedCharacterSequence(at: offset)
+				if composed.location < offset {
+					offset = composed.location
+				}
+			}
 			var lineStart = offset
 			while lineStart > 0 {
 				let character = source.character(at: lineStart - 1)
