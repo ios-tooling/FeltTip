@@ -354,6 +354,44 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func fullNavigationRestoreForwardsTheEmptyWrapperCaretMetadata() async throws {
+		let formatted = "<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Tail")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 3, token: 702))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+
+		try await harness.waitUntil("full-navigation empty-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.anchorNode) return 'missing'
+				  var element = selection.anchorNode.nodeType === 1
+				    ? selection.anchorNode : selection.anchorNode.parentElement
+				  var home = element.closest('[data-md-inline-caret-source-neutral]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "3"
+		}
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "<u>X</u>Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func selectAllCutAfterAnIndentedSoftLineDeletionRoundTripsWithoutCopyingTheCaretHome() async throws {
 		let expectedSource = "Term\n  : Definition\n\nTail"
 		let harness = try await CoordinatorBridgeHarness(
