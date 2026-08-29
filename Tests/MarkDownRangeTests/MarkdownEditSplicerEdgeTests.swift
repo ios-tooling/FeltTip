@@ -224,6 +224,18 @@ import Testing
 		#expect(applied(outcome)?.1 == NSRange(location: 8, length: 0))
 	}
 
+	@Test func replacementInsideOneStyledRunPreservesItsFormatting() {
+		let source = "Before **Alpha** after"
+		let outcome = MarkdownEditSplicer.apply(
+			edit(
+				9, 14, text: "X", expected: "Alpha", caret: 10,
+				selected: true,
+				syntaxStart: ["strong"], syntaxEnd: ["strong"]),
+			to: source)
+		#expect(applied(outcome)?.0 == "Before **X** after")
+		#expect(applied(outcome)?.1 == NSRange(location: 10, length: 0))
+	}
+
 	@Test func cutVerifiesNestedSyntaxIndependentOfNormalizedDOMTagOrder() {
 		for item in [
 			(source: "~~**Alpha**~~ Tail", start: 4, tags: ["del", "strong"]),

@@ -814,11 +814,11 @@
       return live.toString();
     } catch (e) { return ''; }
   }
-  // Hidden Markdown delimiters are outside stamped text runs. When Cut owns
-  // the whole visible contents of an inline element, report which syntax
-  // boundaries were selected so the source splice can remove the delimiters
-  // too. Otherwise a successful Cut leaves `****`, `[](url)`, or one
-  // unbalanced half of a marker in the document.
+  // Hidden Markdown delimiters are outside stamped text runs. When a real
+  // selection owns the whole visible contents of an inline element, report
+  // which syntax boundaries were selected. Deletion consumes them; nonempty
+  // replacement consumes incompatible endpoints only when it crosses runs,
+  // while replacement inside one styled run retains that run's formatting.
   function selectedSyntaxBoundaries(range, atStart) {
     var node = atStart ? range.startContainer : range.endContainer;
     var offset = atStart ? range.startOffset : range.endOffset;
@@ -831,8 +831,19 @@
           tag === 'mark' || tag === 'sup' || tag === 'sub' ||
           isInlineCode || tag === 'a') {
         var relative = textOffsetWithin(element, node, offset);
-        if (relative != null &&
-            (atStart ? relative === 0 : relative === textLength(element))) {
+        var oppositeNode = atStart ? range.endContainer : range.startContainer;
+        var oppositeOffset = atStart ? range.endOffset : range.startOffset;
+        var opposite = textOffsetWithin(element, oppositeNode, oppositeOffset);
+        var ownsEndpoint = relative != null &&
+          (atStart ? relative === 0 : relative === textLength(element));
+        // Reaching one edge is not enough while the other endpoint remains
+        // inside this same inline element: replacing a prefix of **Alpha**
+        // must keep both `**` delimiters around the unselected suffix. The
+        // boundary is owned only when the selection exits the element or owns
+        // its complete visible contents.
+        var ownsOppositeEdge = opposite != null &&
+          (atStart ? opposite === textLength(element) : opposite === 0);
+        if (ownsEndpoint && (range.collapsed || opposite == null || ownsOppositeEdge)) {
           tags.push(tag);
         }
       }
@@ -1068,9 +1079,22 @@
       if (data == null) { e.preventDefault(); return; }
       data = plain(data);
       if (crossRun || needsStructuralInlineRefresh(range, data, before, after)) {
+        var replacementSyntaxStart = selected
+          ? selectedSyntaxBoundaries(range, true) : [];
+        var replacementSyntaxEnd = selected
+          ? selectedSyntaxBoundaries(range, false) : [];
+        var replacementBlockPrefixes = selected
+          ? selectedBlockPrefixes(range) : [];
         e.preventDefault();
         freeze();
-        post({ start: start, end: end, text: data, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, caret: start + data.length, rev: stampRev, seq: seq++ });
+        post({ start: start, end: end, text: data, expected: expected,
+               crossRun: crossRun, selected: selected,
+               endAtBlockStart: endAtBlockStart,
+               syntaxStart: replacementSyntaxStart,
+               syntaxEnd: replacementSyntaxEnd,
+               blockPrefixes: replacementBlockPrefixes,
+               before: before, after: after, caret: start + data.length,
+               rev: stampRev, seq: seq++ });
         return;
       }
       queueFastEdit({ start: start, end: end, text: data, expected: expected, before: before, after: after },

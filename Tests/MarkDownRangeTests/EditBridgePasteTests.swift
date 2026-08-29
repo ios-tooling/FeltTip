@@ -361,17 +361,17 @@ import Testing
 		}
 	}
 
-	@Test func pastingOverAWholePrefixedBlockConsumesItsHiddenPrefix() async throws {
+	@Test func pastingOverAWholePrefixedBlockPreservesItsHiddenPrefix() async throws {
 		let cases = [
-			"# Alpha\n\nTail",
-			"> Alpha\n\nTail",
-			"- Alpha\n\nTail",
-			"1. Alpha\n\nTail",
-			"- [ ] Alpha\n\nTail",
+			(source: "# Alpha\n\nTail", expected: "# X\n\nTail", caret: 3),
+			(source: "> Alpha\n\nTail", expected: "> X\n\nTail", caret: 3),
+			(source: "- Alpha\n\nTail", expected: "- X\n\nTail", caret: 3),
+			(source: "1. Alpha\n\nTail", expected: "1. X\n\nTail", caret: 4),
+			(source: "- [ ] Alpha\n\nTail", expected: "- [ ] X\n\nTail", caret: 7),
 		]
-		for source in cases {
-			let alpha = (source as NSString).range(of: "Alpha")
-			let harness = try await CoordinatorBridgeHarness(source: source)
+		for item in cases {
+			let alpha = (item.source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
 			try await select(harness, start: alpha.location, length: alpha.length)
 
 			try await withPasteboard("X") {
@@ -379,8 +379,34 @@ import Testing
 				try await harness.waitForSourceEdits(1)
 			}
 
-			#expect(harness.source == "X\n\nTail", "source=\(source)")
-			#expect(harness.lastCaretHint == 1)
+			#expect(harness.source == item.expected, "source=\(item.source)")
+			#expect(harness.lastCaretHint == item.caret)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test func pastingOverOneStyledRunPreservesItsFormatting() async throws {
+		let cases = [
+			(source: "**Alpha** Tail", expected: "**X** Tail", caret: 3),
+			(source: "_Alpha_ Tail", expected: "_X_ Tail", caret: 2),
+			(source: "[Alpha](https://example.com) Tail", expected: "[X](https://example.com) Tail", caret: 2),
+			(source: "[**Alpha**](https://example.com) Tail", expected: "[**X**](https://example.com) Tail", caret: 4),
+		]
+		for item in cases {
+			let alpha = (item.source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
+			try await select(harness, start: alpha.location, length: alpha.length)
+
+			try await withPasteboard("X") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == item.expected, "source=\(item.source)")
+			#expect(harness.lastCaretHint == item.caret)
 			try await harness.waitQuiescent()
 			#expect(try await harness.stampMismatches() == [])
 			#expect(harness.coordinator.resyncCount == 0)

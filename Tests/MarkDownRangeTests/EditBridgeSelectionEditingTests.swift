@@ -305,6 +305,55 @@ import Testing
 		}
 	}
 
+	@Test func typingOverStyledBoundaryEndpointsConsumesOwnedHiddenSyntax() async throws {
+		let source = "Before **Alpha** and _Beta_ after"
+		let start = (source as NSString).range(of: "Alpha").location
+		let beta = (source as NSString).range(of: "Beta")
+		for direction in Direction.allCases {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			var commands = selectionCommands(
+				start: start,
+				length: beta.upperBound - start,
+				direction: direction)
+			commands.append("document.execCommand('insertText', false, 'X')")
+			try await harness.batch(commands)
+			try await harness.waitForSourceEdits(1)
+
+			#expect(harness.source == "Before X after")
+			#expect(harness.lastCaretHint == ("Before X" as NSString).length)
+			try await assertHealthy(harness)
+			try await harness.type("!")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "Before X! after")
+			try await assertHealthy(harness)
+		}
+	}
+
+	@Test func partialStyledSelectionsNeverConsumeAnUnselectedDelimiter() async throws {
+		let cases = [
+			(selected: "Al", replacement: "X", expected: "Before **Xpha** after"),
+			(selected: "ha", replacement: "", expected: "Before **Alp** after"),
+		]
+		let source = "Before **Alpha** after"
+		for item in cases {
+			let range = (source as NSString).range(of: item.selected)
+			for direction in Direction.allCases {
+				let harness = try await CoordinatorBridgeHarness(source: source)
+				var commands = selectionCommands(
+					start: range.location,
+					length: range.length,
+					direction: direction)
+				commands.append(
+					"document.execCommand('insertText', false, \(json(item.replacement)))")
+				try await harness.batch(commands)
+				try await harness.waitForSourceEdits(1)
+
+				#expect(harness.source == item.expected)
+				try await assertHealthy(harness)
+			}
+		}
+	}
+
 	@Test func deletingSelectionsWorksInBothDirectionsAcrossRunsAndBlocks() async throws {
 		let cases = [
 			("Zero alpha bravo omega", "alpha bravo"),

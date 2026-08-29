@@ -256,9 +256,20 @@ enum MarkdownEditSplicer {
 			// down and keeps the insertion point with its first visible character.
 			caret = lineStart + (replacement as NSString).length
 		}
-		if edit.selected,
-		   !edit.syntaxStart.isEmpty || !edit.syntaxEnd.isEmpty || !edit.blockPrefixes.isEmpty {
-			guard let expanded = syntaxExpandedDeletionRange(edit, range: range, in: text) else {
+		let replacementOwnsInlineSyntax = edit.selected && (replacement.isEmpty || edit.crossRun)
+		let replacementOwnsBlockPrefix = edit.selected && replacement.isEmpty
+		let replacementSyntaxStart = replacementOwnsInlineSyntax ? edit.syntaxStart : []
+		let replacementSyntaxEnd = replacementOwnsInlineSyntax ? edit.syntaxEnd : []
+		let replacementBlockPrefixes = replacementOwnsBlockPrefix ? edit.blockPrefixes : []
+		if !replacementSyntaxStart.isEmpty || !replacementSyntaxEnd.isEmpty ||
+		   !replacementBlockPrefixes.isEmpty {
+			guard let expanded = syntaxExpandedReplacementRange(
+				range,
+				syntaxStart: replacementSyntaxStart,
+				syntaxEnd: replacementSyntaxEnd,
+				blockPrefixes: replacementBlockPrefixes,
+				in: text
+			) else {
 				return .rejected("replacement syntax boundaries do not match source")
 			}
 			spliceRange = expanded
@@ -333,17 +344,19 @@ enum MarkdownEditSplicer {
 		return text.substring(with: NSRange(location: lineStart, length: end - lineStart))
 	}
 
-	private static func syntaxExpandedDeletionRange(
-		_ edit: Edit,
-		range: NSRange,
+	private static func syntaxExpandedReplacementRange(
+		_ range: NSRange,
+		syntaxStart: [String],
+		syntaxEnd: [String],
+		blockPrefixes: [String],
 		in text: NSString
 	) -> NSRange? {
 		guard var expanded = syntaxExpandedRange(
-			range, syntaxStart: edit.syntaxStart,
-			syntaxEnd: edit.syntaxEnd, in: text) else { return nil }
+			range, syntaxStart: syntaxStart,
+			syntaxEnd: syntaxEnd, in: text) else { return nil }
 		var start = expanded.location
 		let end = expanded.upperBound
-		for prefix in edit.blockPrefixes {
+		for prefix in blockPrefixes {
 			switch prefix {
 			case "heading":
 				guard consumeHeadingPrefixBefore(cursor: &start, in: text) else { return nil }
