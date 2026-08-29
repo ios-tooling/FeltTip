@@ -1053,7 +1053,7 @@
     if (offset == null) return false;
     var localBefore = before.slice(Math.max(0, before.length - offset));
     var prefix = localBefore + replacement + after.slice(0, 12);
-    return /(?:^|\n)(?:#{1,6}[ \t]|>[ \t]?|:(?:[ \t]|$)|(?:[-+*]|[0-9]+[.)])[ \t]+|```|~~~)/.test(prefix);
+    return /(?:^|\n)(?:(?:-[ \t]*){3,}|#{1,6}[ \t]|>[ \t]?|:(?:[ \t]|$)|(?:[-+*]|[0-9]+[.)])[ \t]+|```|~~~)/.test(prefix);
   }
   function selectedBlockPrefixes(range) {
     var node = range.startContainer;
