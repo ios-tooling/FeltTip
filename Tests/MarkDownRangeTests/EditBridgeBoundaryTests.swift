@@ -360,6 +360,11 @@ import Testing
 	@Test(arguments: [
 		(command: "delete", expected: "Term\n : Definition\n\nTail"),
 		(command: "forwardDelete", expected: "Term\n   Definition\n\nTail"),
+		(command: "insertParagraph", expected: "Term\n  \n\n: Definition\n\nTail"),
+		(command: "insertLineBreak", expected: "Term\n  " + "\\\n" + ": Definition\n\nTail"),
+		(command: "bold", expected: "Term\n  ****: Definition\n\nTail"),
+		(command: "italic", expected: "Term\n  **: Definition\n\nTail"),
+		(command: "strikeThrough", expected: "Term\n  ~~~~: Definition\n\nTail"),
 	])
 	func deletionAfterAnIndentedSoftLineRestoreUsesTheSourceCaret(
 		command: String,

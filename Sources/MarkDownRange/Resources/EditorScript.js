@@ -1317,6 +1317,46 @@
         return;
       }
     }
+    if ((e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') &&
+        inlineHome) {
+      var inlineBreakOffset = parseInt(
+        inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      if (Number.isFinite(inlineBreakOffset)) {
+        e.preventDefault();
+        if (e.inputType === 'insertLineBreak' && inlineHome.closest &&
+            inlineHome.closest('td, th')) return;
+        var inlineBreak = e.inputType === 'insertParagraph' ? '\n\n' : '\\\n';
+        freeze();
+        post({ start: inlineBreakOffset, end: inlineBreakOffset,
+               text: inlineBreak, expected: '', crossRun: false,
+               selected: false, endAtBlockStart: false,
+               collapsedSyntaxEnd: [], before: '', after: '',
+               caret: inlineBreakOffset + inlineBreak.length,
+               listBreak: false,
+               blockStartBreak: e.inputType === 'insertParagraph' ? false : undefined,
+               hardBreak: e.inputType === 'insertLineBreak' ? true : undefined,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
+    if ((e.inputType === 'formatBold' || e.inputType === 'formatItalic' ||
+         e.inputType === 'formatStrikeThrough') && inlineHome) {
+      var inlineFormatOffset = parseInt(
+        inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      if (Number.isFinite(inlineFormatOffset)) {
+        var inlineFormatMarker = e.inputType === 'formatBold' ? '**'
+          : e.inputType === 'formatItalic' ? '*' : '~~';
+        e.preventDefault();
+        freeze();
+        post({ op: 'wrap', marker: inlineFormatMarker,
+               start: inlineFormatOffset, end: inlineFormatOffset,
+               expected: '', crossRun: false, selected: false,
+               endAtBlockStart: false, before: '', after: '',
+               caret: inlineFormatOffset + 2 * inlineFormatMarker.length,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
     var ranges = e.getTargetRanges();
     var range = ranges && ranges.length ? ranges[0] : null;
     if (!range && (e.inputType === 'deleteByCut' || e.inputType === 'insertFromPaste' ||
