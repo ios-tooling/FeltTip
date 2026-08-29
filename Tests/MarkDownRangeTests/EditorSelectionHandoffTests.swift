@@ -250,6 +250,32 @@ struct EditorSelectionHandoffTests {
 		#expect((textView.string as NSString).substring(with: selected) == "😀 cafe\u{301} 👩‍💻")
 	}
 
+	@Test func styledSelectionTargetExpandsEndpointsToWholeGraphemes() async throws {
+		let source = "ae\u{301} 👩‍💻z"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		// Starts on the combining accent and ends between the ZWJ and laptop.
+		let partial = NSRange(location: 2, length: 5)
+
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(MarkdownSelectionTarget(range: partial, token: 1))
+		.onSourceEdit { [weak harness] newText, _ in
+			harness?.recordExternalEdit(newText)
+		}
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+		try await harness.waitUntil("composed styled selection target") {
+			try await harness.evaluate("window.getSelection().toString()") == "e\u{301} 👩‍💻"
+		}
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "aXz")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	private func findTextView(in view: NSView) -> NSTextView? {
 		if let textView = view as? NSTextView { return textView }
 		for child in view.subviews {

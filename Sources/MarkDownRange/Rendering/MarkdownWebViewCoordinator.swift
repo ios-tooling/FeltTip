@@ -464,17 +464,12 @@ extension MarkdownWebView {
 		/// syntax from one in a genuinely empty paragraph. The former snaps to a
 		/// real run on this line; only the latter synthesizes an empty caret home.
 		private func caretPlacementArguments(_ selection: NSRange) -> String {
+			let source = (currentSource ?? parent.text) as NSString
+			let selection = composedSelection(selection, in: source)
 			guard selection.length == 0 else {
 				return "\(selection.location), \(selection.length), null, null, false, null"
 			}
-			let source = (currentSource ?? parent.text) as NSString
-			var offset = min(max(0, selection.location), source.length)
-			if offset < source.length {
-				let composed = source.rangeOfComposedCharacterSequence(at: offset)
-				if composed.location < offset {
-					offset = composed.location
-				}
-			}
+			let offset = selection.location
 			var lineStart = offset
 			while lineStart > 0 {
 				let character = source.character(at: lineStart - 1)
@@ -498,6 +493,28 @@ extension MarkdownWebView {
 			let visualBlankOffset = visualBlankOffsetBeforeCaret(in: source, at: offset)
 				.map(String.init) ?? "null"
 			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset)"
+		}
+
+		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {
+			var start = min(max(0, selection.location), source.length)
+			let length = min(max(0, selection.length), source.length - start)
+			var end = start + length
+			if start < source.length {
+				let composed = source.rangeOfComposedCharacterSequence(at: start)
+				if composed.location < start {
+					start = composed.location
+				}
+			}
+			if length == 0 {
+				return NSRange(location: start, length: 0)
+			}
+			if end > start, end < source.length {
+				let composed = source.rangeOfComposedCharacterSequence(at: end - 1)
+				if composed.upperBound > end {
+					end = composed.upperBound
+				}
+			}
+			return NSRange(location: start, length: end - start)
 		}
 
 		/// Markdown collapses blank source lines, but Return at a block start has
@@ -772,10 +789,7 @@ extension MarkdownWebView {
 			guard let target = parent.selectionTarget,
 			      target.token != lastSelectionTargetToken else { return }
 			lastSelectionTargetToken = target.token
-			let sourceLength = (parent.text as NSString).length
-			let location = min(max(0, target.range.location), sourceLength)
-			let length = min(max(0, target.range.length), sourceLength - location)
-			let selection = NSRange(location: location, length: length)
+			let selection = composedSelection(target.range, in: parent.text as NSString)
 			if currentSource == parent.text {
 				placeCaretAfterUpdate(selection, into: webView)
 			} else {
