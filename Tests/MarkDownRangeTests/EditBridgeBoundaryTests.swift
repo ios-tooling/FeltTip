@@ -171,6 +171,38 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func wordDeletionThatActivatesAClosingHeadingMarkerRerenders() async throws {
+		let source = "#  Bet# \n\nTail"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			window.__mdPlaceCaret(3, 3)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteWordForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteWordForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "#  # \n\nTail")
+		let visible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await harness.domVisibleText())
+		#expect(visible == "Tail")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func typingBeforeHiddenDelimiterRefreshesNewlyLiteralTail() async throws {
 		let source = "xt b3e**ta wa**o\"**rds *\"*** g3"
 		let harness = try await CoordinatorBridgeHarness(source: source)

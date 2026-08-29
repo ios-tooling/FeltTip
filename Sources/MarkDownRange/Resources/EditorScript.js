@@ -1002,7 +1002,7 @@
   // DOM with yesterday's interpretation.
   function needsStructuralInlineRefresh(range, replacement, before, after) {
     var nearby = before.slice(-4) + replacement + after.slice(0, 4);
-    if (/[*_~`\[\]<>\\]/.test(nearby)) return true;
+    if (/[*_~`#\[\]<>\\]/.test(nearby)) return true;
     var atSyntaxBoundary = touchesInlineSyntaxBoundary(range);
     // WebKit may resolve a caret at the first text position of an inline
     // wrapper to the outside DOM affinity when it performs the native mutation.
