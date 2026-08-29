@@ -520,7 +520,8 @@
   }
   function placeInlineCaretHomeBefore(span, offset, previousSourceCharacter, sourceNeutral,
                                       neutralPreviousOffset, neutralPreviousCharacter,
-                                      neutralNextOffset, neutralNextCharacter) {
+                                      neutralNextOffset, neutralNextCharacter,
+                                      neutralWrapperSource) {
     if (!span || !span.parentNode) return false;
     var inlineHolder = document.createElement('span');
     inlineHolder.setAttribute('data-s', String(offset - 1));
@@ -533,6 +534,7 @@
     inlineHolder.__mdNeutralPreviousCharacter = neutralPreviousCharacter || '';
     inlineHolder.__mdNeutralNextOffset = neutralNextOffset;
     inlineHolder.__mdNeutralNextCharacter = neutralNextCharacter || '';
+    inlineHolder.__mdNeutralWrapperSource = neutralWrapperSource || '';
     var inlineCaretText = document.createTextNode('\u200B');
     inlineHolder.appendChild(inlineCaretText);
     var insertionReference = span;
@@ -550,7 +552,7 @@
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource) {
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
@@ -580,7 +582,7 @@
           previousSibling.nodeType === 3 && previousSibling.nodeValue.length &&
           start.span.parentNode) {
         placeInlineCaretHomeBefore(
-          start.span, offset, previousSourceCharacter, false, null, '', null, '');
+          start.span, offset, previousSourceCharacter, false, null, '', null, '', '');
         return;
       }
       placeCaretIn(start.node, start.offset, start.span);
@@ -614,7 +616,8 @@
           placeInlineCaretHomeBefore(
             next, offset, '', true,
             neutralPreviousOffset, neutralPreviousCharacter,
-            neutralNextOffset, neutralNextCharacter)) return;
+            neutralNextOffset, neutralNextCharacter,
+            neutralWrapperSource)) return;
       // With runs on both sides, the caret can intentionally sit inside an
       // empty inline construct (`Alpha<u>|</u> Tail`). Preserve the existing
       // synthetic caret home for that case so typing remains formatted.
@@ -1463,16 +1466,24 @@
       var inlineBreakOffset = parseInt(
         inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
       if (Number.isFinite(inlineBreakOffset)) {
+        var neutralWrapper = inlineHome.__mdNeutralWrapperSource || '';
+        var neutralBreak = inlineHome.hasAttribute('data-md-inline-caret-source-neutral') &&
+          neutralWrapper.length > 0;
         e.preventDefault();
         if (e.inputType === 'insertLineBreak' && inlineHome.closest &&
             inlineHome.closest('td, th')) return;
         var inlineBreak = e.inputType === 'insertParagraph' ? '\n\n' : '\\\n';
+        var inlineBreakStart = neutralBreak
+          ? inlineBreakOffset - 3 : inlineBreakOffset;
+        var inlineBreakEnd = neutralBreak
+          ? inlineBreakOffset + 4 : inlineBreakOffset;
         freeze();
-        post({ start: inlineBreakOffset, end: inlineBreakOffset,
-               text: inlineBreak, expected: '', crossRun: false,
+        post({ start: inlineBreakStart, end: inlineBreakEnd,
+               text: inlineBreak, expected: neutralBreak ? neutralWrapper : '',
+               crossRun: false,
                selected: false, endAtBlockStart: false,
                collapsedSyntaxEnd: [], before: '', after: '',
-               caret: inlineBreakOffset + inlineBreak.length,
+               caret: inlineBreakStart + inlineBreak.length,
                listBreak: false,
                blockStartBreak: e.inputType === 'insertParagraph' ? false : undefined,
                hardBreak: e.inputType === 'insertLineBreak' ? true : undefined,

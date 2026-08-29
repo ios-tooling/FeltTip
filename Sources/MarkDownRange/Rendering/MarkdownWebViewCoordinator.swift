@@ -508,7 +508,11 @@ extension MarkdownWebView {
 			var neutralPreviousCharacterJSON = "\"\""
 			var neutralNextOffset = "null"
 			var neutralNextCharacterJSON = "\"\""
+			var neutralWrapperJSON = "\"\""
 			if sourceNeutralCaretHome {
+				neutralWrapperJSON = (try? JSONEncoder().encode(
+					source.substring(with: NSRange(location: offset - 3, length: 7))))
+					.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				let wrapperStart = offset - 3
 				if wrapperStart > 0 {
 					let range = source.rangeOfComposedCharacterSequence(at: wrapperStart - 1)
@@ -526,7 +530,7 @@ extension MarkdownWebView {
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON)"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {

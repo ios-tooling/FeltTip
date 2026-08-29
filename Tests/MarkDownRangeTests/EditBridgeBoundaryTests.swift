@@ -595,6 +595,63 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test(arguments: [
+		(command: "bold", formatted: "<u>**X**</u>"),
+		(command: "italic", formatted: "<u>*X*</u>"),
+		(command: "strikeThrough", formatted: "<u>~~X~~</u>"),
+	])
+	func nativeFormattingInsideAnEmptyUnderlineCaretNestsAndRemainsTypable(
+		command: String,
+		formatted: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Alpha\(formatted) Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "insertParagraph", expected: "Alpha\n\nX Tail"),
+		(command: "insertLineBreak", expected: "Alpha\\\nXTail"),
+	])
+	func lineBreaksFromAnEmptyUnderlineCaretExitTheEmptyWrapperCleanly(
+		command: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func deletionThatActivatesAThematicBreakRerenders() async throws {
 		let harness = try await CoordinatorBridgeHarness(
 			source: "Term\n--x-\n\nTail")
