@@ -111,6 +111,26 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func malformedTableColumnCountIsRejectedAndEditingRemainsUsable() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: Self.plainTable)
+		let rev = harness.coordinator.currentRev
+		try await harness.run("""
+			window.webkit.messageHandlers.mdedit.postMessage({
+				type: 'appendTableRow', at: 46, columns: 100000,
+				rev: \(rev), seq: 999
+			})
+			""")
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(harness.source == Self.plainTable)
+		#expect(harness.sourceEditCount == 0)
+
+		try await harness.type("X", at: 47)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| BXob | 41 |")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func backspaceAtCellStartNeverEatsPipes() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: Self.table)
 		try await harness.batch([

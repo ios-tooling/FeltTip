@@ -400,6 +400,16 @@ extension MarkdownWebView.Coordinator {
 		let tail = NSRange(location: at, length: ns.length - at)
 		let newlineAt = ns.range(of: "\n", range: tail).location
 		let lineEnd = newlineAt == NSNotFound ? ns.length : newlineAt
+		let precedingNewline = ns.range(
+			of: "\n", options: .backwards,
+			range: NSRange(location: 0, length: at)).location
+		let lineStart = precedingNewline == NSNotFound ? 0 : precedingNewline + 1
+		// `columns` crosses the page boundary and feeds String(repeating:).
+		// Keep the requested allocation proportional to the actual source row:
+		// even the most compact Markdown row needs at least one source code unit
+		// per cell. A corrupt/stale page message must not be able to manufacture
+		// an arbitrarily large replacement from a tiny document.
+		guard columns <= lineEnd - lineStart else { thaw(); return }
 		let row = "\n|" + String(repeating: "   |", count: columns)
 		currentSource = ns.substring(to: lineEnd) + row + ns.substring(from: lineEnd)
 		currentRev += 1
