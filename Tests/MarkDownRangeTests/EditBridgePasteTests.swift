@@ -254,6 +254,43 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test(arguments: [
+		(direction: "backward", expected: "AlphP<u></u> Tail"),
+		(direction: "forward", expected: "Alpha<u></u>PTail"),
+	])
+	func pasteOverASelectionExtendedFromAnEmptyUnderlineCaretReplacesVisibleText(
+		direction: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func selectAllCutAfterAnIndentedSoftLineDeletionRoundTripsWithoutCopyingTheCaretHome() async throws {
 		let expectedSource = "Term\n  : Definition\n\nTail"
 		let harness = try await CoordinatorBridgeHarness(

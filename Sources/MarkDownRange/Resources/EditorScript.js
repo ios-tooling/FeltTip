@@ -555,6 +555,18 @@
     }
     return null;
   }
+  function currentInlineNavigationSelection() {
+    var navigation = inlineNavigationSelection;
+    var selection = window.getSelection();
+    if (!navigation || !selection || !selection.rangeCount || selection.isCollapsed) return null;
+    var liveRange = selection.getRangeAt(0);
+    var sameRange = liveRange.startContainer === navigation.range.startContainer &&
+      liveRange.startOffset === navigation.range.startOffset &&
+      liveRange.endContainer === navigation.range.endContainer &&
+      liveRange.endOffset === navigation.range.endOffset;
+    return sameRange && plain(selection.toString()) === navigation.expected
+      ? navigation : null;
+  }
   function rangeTextWithoutInlineCaretHome(range, inlineHome) {
     var value = rangeText(range);
     var marker = inlineHome && inlineHome.firstChild;
@@ -1356,6 +1368,22 @@
   // only that marked synthetic position here; every ordinary paste continues
   // through the native beforeinput route below.
   document.body.addEventListener('paste', function (e) {
+    var navigation = currentInlineNavigationSelection();
+    if (navigation && !frozen && !frozenInputReplayTimer) {
+      inlineNavigationSelection = null;
+      var navigationMatchStyle = nextPasteMatchesStyle;
+      nextPasteMatchesStyle = false;
+      freeze();
+      post({ op: 'paste', matchStyle: navigationMatchStyle, inCell: false,
+             start: navigation.start,
+             end: navigation.start + navigation.expected.length,
+             expected: navigation.expected, crossRun: false, selected: true,
+             endAtBlockStart: false, syntaxStart: [], syntaxEnd: [],
+             blockPrefixes: [], before: '', after: '',
+             rev: stampRev, seq: seq++ });
+      e.preventDefault();
+      return;
+    }
     var inlineHome = activeInlineCaretHome();
     if (!inlineHome || frozen || frozenInputReplayTimer) return;
     var matchStyle = nextPasteMatchesStyle;
@@ -1385,16 +1413,8 @@
   // syntax-boundary expansion, freeze, and caret restoration.
   document.body.addEventListener('cut', function (e) {
     var liveSelection = window.getSelection();
-    var navigation = inlineNavigationSelection;
-    var liveText = plain(liveSelection ? liveSelection.toString() : '');
-    var liveRange = liveSelection && liveSelection.rangeCount
-      ? liveSelection.getRangeAt(0) : null;
-    var sameNavigationRange = navigation && liveRange &&
-      liveRange.startContainer === navigation.range.startContainer &&
-      liveRange.startOffset === navigation.range.startOffset &&
-      liveRange.endContainer === navigation.range.endContainer &&
-      liveRange.endOffset === navigation.range.endOffset;
-    if (sameNavigationRange && liveText === navigation.expected && e.clipboardData) {
+    var navigation = currentInlineNavigationSelection();
+    if (navigation && e.clipboardData) {
       inlineNavigationSelection = null;
       e.clipboardData.setData('text/plain', navigation.expected);
       e.preventDefault();
