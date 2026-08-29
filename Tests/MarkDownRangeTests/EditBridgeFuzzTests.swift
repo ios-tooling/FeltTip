@@ -39,6 +39,14 @@ private let editBridgeChunkMoveSeeds: [UInt64] = {
 	return [9101, 9102, 9103]
 }()
 
+private let editBridgeSelectionSeeds: [UInt64] = {
+	if let value = ProcessInfo.processInfo.environment["MDR_SELECTION_FUZZ_SEED"],
+	   let seed = UInt64(value) {
+		return [seed]
+	}
+	return [101, 202, 303, 404, 505]
+}()
+
 private let editBridgeTableMoveSeeds: [UInt64] = {
 	if let value = ProcessInfo.processInfo.environment["MDR_TABLE_MOVE_SEED"],
 	   let seed = UInt64(value) {
@@ -110,7 +118,7 @@ private let editBridgeTableMoveSeeds: [UInt64] = {
 		#expect(live == rendered, "source and DOM diverged after \(script)\nlive:     \(live)\nrendered: \(rendered)")
 	}
 
-	@Test(arguments: [UInt64(101), 202, 303, 404, 505])
+	@Test(arguments: editBridgeSelectionSeeds)
 	func randomForwardAndBackwardSelectionReplacementsConverge(seed: UInt64) async throws {
 		var rng = SeededRNG(seed: seed)
 		let initial = Self.generateDocument(&rng)
