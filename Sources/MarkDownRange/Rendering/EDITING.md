@@ -155,6 +155,12 @@ Markdown-source flavor; another Marker editor prefers that flavor, preserving
 hidden syntax and block separators. External plain text remains the fallback.
 Inside a table cell newlines fold to spaces either way.
 
+A structural replacement freezes the old DOM until its source render and caret
+restore arrive. Native keyboard input may deliver additional plain text during
+that interval; the page buffers only those text events and replays them after
+the verified caret is live. Host-driven freezes never buffer, and a vetoed edit
+discards its buffer, so stale text cannot leak into a later selection.
+
 ## iOS
 
 The bridge is one implementation; the two platforms differ in what WebKit does

@@ -28,20 +28,37 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
-	@Test func typingWhileFrozenIsVetoedNotCorrupted() async throws {
+	@Test func typingWhileFrozenIsBufferedWithoutPrematureSourceEdits() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\nBeta")
 		harness.suppressRoundTrip = true
 		try await harness.batch([
 			"window.__mdPlaceCaret(5)",
 			"document.execCommand('insertParagraph')",
-			// Still in the same turn — the page is frozen now; these must be
-			// swallowed, not mapped against a source that changed shape.
+			// Still in the same turn — the page is frozen now. These are buffered,
+			// not mapped against a source that changed shape; with the round trip
+			// deliberately suppressed there is not yet a restored caret to replay.
 			"document.execCommand('insertText', false, 'X')",
 			"document.execCommand('insertText', false, 'Y')",
 		])
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "Alpha\n\n\n\nBeta")
-		#expect(harness.sourceEditCount == 1, "frozen page must veto further edits")
+		#expect(harness.sourceEditCount == 1, "frozen text must not edit before caret restoration")
+	}
+
+	@Test func vetoedStructuralEditDiscardsBufferedTyping() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\nBeta")
+		harness.suppressRoundTrip = true
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"document.execCommand('insertParagraph')",
+			"document.execCommand('insertText', false, 'X')",
+			"window.__mdUnfreeze(0)",
+			"window.__mdPlaceCaret(0)",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(harness.source == "Alpha\n\n\n\nBeta")
+		#expect(harness.sourceEditCount == 1, "vetoed buffer leaked into a later caret")
 	}
 
 	@Test func frozenTimeoutResyncsWhenTheReRenderNeverComes() async throws {

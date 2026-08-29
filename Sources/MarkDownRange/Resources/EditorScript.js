@@ -49,6 +49,10 @@
   // Monotonic message counter, for ordering diagnostics on the host side.
   var seq = 0;
   var nextPasteMatchesStyle = false;
+  // Native typing APIs can deliver the next character before a structural
+  // selection replacement has re-rendered and restored its caret. Preserve
+  // those plain-text events and replay them once the fresh caret is live.
+  var frozenTextBuffer = '';
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -67,6 +71,7 @@
     stampRev = rev;
     pendingEdits = [];
     frozen = null;
+    frozenTextBuffer = '';
     composing = null;
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
   };
@@ -83,6 +88,7 @@
   function freeze() {
     var token = seq;
     frozen = { token: token };
+    frozenTextBuffer = '';
     window.setTimeout(function () {
       if (frozen && frozen.token === token) {
         try { post({ type: 'frozenTimeout', token: token }); } catch (e) {}
@@ -93,7 +99,10 @@
   // page prevented the DOM mutation, so nothing is out of sync) — thaw so
   // typing continues; the vetoed keystroke is simply a no-op.
   window.__mdUnfreeze = function (token) {
-    if (frozen && frozen.token === token) { frozen = null; }
+    if (frozen && frozen.token === token) {
+      frozen = null;
+      frozenTextBuffer = '';
+    }
   };
   // The host has adopted newer source (for example from the raw split pane)
   // while this DOM still renders the previous revision. Block edits until the
@@ -102,6 +111,7 @@
   window.__mdBeginHostUpdate = function () {
     pendingEdits = [];
     composing = null;
+    frozenTextBuffer = '';
     frozen = { token: null, hostUpdate: true };
   };
   // State captured at compositionstart, reconciled at compositionend.
@@ -253,6 +263,16 @@
     installLinkOpenButtons();
     installListAddButtons();
   };
+  function replayFrozenTextAfterCaret() {
+    if (!frozenTextBuffer) return;
+    var buffered = frozenTextBuffer;
+    frozenTextBuffer = '';
+    // Leave the caret-placement call stack first. WebKit can reject a nested
+    // editing command while it is still finalizing the restored selection.
+    setTimeout(function () {
+      document.execCommand('insertText', false, buffered);
+    }, 0);
+  }
   function placeCaretIn(node, offset, anchor) {
     // Re-focus the editable body: a reload (e.g. after undo) clears DOM
     // focus, so without this the caret wouldn't blink and typing wouldn't
@@ -265,6 +285,7 @@
     r.setStart(node, offset); r.collapse(true);
     sel.removeAllRanges(); sel.addRange(r);
     anchor.scrollIntoView({ block: 'nearest' });
+    replayFrozenTextAfterCaret();
   }
   function blockOf(el) {
     return el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th') || el;
@@ -988,7 +1009,18 @@
     // Everything composition-adjacent is reconciled at compositionend by
     // diffing the whole run instead.
     if (composing || e.isComposing || e.inputType === 'insertCompositionText' || e.inputType === 'deleteCompositionText') return;
-    if (frozen) { e.preventDefault(); return; }
+    if (frozen) {
+      if (!frozen.hostUpdate &&
+          (e.inputType === 'insertText' || e.inputType === 'insertReplacementText')) {
+        var bufferedData = e.data;
+        if (bufferedData == null && e.dataTransfer) {
+          bufferedData = e.dataTransfer.getData('text/plain');
+        }
+        if (bufferedData != null) { frozenTextBuffer += plain(bufferedData); }
+      }
+      e.preventDefault();
+      return;
+    }
     var ranges = e.getTargetRanges();
     var range = ranges && ranges.length ? ranges[0] : null;
     if (!range && (e.inputType === 'deleteByCut' || e.inputType === 'insertFromPaste' ||

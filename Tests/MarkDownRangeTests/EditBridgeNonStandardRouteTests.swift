@@ -369,7 +369,7 @@ import Testing
 		try await assertHealthy(harness)
 	}
 
-	@Test func cutAndImmediateTypingCannotMapTheSecondCommandAgainstTheOldSelection() async throws {
+	@Test func cutAndImmediateTypingReplaysAgainstTheRestoredCaret() async throws {
 		let source = "Alpha **bold** beta\n\nTail"
 		let selected = "Alpha **bold** beta"
 		let range = (source as NSString).range(of: selected)
@@ -382,13 +382,13 @@ import Testing
 			document.body.dispatchEvent(cut)
 			document.execCommand('insertText', false, 'STALE')
 			""")
-		try await harness.waitForSourceEdits(1)
-		#expect(harness.source == "\n\nTail")
-		#expect(harness.sourceEditCount == 1)
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "STALE\n\nTail")
+		#expect(harness.sourceEditCount == 2)
 		try await assertHealthy(harness)
 		try await harness.type("Q")
-		try await harness.waitForSourceEdits(2)
-		#expect(harness.source == "Q\n\nTail")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == "STALEQ\n\nTail")
 	}
 
 	@Test func forwardAndBackwardSelectionReportsUseTheSameSourceRange() async throws {

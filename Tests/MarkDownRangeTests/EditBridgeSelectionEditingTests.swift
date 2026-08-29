@@ -329,6 +329,23 @@ import Testing
 		}
 	}
 
+	@Test func typingBurstAfterCrossRunReplacementReplaysAfterCaretRestore() async throws {
+		let source = "Before **Alpha** and _Beta_ after"
+		let start = (source as NSString).range(of: "Alpha").location
+		let beta = (source as NSString).range(of: "Beta")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(start), \(beta.upperBound - start))",
+			"document.execCommand('insertText', false, 'X')",
+			"document.execCommand('insertText', false, '!')",
+		])
+
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "Before X! after")
+		#expect(harness.lastCaretHint == ("Before X!" as NSString).length)
+		try await assertHealthy(harness)
+	}
+
 	@Test func partialStyledSelectionsNeverConsumeAnUnselectedDelimiter() async throws {
 		let cases = [
 			(selected: "Al", replacement: "X", expected: "Before **Xpha** after"),
