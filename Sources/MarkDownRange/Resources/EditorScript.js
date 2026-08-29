@@ -510,21 +510,12 @@
       inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
     if (!Number.isFinite(offset)) return false;
     var cell = inlineHome.closest && inlineHome.closest('td, th');
-    var neutralWrapper = inlineHome.__mdNeutralWrapperSource || '';
-    var neutralWrapperPaste = inlineHome.hasAttribute(
-      'data-md-inline-caret-source-neutral') && neutralWrapper.length > 0;
     freeze();
-    var message = { op: 'paste', matchStyle: matchStyle, inCell: !!cell,
+    post({ op: 'paste', matchStyle: matchStyle, inCell: !!cell,
            start: offset, end: offset, expected: '', crossRun: false,
            selected: false, endAtBlockStart: false,
            syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
-           before: '', after: '', rev: stampRev, seq: seq++ };
-    if (neutralWrapperPaste) {
-      message.multilineWrapperStart = offset - 3;
-      message.multilineWrapperEnd = offset + 4;
-      message.multilineWrapperExpected = neutralWrapper;
-    }
-    post(message);
+           before: '', after: '', rev: stampRev, seq: seq++ });
     return true;
   }
   function placeInlineCaretHomeBefore(span, offset, previousSourceCharacter, sourceNeutral,

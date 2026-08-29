@@ -378,7 +378,40 @@ import Testing
 			try await harness.waitForSourceEdits(2)
 		}
 		try await harness.waitQuiescent()
-		#expect(harness.source == "AlphaOne\n\nTwo Tail")
+		#expect(harness.source == "AlphaOne\n\nTwo Tail",
+			"incidents: \(harness.coordinator.bridgeIncidents)")
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "AlphaOne\n\nTwoZ Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		"bold", "italic", "strikethrough", "inlineCode",
+		"highlight", "superscript", "subscript", "link",
+	])
+	func multiParagraphPasteAtAnEmptyMarkdownFormatCaretExitsTheDelimitersCleanly(
+		command: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('\(command)')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "AlphaOne\n\nTwo Tail",
+			"command \(command), incidents: \(harness.coordinator.bridgeIncidents)")
 		try await harness.type("Z")
 		try await harness.waitForSourceEdits(3)
 		try await harness.waitQuiescent()

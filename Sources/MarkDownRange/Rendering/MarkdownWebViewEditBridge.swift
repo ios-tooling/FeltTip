@@ -218,6 +218,7 @@ extension MarkdownWebView.Coordinator {
 			resync(caretAt: caret)
 			return
 		}
+		let source = currentSource ?? parent.text
 		var payload = body
 		// A paste carries no text: the page can't read the clipboard faithfully
 		// (WebKit sanitizes the plain-text flavor of a paste's dataTransfer, and
@@ -237,12 +238,23 @@ extension MarkdownWebView.Coordinator {
 			}
 			payload["text"] = pasted
 			if pasted.contains("\n"),
-			   let wrapperStart = body["multilineWrapperStart"] as? Int,
-			   let wrapperEnd = body["multilineWrapperEnd"] as? Int,
-			   let wrapperExpected = body["multilineWrapperExpected"] as? String {
-				payload["start"] = wrapperStart
-				payload["end"] = wrapperEnd
-				payload["expected"] = wrapperExpected
+			   let start = body["start"] as? Int,
+			   let end = body["end"] as? Int,
+			   end >= start,
+			   let wrapperRange = Self.inlineWrapperRangeForMultilinePaste(
+				in: source as NSString,
+				selection: NSRange(location: start, length: end - start)) {
+				payload["start"] = wrapperRange.location
+				payload["end"] = wrapperRange.upperBound
+				payload["expected"] = (source as NSString).substring(with: wrapperRange)
+				payload["before"] = ""
+				payload["after"] = ""
+				payload["crossRun"] = false
+				payload["selected"] = false
+				payload["endAtBlockStart"] = false
+				payload["syntaxStart"] = []
+				payload["syntaxEnd"] = []
+				payload["blockPrefixes"] = []
 			}
 			guard let start = payload["start"] as? Int,
 			      let caret = Self.caretAfterInsertion(start: start, text: pasted) else {
@@ -257,7 +269,6 @@ extension MarkdownWebView.Coordinator {
 			payload["caret"] = caret
 		}
 		guard let edit = MarkdownEditSplicer.Edit(body: payload) else { return }
-		let source = currentSource ?? parent.text
 		let isClipboardCut = body["op"] as? String == "cut"
 		switch MarkdownEditSplicer.apply(edit, to: source) {
 		case .applied(let newSource, let selection, let replaced):
@@ -378,6 +389,54 @@ extension MarkdownWebView.Coordinator {
 		guard start >= 0 else { return nil }
 		let (caret, overflow) = start.addingReportingOverflow((text as NSString).length)
 		return overflow ? nil : caret
+	}
+
+	/// A collapsed format represents its pending style as an empty source
+	/// wrapper around the caret. Multiline text cannot safely live inside an
+	/// inline wrapper, so paste replaces this exact wrapper atomically.
+	private static func inlineWrapperRangeForMultilinePaste(
+		in source: NSString,
+		selection: NSRange
+	) -> NSRange? {
+		guard selection.location >= 0, selection.length >= 0,
+			  selection.upperBound <= source.length else { return nil }
+		if selection.length > 0 {
+			let label = source.substring(with: selection)
+			guard label == "link text", selection.location > 0,
+				  selection.upperBound + 3 <= source.length else { return nil }
+			let wrapper = NSRange(
+				location: selection.location - 1,
+				length: selection.length + 4)
+			return source.substring(with: wrapper) == "[link text]()"
+				? wrapper : nil
+		}
+		let caret = selection.location
+		let wrappers: [(text: String, caretOffset: Int)] = [
+			("<u></u>", 3),
+			("****", 2),
+			("~~~~", 2),
+			("====", 2),
+			("**", 1),
+			("__", 1),
+			("``", 1),
+			("^^", 1),
+			("~~", 1),
+		]
+		for wrapper in wrappers {
+			let length = (wrapper.text as NSString).length
+			let start = caret - wrapper.caretOffset
+			guard start >= 0, start + length <= source.length else { continue }
+			let range = NSRange(location: start, length: length)
+			let candidate = source.substring(with: range)
+			if wrapper.text == "<u></u>" {
+				if candidate.caseInsensitiveCompare(wrapper.text) == .orderedSame {
+					return range
+				}
+			} else if candidate == wrapper.text {
+				return range
+			}
+		}
+		return nil
 	}
 
 	/// State of the document-wide indexed task-list marker. Checkbox messages
