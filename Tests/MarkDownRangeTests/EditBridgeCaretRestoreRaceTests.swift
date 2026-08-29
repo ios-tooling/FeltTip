@@ -80,4 +80,54 @@ import WebKit
 		#expect(harness.source == "alphaQ beta\n")
 		#expect(try await harness.stampMismatches() == [])
 	}
+
+	@Test(arguments: [
+		("Plain alpha omega", "alpha", "alpha"),
+		("Before **bold** after", "bold", "bold"),
+		("Before **bold** after", "ld", "ld"),
+		("Before **bold** after", "bold", ""),
+		("Intro\n\n**Chosen paragraph.**\n\nTail", "Chosen paragraph.", "Chosen paragraph."),
+		("A 🙂 emoji and é tail", "🙂 emoji", "🙂 emoji"),
+		("- **Item one**\n- Item two", "Item one", "Item one"),
+		("one\\\ntwo **bold**", "two", "two "),
+	])
+	func deletingThenRestoringMajorSelectionShapesRemainsEditable(
+		source: String,
+		selectionStart: String,
+		selectionEnd: String
+	) async throws {
+		let nsSource = source as NSString
+		let start = nsSource.range(of: selectionStart).location
+		let end = selectionEnd.isEmpty
+			? nsSource.length
+			: nsSource.range(of: selectionEnd).upperBound
+		let selected = NSRange(location: start, length: end - start)
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(selected.location), \(selected.length))",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source != source)
+		#expect(try await harness.stampMismatches() == [])
+
+		restore(source, caret: selected.location, token: 1, in: harness)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		#expect(try await harness.stampMismatches() == [])
+		harness.rewireRoundTrip()
+
+		let editsBefore = harness.sourceEditCount
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(editsBefore + 1)
+		try await harness.waitQuiescent()
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let liveText = EditBridgeFuzzTests.normalizedVisibleText(try await harness.domVisibleText())
+		let freshText = EditBridgeFuzzTests.normalizedVisibleText(try await fresh.domVisibleText())
+		#expect(liveText == freshText)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
 }
