@@ -492,7 +492,16 @@ extension MarkdownWebView {
 			}
 			let visualBlankOffset = visualBlankOffsetBeforeCaret(in: source, at: offset)
 				.map(String.init) ?? "null"
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset)"
+			var previousCharacter = ""
+			if offset > 0 {
+				let range = source.rangeOfComposedCharacterSequence(at: offset - 1)
+				if range.upperBound == offset {
+					previousCharacter = source.substring(with: range)
+				}
+			}
+			let previousCharacterJSON = (try? JSONEncoder().encode(previousCharacter))
+				.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {

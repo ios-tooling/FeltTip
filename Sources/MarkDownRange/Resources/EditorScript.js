@@ -491,7 +491,7 @@
            before: '', after: '', rev: stampRev, seq: seq++ });
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter) {
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
@@ -524,6 +524,7 @@
         inlineHolder.setAttribute('data-s', String(offset - 1));
         inlineHolder.setAttribute('data-md-inline-caret-home', '1');
         inlineHolder.setAttribute('data-md-inline-caret-offset', String(offset));
+        inlineHolder.__mdPreviousSourceCharacter = previousSourceCharacter || '';
         var inlineCaretText = document.createTextNode('\u200B');
         inlineHolder.appendChild(inlineCaretText);
         start.span.parentNode.insertBefore(inlineHolder, start.span);
@@ -1278,6 +1279,21 @@
     // explicit source offset so the first restored keystroke cannot disappear
     // or be rejected as an attempt to replace text the source never contained.
     var inlineHome = activeInlineCaretHome();
+    if (e.inputType === 'deleteContentBackward' && inlineHome) {
+      var hiddenPrevious = inlineHome.__mdPreviousSourceCharacter || '';
+      var hiddenCaretOffset = parseInt(
+        inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      if (hiddenPrevious && Number.isFinite(hiddenCaretOffset) &&
+          hiddenCaretOffset >= hiddenPrevious.length) {
+        e.preventDefault();
+        freeze();
+        post({ start: hiddenCaretOffset - hiddenPrevious.length,
+               end: hiddenCaretOffset, text: '', expected: hiddenPrevious,
+               before: '', after: '', caret: hiddenCaretOffset - hiddenPrevious.length,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
     if (e.inputType === 'insertText') {
       var inlineHomeData = e.data;
       if (inlineHome && inlineHomeData != null) {

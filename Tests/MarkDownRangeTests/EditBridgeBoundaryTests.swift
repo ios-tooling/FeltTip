@@ -357,6 +357,53 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test(arguments: [
+		(command: "delete", expected: "Term\n : Definition\n\nTail"),
+		(command: "forwardDelete", expected: "Term\n   Definition\n\nTail"),
+	])
+	func deletionAfterAnIndentedSoftLineRestoreUsesTheSourceCaret(
+		command: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected)
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let liveVisible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await harness.domVisibleText())
+		let freshVisible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await fresh.domVisibleText())
+		#expect(liveVisible == freshVisible)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func deletionThatActivatesAThematicBreakRerenders() async throws {
 		let harness = try await CoordinatorBridgeHarness(
 			source: "Term\n--x-\n\nTail")
