@@ -256,13 +256,13 @@ enum MarkdownEditSplicer {
 			// down and keeps the insertion point with its first visible character.
 			caret = lineStart + (replacement as NSString).length
 		}
-		if replacement.isEmpty, edit.selected,
+		if edit.selected,
 		   !edit.syntaxStart.isEmpty || !edit.syntaxEnd.isEmpty || !edit.blockPrefixes.isEmpty {
 			guard let expanded = syntaxExpandedDeletionRange(edit, range: range, in: text) else {
-				return .rejected("cut syntax boundaries do not match source")
+				return .rejected("replacement syntax boundaries do not match source")
 			}
 			spliceRange = expanded
-			caret = expanded.location
+			caret = expanded.location + (replacement as NSString).length
 		}
 		if edit.hardBreak, replacement.hasSuffix("\n") {
 			var cursor = edit.end

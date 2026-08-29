@@ -332,6 +332,62 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func pastingOverMultipleStyledRunsConsumesTheirHiddenSyntax() async throws {
+		let source = "Before **Alpha** and _Beta_ after"
+		let start = (source as NSString).range(of: "Alpha").location
+		let beta = (source as NSString).range(of: "Beta")
+		for backward in [false, true] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(
+				harness,
+				start: start,
+				length: beta.upperBound - start,
+				backward: backward)
+
+			try await withPasteboard("X") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == "Before X after", "backward=\(backward)")
+			#expect(harness.lastCaretHint == ("Before X" as NSString).length)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+			try await harness.type("!")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "Before X! after", "backward=\(backward)")
+		}
+	}
+
+	@Test func pastingOverAWholePrefixedBlockConsumesItsHiddenPrefix() async throws {
+		let cases = [
+			"# Alpha\n\nTail",
+			"> Alpha\n\nTail",
+			"- Alpha\n\nTail",
+			"1. Alpha\n\nTail",
+			"- [ ] Alpha\n\nTail",
+		]
+		for source in cases {
+			let alpha = (source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(harness, start: alpha.location, length: alpha.length)
+
+			try await withPasteboard("X") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == "X\n\nTail", "source=\(source)")
+			#expect(harness.lastCaretHint == 1)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
 	@Test func pastingMarkdownKeepsItAsSourceNotAsMarkup() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "head\n")
 		try await withPasteboard("**bold**") {

@@ -1178,8 +1178,23 @@
       e.preventDefault();
       var pasteHost = startPos.node.nodeType === 1 ? startPos.node : startPos.node.parentNode;
       var inCell = !!(pasteHost && pasteHost.closest && pasteHost.closest('td, th'));
+      // Replacing a real selection owns the same complete visible formatting
+      // boundaries as Delete/Cut. Include their hidden source syntax so a
+      // cross-run paste cannot leave unmatched delimiters behind.
+      var pasteSyntaxStart = selected
+        ? selectedSyntaxBoundaries(range, true) : [];
+      var pasteSyntaxEnd = selected
+        ? selectedSyntaxBoundaries(range, false) : [];
+      var pasteBlockPrefixes = selected
+        ? selectedBlockPrefixes(range) : [];
       freeze();
-      post({ op: 'paste', matchStyle: requestedMatchStyle, inCell: inCell, start: start, end: end, expected: expected, crossRun: crossRun, selected: selected, endAtBlockStart: endAtBlockStart, before: before, after: after, rev: stampRev, seq: seq++ });
+      post({ op: 'paste', matchStyle: requestedMatchStyle, inCell: inCell,
+             start: start, end: end, expected: expected,
+             crossRun: crossRun, selected: selected,
+             endAtBlockStart: endAtBlockStart,
+             syntaxStart: pasteSyntaxStart, syntaxEnd: pasteSyntaxEnd,
+             blockPrefixes: pasteBlockPrefixes,
+             before: before, after: after, rev: stampRev, seq: seq++ });
       return;
     }
     // Shift-Enter: a hard break inside the paragraph. Written as a backslash

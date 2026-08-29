@@ -141,8 +141,11 @@ synthetic empty paragraph as its caret home.
 
 ### Paste
 
-The page posts `op: 'paste'` with its range only; the **host** fills in the text
-from the system pasteboard. WebKit sanitizes the plain-text flavor of a paste's
+The page posts `op: 'paste'` with its range and any verified syntax boundaries
+owned by a real selection; the **host** fills in the text from the system
+pasteboard. The splicer consumes those hidden delimiters and block prefixes
+before inserting the replacement, preventing a cross-run paste from leaving
+unbalanced Markdown behind. WebKit sanitizes the plain-text flavor of a paste's
 `dataTransfer` — a multi-line paste reaches the page with its newlines already
 stripped — so the pasteboard is the only faithful source. A Cut keeps WebKit's
 rendered plain-text flavor for other applications and adds a private exact
@@ -258,11 +261,12 @@ legitimately force a recovery resync after rebalancing whitespace around a
 deletion, so fuzz coverage treats exact DOM/source convergence and honest stamps
 as the contract instead of constraining that platform/version-dependent count.
 
-Selected deletion (Cut, Backspace, or Forward Delete) carries `syntaxStart`,
-`syntaxEnd`, and `blockPrefixes` only when the DOM selection owns the complete
-visible boundary of those elements. The splicer then verifies and consumes the
-adjacent source delimiters. This keeps deleting `**text**`, `[text](url)`, a
-heading, or a list item from leaving empty or unbalanced syntax. Boundary
+Selected replacement (Paste) and deletion (Cut, Backspace, or Forward Delete)
+carry `syntaxStart`, `syntaxEnd`, and `blockPrefixes` only when the DOM selection
+owns the complete visible boundary of those elements. The splicer then verifies
+and consumes the adjacent source delimiters before deleting or inserting. This
+keeps replacing or deleting `**text**`, `[text](url)`, a heading, or a list item
+from leaving empty or unbalanced syntax. Boundary
 metadata that does not match the source is vetoed; it is never used as
 permission to guess. Nested rendered traits may expose a different DOM ancestry
 order than their authored delimiters; the splicer therefore verifies the exact
