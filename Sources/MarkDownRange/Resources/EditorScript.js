@@ -599,13 +599,16 @@
   function placeInlineCaretHome(span, offset, previousSourceCharacter, sourceNeutral,
                                 neutralPreviousOffset, neutralPreviousCharacter,
                                 neutralNextOffset, neutralNextCharacter,
-                                neutralWrapperSource, afterSpan) {
+                                neutralWrapperSource, afterSpan, afterEmptyWrapper) {
     if (!span || !span.parentNode) return false;
     var inlineHolder = document.createElement('span');
     inlineHolder.setAttribute('data-s', String(offset - 1));
     inlineHolder.setAttribute('data-md-inline-caret-home', '1');
     inlineHolder.setAttribute('data-md-inline-caret-offset', String(offset));
     if (sourceNeutral) inlineHolder.setAttribute('data-md-inline-caret-source-neutral', '1');
+    if (afterEmptyWrapper) {
+      inlineHolder.setAttribute('data-md-inline-caret-after-empty-wrapper', '1');
+    }
     inlineHolder.__mdPreviousSourceCharacter = sourceNeutral
       ? '' : (previousSourceCharacter || '');
     inlineHolder.__mdNeutralPreviousOffset = neutralPreviousOffset;
@@ -689,12 +692,12 @@
             next, offset, '', false,
             neutralPreviousOffset, neutralPreviousCharacter,
             neutralNextOffset, neutralNextCharacter,
-            '', false)) return;
+            '', false, true)) return;
       if (afterPrevOnLine && placeInlineCaretHome(
             prev, offset, '', false,
             neutralPreviousOffset, neutralPreviousCharacter,
             neutralNextOffset, neutralNextCharacter,
-            '', true)) return;
+            '', true, true)) return;
     }
     // A host-restored caret can address hidden Markdown syntax rather than a
     // rendered run (undoing a Cut at the start of `**paragraph**`, for
@@ -1566,6 +1569,43 @@
     // explicit source offset so the first restored keystroke cannot disappear
     // or be rejected as an attempt to replace text the source never contained.
     var inlineHome = activeInlineCaretHome();
+    if (inlineHome && inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper') &&
+        (e.inputType === 'deleteContentBackward' ||
+         e.inputType === 'deleteContentForward' ||
+         e.inputType === 'deleteWordBackward' ||
+         e.inputType === 'deleteWordForward')) {
+      e.preventDefault();
+      var afterWrapperCaretOffset = parseInt(
+        inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      var afterWrapperBackward = e.inputType === 'deleteContentBackward';
+      var afterWrapperWordBackward = e.inputType === 'deleteWordBackward';
+      var afterWrapperWordForward = e.inputType === 'deleteWordForward';
+      if ((afterWrapperWordBackward || afterWrapperWordForward) &&
+          Number.isFinite(afterWrapperCaretOffset)) {
+        freeze();
+        post({ op: 'neutralWordDelete', start: afterWrapperCaretOffset,
+               backward: afterWrapperWordBackward, afterWrapper: true,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+      var afterWrapperOffset = afterWrapperBackward
+        ? inlineHome.__mdNeutralPreviousOffset : inlineHome.__mdNeutralNextOffset;
+      var afterWrapperCharacter = afterWrapperBackward
+        ? inlineHome.__mdNeutralPreviousCharacter : inlineHome.__mdNeutralNextCharacter;
+      if (Number.isFinite(afterWrapperCaretOffset) &&
+          Number.isFinite(afterWrapperOffset) && afterWrapperCharacter) {
+        freeze();
+        post({ start: afterWrapperOffset,
+               end: afterWrapperOffset + afterWrapperCharacter.length,
+               text: '', expected: afterWrapperCharacter,
+               before: '', after: '',
+               caret: afterWrapperBackward
+                 ? afterWrapperCaretOffset - afterWrapperCharacter.length
+                 : afterWrapperCaretOffset,
+               rev: stampRev, seq: seq++ });
+      }
+      return;
+    }
     if (inlineHome && inlineHome.hasAttribute('data-md-inline-caret-source-neutral') &&
         (e.inputType === 'deleteContentBackward' ||
          e.inputType === 'deleteContentForward' ||

@@ -671,6 +671,60 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(command: "delete", expected: "Alph<u></u> Tail"),
+		(command: "forwardDelete", expected: "Alpha<u></u>Tail"),
+		(command: "deleteWordBackward", expected: "<u></u> Tail"),
+		(command: "deleteWordForward", expected: "Alpha<u></u>"),
+	])
+	func deletionAfterAHostRestoredEmptyUnderlineTargetsVisibleText(
+		command: String,
+		expected: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 703))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.anchorNode) return 'missing'
+				  var element = selection.anchorNode.nodeType === 1
+				    ? selection.anchorNode : selection.anchorNode.parentElement
+				  var home = element.closest('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		if command.contains("Word") {
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: '\(command)', bubbles: true, cancelable: true
+				}))
+				""")
+		} else {
+			try await harness.run("document.execCommand('\(command)')")
+		}
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "command=\(command)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphXa<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u> XTail"),
 	])

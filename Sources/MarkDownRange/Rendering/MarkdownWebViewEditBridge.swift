@@ -222,13 +222,17 @@ extension MarkdownWebView.Coordinator {
 		var payload = body
 		if body["op"] as? String == "neutralWordDelete" {
 			guard let caret = body["start"] as? Int,
-			      caret >= 3, caret + 4 <= (source as NSString).length,
+			      let wrapperRange = Self.emptyUnderlineRange(
+					in: source as NSString,
+					caret: caret,
+					afterWrapper: body["afterWrapper"] as? Bool == true),
 			      (source as NSString).substring(with: NSRange(
-					location: caret - 3, length: 7))
+					location: wrapperRange.location, length: wrapperRange.length))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame,
 			      let range = Self.adjacentWordDeletionRange(
 					in: source,
-					boundary: body["backward"] as? Bool == true ? caret - 3 : caret + 4,
+					boundary: body["backward"] as? Bool == true
+						? wrapperRange.location : wrapperRange.upperBound,
 					backward: body["backward"] as? Bool == true)
 			else {
 				if let token = body["seq"] as? Int {
@@ -542,6 +546,16 @@ extension MarkdownWebView.Coordinator {
 			range: expanded,
 			replacement: replacement,
 			caret: caret)
+	}
+
+	private static func emptyUnderlineRange(
+		in source: NSString,
+		caret: Int,
+		afterWrapper: Bool
+	) -> NSRange? {
+		let location = afterWrapper ? caret - 7 : caret - 3
+		guard location >= 0, location + 7 <= source.length else { return nil }
+		return NSRange(location: location, length: 7)
 	}
 
 	/// Finds the native word-deletion target next to a source-neutral inline
