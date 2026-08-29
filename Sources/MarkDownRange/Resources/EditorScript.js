@@ -1047,6 +1047,36 @@
     }
     return tags;
   }
+  // Metadata for the outermost inline wrapper containing a selection. A
+  // multiline paste cannot remain inside that wrapper, but the host can split
+  // it around the paste so unselected styled text on either side survives.
+  function selectedInlineContainer(range) {
+    if (!range || range.collapsed) return null;
+    var node = range.startContainer;
+    var element = node.nodeType === 1 ? node : node.parentElement;
+    var container = null;
+    while (element && element !== document.body) {
+      if (isInlineSyntaxElement(element) &&
+          (element === range.endContainer || element.contains(range.endContainer))) {
+        container = element;
+      }
+      element = element.parentElement;
+    }
+    if (!container) return null;
+    var full = document.createRange();
+    full.selectNodeContents(container);
+    var startPos = normalizePosition(full.startContainer, full.startOffset, true);
+    var endPos = normalizePosition(full.endContainer, full.endOffset, false);
+    var start = sourceOffsetOf(startPos.node, startPos.offset);
+    var end = sourceOffsetOf(endPos.node, endPos.offset);
+    if (start == null || end == null || end < start) return null;
+    var normalized = document.createRange();
+    normalized.setStart(startPos.node, startPos.offset);
+    normalized.setEnd(endPos.node, endPos.offset);
+    return { start: start, end: end,
+             syntaxStart: selectedSyntaxBoundaries(normalized, true),
+             syntaxEnd: selectedSyntaxBoundaries(normalized, false) };
+  }
   function isInlineSyntaxElement(element) {
     if (!element || !element.tagName) return false;
     var tag = element.tagName.toLowerCase();
@@ -1822,6 +1852,8 @@
         ? selectedSyntaxBoundaries(range, false) : [];
       var pasteBlockPrefixes = selected
         ? selectedBlockPrefixes(range) : [];
+      var pasteInlineContainer = selected
+        ? selectedInlineContainer(range) : null;
       freeze();
       post({ op: 'paste', matchStyle: requestedMatchStyle, inCell: inCell,
              start: start, end: end, expected: expected,
@@ -1829,6 +1861,7 @@
              endAtBlockStart: endAtBlockStart,
              syntaxStart: pasteSyntaxStart, syntaxEnd: pasteSyntaxEnd,
              blockPrefixes: pasteBlockPrefixes,
+             inlineContainer: pasteInlineContainer,
              before: before, after: after, rev: stampRev, seq: seq++ });
       return;
     }

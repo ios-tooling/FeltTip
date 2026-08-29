@@ -264,6 +264,7 @@ extension MarkdownWebView.Coordinator {
 				return
 			}
 			payload["text"] = pasted
+			var customCaret: Int?
 			if pasted.contains("\n"),
 			   let start = body["start"] as? Int,
 			   let end = body["end"] as? Int,
@@ -282,9 +283,33 @@ extension MarkdownWebView.Coordinator {
 				payload["syntaxStart"] = []
 				payload["syntaxEnd"] = []
 				payload["blockPrefixes"] = []
+			} else if pasted.contains("\n"),
+			          let start = body["start"] as? Int,
+			          let end = body["end"] as? Int,
+			          end >= start,
+			          let split = Self.multilineInlineReplacement(
+					in: source as NSString,
+					selection: NSRange(location: start, length: end - start),
+					pasted: pasted,
+					metadata: body["inlineContainer"] as? [String: Any]) {
+				payload["start"] = split.range.location
+				payload["end"] = split.range.upperBound
+				payload["text"] = split.replacement
+				payload["expected"] = (source as NSString).substring(with: split.range)
+				payload["before"] = ""
+				payload["after"] = ""
+				payload["crossRun"] = false
+				payload["selected"] = false
+				payload["endAtBlockStart"] = false
+				payload["syntaxStart"] = []
+				payload["syntaxEnd"] = []
+				payload["blockPrefixes"] = []
+				customCaret = split.caret
 			}
 			guard let start = payload["start"] as? Int,
-			      let caret = Self.caretAfterInsertion(start: start, text: pasted) else {
+			      let caret = customCaret ?? Self.caretAfterInsertion(
+					start: start,
+					text: payload["text"] as? String ?? pasted) else {
 				log("paste with invalid or overflowing start \(body["start"] ?? "nil")")
 				if let token = body["seq"] as? Int {
 					webView?.evaluateJavaScript(
@@ -464,6 +489,59 @@ extension MarkdownWebView.Coordinator {
 			}
 		}
 		return nil
+	}
+
+	private struct MultilineInlineReplacement {
+		let range: NSRange
+		let replacement: String
+		let caret: Int
+	}
+
+	/// Splits the outermost containing inline wrapper around a multiline paste.
+	/// Untouched text remains wrapped on its own side of the new blocks, while
+	/// the pasted paragraphs themselves stay outside inline Markdown syntax.
+	private static func multilineInlineReplacement(
+		in source: NSString,
+		selection: NSRange,
+		pasted: String,
+		metadata: [String: Any]?
+	) -> MultilineInlineReplacement? {
+		guard let metadata,
+		      let start = metadata["start"] as? Int,
+		      let end = metadata["end"] as? Int,
+		      end >= start,
+		      selection.location >= start,
+		      selection.upperBound <= end else { return nil }
+		let visible = NSRange(location: start, length: end - start)
+		guard let expanded = MarkdownEditSplicer.syntaxExpandedRange(
+			visible,
+			syntaxStart: metadata["syntaxStart"] as? [String] ?? [],
+			syntaxEnd: metadata["syntaxEnd"] as? [String] ?? [],
+			in: source),
+		      expanded.location < visible.location,
+		      expanded.upperBound > visible.upperBound else { return nil }
+		let opening = source.substring(with: NSRange(
+			location: expanded.location,
+			length: visible.location - expanded.location))
+		let closing = source.substring(with: NSRange(
+			location: visible.upperBound,
+			length: expanded.upperBound - visible.upperBound))
+		let prefix = source.substring(with: NSRange(
+			location: visible.location,
+			length: selection.location - visible.location))
+		let suffix = source.substring(with: NSRange(
+			location: selection.upperBound,
+			length: visible.upperBound - selection.upperBound))
+		let wrappedPrefix = prefix.isEmpty ? "" : opening + prefix + closing
+		let wrappedSuffix = suffix.isEmpty ? "" : opening + suffix + closing
+		let replacement = wrappedPrefix + pasted + wrappedSuffix
+		guard let caret = caretAfterInsertion(
+			start: expanded.location,
+			text: wrappedPrefix + pasted) else { return nil }
+		return MultilineInlineReplacement(
+			range: expanded,
+			replacement: replacement,
+			caret: caret)
 	}
 
 	/// Finds the native word-deletion target next to a source-neutral inline
