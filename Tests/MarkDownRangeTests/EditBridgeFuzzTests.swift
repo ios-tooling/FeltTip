@@ -319,6 +319,11 @@ struct SeededRNG: RandomNumberGenerator {
 			expected = afterCut
 			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
 			try await harness.waitQuiescent()
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_CHECK_EACH_EDIT"] != nil {
+				let projection = try await Self.visibleProjectionAndFreshRender(harness)
+				#expect(projection.live == projection.rendered,
+					"chunk-move seed \(seed) diverged after cut; live \(projection.live.debugDescription), rendered \(projection.rendered.debugDescription)")
+			}
 
 			guard let destination = try await Self.randomStampedOffset(harness, &rng) else { break }
 			try await harness.placeCaret(destination)
@@ -338,6 +343,11 @@ struct SeededRNG: RandomNumberGenerator {
 			try await harness.waitQuiescent()
 			#expect(try await harness.stampMismatches() == [],
 				"seed \(seed):\n\(log.joined(separator: "\n"))")
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_CHECK_EACH_EDIT"] != nil {
+				let projection = try await Self.visibleProjectionAndFreshRender(harness)
+				#expect(projection.live == projection.rendered,
+					"chunk-move seed \(seed) diverged after paste; live \(projection.live.debugDescription), rendered \(projection.rendered.debugDescription)")
+			}
 		}
 
 		let script = "seed \(seed):\n" + log.joined(separator: "\n")
@@ -387,6 +397,11 @@ struct SeededRNG: RandomNumberGenerator {
 			log.append("cut \(start)..<\(start + length) → \(copied.debugDescription)")
 			#expect(harness.source == expected, "seed \(seed):\n\(log.joined(separator: "\n"))")
 			try await harness.waitQuiescent()
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_CHECK_EACH_EDIT"] != nil {
+				let projection = try await Self.visibleProjectionAndFreshRender(harness)
+				#expect(projection.live == projection.rendered,
+					"table-move seed \(seed) diverged after cut; live \(projection.live.debugDescription), rendered \(projection.rendered.debugDescription)")
+			}
 
 			let destinationRuns = try await Self.tableCellStampedRuns(harness)
 			guard let destinationRun = destinationRuns.randomElement(using: &rng) else { break }
@@ -408,6 +423,11 @@ struct SeededRNG: RandomNumberGenerator {
 				$0.filter { $0 == "|" }.count == 4
 			}, "seed \(seed):\n\(log.joined(separator: "\n"))")
 			try await harness.waitQuiescent()
+			if ProcessInfo.processInfo.environment["MDR_FUZZ_CHECK_EACH_EDIT"] != nil {
+				let projection = try await Self.visibleProjectionAndFreshRender(harness)
+				#expect(projection.live == projection.rendered,
+					"table-move seed \(seed) diverged after paste; live \(projection.live.debugDescription), rendered \(projection.rendered.debugDescription)")
+			}
 		}
 
 		let script = "seed \(seed):\n" + log.joined(separator: "\n")
@@ -514,6 +534,15 @@ struct SeededRNG: RandomNumberGenerator {
 			.map { $0.trimmingCharacters(in: .whitespaces) }
 			.filter { !$0.isEmpty }
 			.joined(separator: "\n")
+	}
+
+	static func visibleProjectionAndFreshRender(
+		_ harness: CoordinatorBridgeHarness
+	) async throws -> (live: String, rendered: String) {
+		let live = normalizedVisibleText(try await harness.domVisibleText())
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let rendered = normalizedVisibleText(try await fresh.domVisibleText())
+		return (live, rendered)
 	}
 
 	static func performResponderCommand(
