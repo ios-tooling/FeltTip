@@ -955,6 +955,69 @@ enum MarkdownSourceFormatter {
 						}
 					}
 					if let closingRange {
+						let openingMarker = text.substring(with: openingRange)
+						let closingMarker = text.substring(with: closingRange)
+						let innerCandidates = ["~~", "==", "**", "__", "_", "*", "^", "~"]
+						for inner in innerCandidates {
+							let innerLength = (inner as NSString).length
+							guard openingRange.upperBound + innerLength <= selection.location,
+							      closingRange.location >= selection.upperBound + innerLength,
+							      text.substring(with: NSRange(
+								location: openingRange.upperBound,
+								length: innerLength)) == inner,
+							      text.substring(with: NSRange(
+								location: closingRange.location - innerLength,
+								length: innerLength)) == inner else { continue }
+
+							let contentStart = openingRange.upperBound + innerLength
+							let contentEnd = closingRange.location - innerLength
+							guard selection.location >= contentStart,
+							      selection.upperBound <= contentEnd else { continue }
+							var prefixEnd = selection.location
+							while prefixEnd > contentStart {
+								let character = text.character(at: prefixEnd - 1)
+								guard character == 0x20 || character == 0x09 else { break }
+								prefixEnd -= 1
+							}
+							var suffixStart = selection.upperBound
+							while suffixStart < contentEnd {
+								let character = text.character(at: suffixStart)
+								guard character == 0x20 || character == 0x09 else { break }
+								suffixStart += 1
+							}
+							let prefix = text.substring(with: NSRange(
+								location: contentStart,
+								length: prefixEnd - contentStart))
+							let leadingWhitespace = text.substring(with: NSRange(
+								location: prefixEnd,
+								length: selection.location - prefixEnd))
+							let trailingWhitespace = text.substring(with: NSRange(
+								location: selection.upperBound,
+								length: suffixStart - selection.upperBound))
+							let suffix = text.substring(with: NSRange(
+								location: suffixStart,
+								length: contentEnd - suffixStart))
+							guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+
+							let prefixWrapper = prefix.isEmpty ? "" :
+								openingMarker + inner + prefix + inner + closingMarker
+							let selectedWrapper = inner + selected + inner
+							let suffixWrapper = suffix.isEmpty ? "" :
+								openingMarker + inner + suffix + inner + closingMarker
+							let replacement = prefixWrapper + leadingWhitespace +
+								selectedWrapper + trailingWhitespace + suffixWrapper
+							return .init(
+								range: NSRange(
+									location: openingRange.location,
+									length: closingRange.upperBound - openingRange.location),
+								replacement: replacement,
+								selection: NSRange(
+									location: openingRange.location +
+										(prefixWrapper as NSString).length +
+										(leadingWhitespace as NSString).length + innerLength,
+									length: selection.length))
+						}
+
 						var prefixEnd = selection.location
 						while prefixEnd > openingRange.upperBound {
 							let character = text.character(at: prefixEnd - 1)
@@ -981,8 +1044,6 @@ enum MarkdownSourceFormatter {
 							let suffix = text.substring(with: NSRange(
 								location: suffixStart,
 								length: closingRange.location - suffixStart))
-							let openingMarker = text.substring(with: openingRange)
-							let closingMarker = text.substring(with: closingRange)
 							let replacement = prefix + closingMarker + leadingWhitespace +
 								selected + trailingWhitespace + openingMarker + suffix + closingMarker
 							return .init(

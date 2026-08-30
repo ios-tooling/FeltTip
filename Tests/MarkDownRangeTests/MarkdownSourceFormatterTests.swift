@@ -149,6 +149,8 @@ import AppKit
 		 expected: "<u>Alpha</u> Bravo <u>charlie</u>"),
 		(source: "<u>Alpha</u> Bravo <u>charlie</u>", selected: "Bravo",
 		 expected: "<u>Alpha</u> <u>Bravo</u> <u>charlie</u>"),
+		(source: "<u>**Alpha Bravo charlie**</u>", selected: "Bravo",
+		 expected: "<u>**Alpha**</u> **Bravo** <u>**charlie**</u>"),
 	])
 	func togglingAnUnderlineFragmentSplitsTheRunCleanly(
 		source: String,
