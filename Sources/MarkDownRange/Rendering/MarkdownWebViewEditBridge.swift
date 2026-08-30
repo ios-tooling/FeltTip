@@ -260,7 +260,22 @@ extension MarkdownWebView.Coordinator {
 			let syntaxEnd = body["syntaxEnd"] as? [String] ?? []
 			let visibleSelection = (body["expected"] as? String ?? "")
 				.trimmingCharacters(in: .whitespacesAndNewlines)
-			if body["crossRun"] as? Bool != true,
+			if operation == "format", !visibleSelection.isEmpty {
+				let expandedSource = sourceText.substring(with: expandedRange) as NSString
+				let localVisible = expandedSource.range(of: visibleSelection)
+				if localVisible.location != NSNotFound {
+					// Native word selection owns adjacent visual whitespace, but
+					// inline Markdown delimiters may not: `** word**` does not
+					// render as the requested bold word. Find the visible content
+					// inside the verified syntax-expanded interval so an existing
+					// complete wrapper can still be toggled off.
+					adjustedStart = expandedRange.location + localVisible.location
+					adjustedEnd = adjustedStart + localVisible.length
+					payload["crossRun"] = false
+					payload["syntaxStart"] = []
+					payload["syntaxEnd"] = []
+				}
+			} else if body["crossRun"] as? Bool != true,
 			   syntaxStart.isEmpty, syntaxEnd.isEmpty, !visibleSelection.isEmpty {
 				let selectedSource = sourceText.substring(with: NSRange(
 					location: start, length: end - start)) as NSString
@@ -270,14 +285,7 @@ extension MarkdownWebView.Coordinator {
 						location: start + localWord.location, length: localWord.length)
 					let fullyExpandedWord = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
 						word, in: sourceText)
-					if operation == "format" {
-						// Native word selection owns adjacent visual whitespace, but
-						// inline Markdown delimiters may not: `** word**` does not
-						// render as the requested bold word. Format only the trimmed
-						// visible selection while leaving its spacing in place.
-						adjustedStart = word.location
-						adjustedEnd = word.upperBound
-					} else if fullyExpandedWord != word {
+					if fullyExpandedWord != word {
 						// A complete styled word follows the ordinary owned-syntax
 						// route; only a partial run needs delimiter preservation.
 					} else if body["selectionStartsAtHome"] as? Bool == true {
