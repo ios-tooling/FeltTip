@@ -255,6 +255,77 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "[***A😀<u></u>🧪B***](https://x)", direction: "backward", copied: "😀",
+		 expected: "[***AP<u></u>🧪B***](https://x)"),
+		(source: "[***A😀<u></u>🧪B***](https://x)", direction: "forward", copied: "🧪",
+		 expected: "[***A😀<u></u>PB***](https://x)"),
+		(source: "[***Ae\u{301}<u></u>👩‍💻B***](https://x)", direction: "backward",
+		 copied: "e\u{301}", expected: "[***AP<u></u>👩‍💻B***](https://x)"),
+		(source: "[***Ae\u{301}<u></u>👩‍💻B***](https://x)", direction: "forward",
+		 copied: "👩‍💻", expected: "[***Ae\u{301}<u></u>PB***](https://x)"),
+	])
+	func selectingAComposedCharacterFromADeepRestoredCaretCopiesAndPastesItWhole(
+		source: String,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 10, token: 727))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep composed-character caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "10"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"direction=\(direction)")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("composed-character Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"Copy collapsed the composed-character selection for direction=\(direction)")
+		let sourceEditsBeforePaste = harness.sourceEditCount
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(sourceEditsBeforePaste + 1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphP<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u>PTail"),
 	])
