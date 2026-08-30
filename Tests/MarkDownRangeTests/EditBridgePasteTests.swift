@@ -1668,14 +1668,29 @@ import Testing
 
 	@Test(arguments: [
 		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
-		 direction: "backward", afterTyping: "Alpha Bravo\n\n<u>X</u>Tail"),
+		 direction: "backward", moves: 1,
+		 afterTyping: "Alpha Bravo\n\n<u>X</u>Tail"),
 		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
-		 direction: "forward", afterTyping: "Head<u></u>\n\nBravoX Tail"),
+		 direction: "forward", moves: 1,
+		 afterTyping: "Head<u></u>\n\nBravoX Tail"),
+		(source: "Alpha Bravo Charlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo Charlie\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\nBravo CharlieX Tail"),
+		(source: "Alpha Bravo\tCharlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo\tCharlie\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo\tCharlie Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\nBravo\tCharlieX Tail"),
 	])
 	func immediateCutPasteAfterACrossBlockWordSelectionRestoresTheDirectionalCaret(
 		source: String,
 		caret: Int,
 		direction: String,
+		moves: Int,
 		afterTyping: String
 	) async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
@@ -1685,8 +1700,11 @@ import Testing
 				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
 		}
 		harness.rewireRoundTrip()
-		try await harness.run(
-			"window.getSelection().modify('extend', '\(direction)', 'word')")
+		try await harness.run("""
+			for (var index = 0; index < \(moves); index++) {
+			  window.getSelection().modify('extend', '\(direction)', 'word')
+			}
+			""")
 
 		try await withClearedPasteboard {
 			try await performResponderCommand(.cut, in: harness)
