@@ -964,9 +964,21 @@ extension MarkdownWebView.Coordinator {
 		caret: Int,
 		pasted: String
 	) -> PrivateBoundaryPaste? {
-		guard caret >= 0, caret + 7 <= source.length,
-		      source.substring(with: NSRange(location: caret, length: 7))
-			.caseInsensitiveCompare("<u></u>") == .orderedSame else { return nil }
+		func isEmptyUnderline(at location: Int) -> Bool {
+			guard location >= 0, location + 7 <= source.length else { return false }
+			return source.substring(with: NSRange(location: location, length: 7))
+				.caseInsensitiveCompare("<u></u>") == .orderedSame
+		}
+		let wrapperStart: Int
+		if isEmptyUnderline(at: caret) {
+			wrapperStart = caret
+		} else if isEmptyUnderline(at: caret - 7) {
+			wrapperStart = caret - 7
+		} else if isEmptyUnderline(at: caret - 3) {
+			wrapperStart = caret - 3
+		} else {
+			return nil
+		}
 		let pastedText = pasted as NSString
 		guard pastedText.length > 1 else { return nil }
 
@@ -994,18 +1006,27 @@ extension MarkdownWebView.Coordinator {
 				let delimiter = pastedText.substring(with: NSRange(
 					location: delimiterStart, length: firstBreak - delimiterStart))
 				let delimiterLength = (delimiter as NSString).length
-				if caret >= delimiterLength,
+				if wrapperStart >= delimiterLength,
 				   source.substring(with: NSRange(
-					location: caret - delimiterLength, length: delimiterLength)) == delimiter {
+					location: wrapperStart - delimiterLength,
+					length: delimiterLength)) == delimiter {
 					let visible = pastedText.substring(to: delimiterStart)
 					let boundary = pastedText.substring(from: firstBreak)
 					let replacement = visible + delimiter + boundary
-					let start = caret - delimiterLength
+					let start = wrapperStart - delimiterLength
 					return PrivateBoundaryPaste(
 						range: NSRange(location: start, length: delimiterLength),
 						replacement: replacement,
 						caret: start + (replacement as NSString).length + 3)
 				}
+			}
+			let boundary = pastedText.substring(from: firstBreak)
+			if (caret == wrapperStart || caret == wrapperStart + 3),
+			   boundary.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) }) {
+				return PrivateBoundaryPaste(
+					range: NSRange(location: wrapperStart, length: 0),
+					replacement: pasted,
+					caret: wrapperStart + pastedText.length + 3)
 			}
 		}
 
@@ -1028,22 +1049,31 @@ extension MarkdownWebView.Coordinator {
 				delimiterEnd += 1
 			}
 		}
-		guard contentStart > 0, delimiterEnd > contentStart,
-		      delimiterEnd < pastedText.length else { return nil }
+		guard contentStart > 0 else { return nil }
+		if delimiterEnd == contentStart {
+			let afterWrapper = wrapperStart + 7
+			guard (caret == afterWrapper || caret == wrapperStart + 3),
+			      contentStart < pastedText.length else { return nil }
+			return PrivateBoundaryPaste(
+				range: NSRange(location: afterWrapper, length: 0),
+				replacement: pasted,
+				caret: afterWrapper + pastedText.length)
+		}
+		guard delimiterEnd < pastedText.length else { return nil }
 		let delimiter = pastedText.substring(with: NSRange(
 			location: contentStart, length: delimiterEnd - contentStart))
 		let delimiterLength = (delimiter as NSString).length
-		let afterWrapper = caret + 7
+		let afterWrapper = wrapperStart + 7
 		guard afterWrapper + delimiterLength <= source.length,
 		      source.substring(with: NSRange(
 			location: afterWrapper, length: delimiterLength)) == delimiter else { return nil }
 		let boundary = pastedText.substring(to: contentStart)
 		let visible = pastedText.substring(from: delimiterEnd)
-		let wrapper = source.substring(with: NSRange(location: caret, length: 7))
+		let wrapper = source.substring(with: NSRange(location: wrapperStart, length: 7))
 		return PrivateBoundaryPaste(
-			range: NSRange(location: caret, length: 7 + delimiterLength),
+			range: NSRange(location: wrapperStart, length: 7 + delimiterLength),
 			replacement: wrapper + boundary + delimiter + visible,
-			caret: caret + 3)
+			caret: wrapperStart + 3)
 	}
 
 	/// Opening inline syntax can begin with link/image brackets in addition to

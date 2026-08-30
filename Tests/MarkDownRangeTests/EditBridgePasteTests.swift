@@ -1667,6 +1667,47 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", afterTyping: "Alpha Bravo\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", afterTyping: "Head<u></u>\n\nBravoX Tail"),
+	])
+	func immediateCutPasteAfterACrossBlockWordSelectionRestoresTheDirectionalCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 727, in: harness)
+		try await harness.waitUntil("cross-block word Cut/Paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == source, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
 		 direction: "forward", afterDelete: "Alpha<u></u> charlie",
 		 afterTyping: "Alpha<u>X</u> charlie"),
