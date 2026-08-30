@@ -235,7 +235,9 @@ extension MarkdownWebView.Coordinator {
 			      start >= 0, end >= start, end <= sourceText.length,
 			      let inlineCaretOffset = body["inlineCaretOffset"] as? Int,
 			      let wrapperRange = Self.emptyUnderlineClusterRange(
-					in: sourceText, caret: inlineCaretOffset, afterWrapper: false),
+					in: sourceText,
+					caret: inlineCaretOffset,
+					afterWrapper: body["inlineCaretAfterWrapper"] as? Bool == true),
 			      let expandedRange = MarkdownEditSplicer.syntaxExpandedRange(
 					NSRange(location: start, length: end - start),
 					syntaxStart: body["syntaxStart"] as? [String] ?? [],

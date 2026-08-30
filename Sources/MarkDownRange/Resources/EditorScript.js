@@ -620,6 +620,8 @@
       canonicalSourceSelection: true,
       inlineCaretOffset: parseInt(
         home.getAttribute('data-md-inline-caret-offset'), 10),
+      inlineCaretAfterWrapper:
+        home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
       selectionStartsAtHome: startsAtHome,
       syntaxStart: syntaxStart,
       syntaxEnd: syntaxEnd,
@@ -1490,6 +1492,7 @@
              endAtBlockStart: false, blockPrefixes: [], before: '', after: '',
              canonicalSelection: navigation.canonicalSourceSelection === true,
              inlineCaretOffset: navigation.inlineCaretOffset,
+             inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
              selectionStartsAtHome: navigation.selectionStartsAtHome === true,
              crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
                navigation.syntaxEnd && navigation.syntaxEnd.length),
@@ -1544,6 +1547,7 @@
                text: '', expected: navigation.sourceExpected,
                canonicalSelection: navigation.canonicalSourceSelection === true,
                inlineCaretOffset: navigation.inlineCaretOffset,
+               inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
                selectionStartsAtHome: navigation.selectionStartsAtHome === true,
                crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
                  navigation.syntaxEnd && navigation.syntaxEnd.length),
