@@ -622,6 +622,18 @@ import Testing
 		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
 		 direction: "backward", expected: "alpha **Bravo P**<u></u> Delta",
 		 afterTyping: "alpha **Bravo PX**<u></u> Delta"),
+		(source: "Alpha<u></u>  ***[Bravo charlie](https://x)*** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P ***[charlie](https://x)*** Delta",
+		 afterTyping: "Alpha<u></u>PX ***[charlie](https://x)*** Delta"),
+		(source: "alpha ***[Bravo charlie](https://x)***<u></u> Delta", caret: 41,
+		 direction: "backward", expected: "alpha ***[Bravo P](https://x)***<u></u> Delta",
+		 afterTyping: "alpha ***[Bravo PX](https://x)***<u></u> Delta"),
+		(source: "Alpha<u></u>  ***<u>Bravo charlie</u>*** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P ***<u>charlie</u>*** Delta",
+		 afterTyping: "Alpha<u></u>PX ***<u>charlie</u>*** Delta"),
+		(source: "alpha ***<u>Bravo charlie</u>***<u></u> Delta", caret: 35,
+		 direction: "backward", expected: "alpha ***<u>Bravo P</u>***<u></u> Delta",
+		 afterTyping: "alpha ***<u>Bravo PX</u>***<u></u> Delta"),
 	])
 	func typingAfterPartialStyledWordPasteUsesTheVisibleReplacementCaret(
 		source: String,
