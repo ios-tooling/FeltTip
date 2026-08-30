@@ -318,6 +318,109 @@ enum MarkdownSourceFormatter {
 						length: lineEnd - selection.upperBound))
 				guard closing.location != NSNotFound else { continue }
 
+				// A link can be the inner style, but its closing marker includes a
+				// dynamic destination. Match both balanced label brackets and nested
+				// destination parentheses, then duplicate the exact destination on
+				// every fragment that remains linked.
+				if opening.upperBound < selection.location,
+				   text.character(at: opening.upperBound) == 0x5B {
+					var labelDepth = 0
+					var escaped = false
+					var labelClose: Int?
+					var offset = opening.upperBound
+					while offset < closing.location {
+						let character = text.character(at: offset)
+						if escaped {
+							escaped = false
+						} else if character == 0x5C {
+							escaped = true
+						} else if character == 0x5B {
+							labelDepth += 1
+						} else if character == 0x5D {
+							labelDepth -= 1
+							if labelDepth == 0 {
+								labelClose = offset
+								break
+							}
+						}
+						offset += 1
+					}
+					if let labelClose,
+					   labelClose + 2 <= closing.location,
+					   text.substring(with: NSRange(
+						location: labelClose, length: 2)) == "](",
+					   selection.location > opening.upperBound,
+					   selection.upperBound <= labelClose {
+						var destinationClose = labelClose + 2
+						var destinationDepth = 0
+						escaped = false
+						while destinationClose < closing.location {
+							let character = text.character(at: destinationClose)
+							if escaped {
+								escaped = false
+							} else if character == 0x5C {
+								escaped = true
+							} else if character == 0x28 {
+								destinationDepth += 1
+							} else if character == 0x29, destinationDepth > 0 {
+								destinationDepth -= 1
+							} else if character == 0x29 {
+								break
+							}
+							destinationClose += 1
+						}
+						if destinationClose + 1 == closing.location {
+							let contentStart = opening.upperBound + 1
+							var prefixEnd = selection.location
+							while prefixEnd > contentStart {
+								let character = text.character(at: prefixEnd - 1)
+								guard character == 0x20 || character == 0x09 else { break }
+								prefixEnd -= 1
+							}
+							var suffixStart = selection.upperBound
+							while suffixStart < labelClose {
+								let character = text.character(at: suffixStart)
+								guard character == 0x20 || character == 0x09 else { break }
+								suffixStart += 1
+							}
+							let prefix = text.substring(with: NSRange(
+								location: contentStart,
+								length: prefixEnd - contentStart))
+							let leadingWhitespace = text.substring(with: NSRange(
+								location: prefixEnd,
+								length: selection.location - prefixEnd))
+							let trailingWhitespace = text.substring(with: NSRange(
+								location: selection.upperBound,
+								length: suffixStart - selection.upperBound))
+							let suffix = text.substring(with: NSRange(
+								location: suffixStart,
+								length: labelClose - suffixStart))
+							if !prefix.isEmpty || !suffix.isEmpty {
+								let destination = text.substring(with: NSRange(
+									location: labelClose,
+									length: destinationClose + 1 - labelClose))
+								let prefixWrapper = prefix.isEmpty ? "" :
+									candidate + "[" + prefix + destination + candidate
+								let selectedWrapper = "[" + selected + destination
+								let suffixWrapper = suffix.isEmpty ? "" :
+									candidate + "[" + suffix + destination + candidate
+								let replacement = prefixWrapper + leadingWhitespace +
+									selectedWrapper + trailingWhitespace + suffixWrapper
+								return .init(
+									range: NSRange(
+										location: opening.location,
+										length: closing.upperBound - opening.location),
+									replacement: replacement,
+									selection: NSRange(
+										location: opening.location +
+											(prefixWrapper as NSString).length +
+											(leadingWhitespace as NSString).length + 1,
+										length: selection.length))
+							}
+						}
+					}
+				}
+
 				for inner in innerCandidates where
 					inner.opening != candidate || inner.closing != candidate {
 					let innerOpeningLength = (inner.opening as NSString).length
