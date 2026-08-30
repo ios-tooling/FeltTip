@@ -913,6 +913,60 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward",
+		 afterSecondPaste: "**Bold**\n\n<u></u><u></u>Taild**\n\n"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterSecondPaste: "Head<u></u><u></u>\n\n*Italic*\n\n*I"),
+	])
+	func reusedBoundaryCutClipboardPastesOrdinarilyAfterItsOriginIsConsumed(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		afterSecondPaste: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 912 + caret, in: harness)
+		try await harness.waitUntil("reused boundary clipboard caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == source, "direction=\(direction)")
+
+			try await harness.run("window.__mdPlaceCaret(\((source as NSString).length));")
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(3)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == afterSecondPaste, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Head\n\n<u></u>Tail", caret: 9,
 		 key: "ArrowLeft", direction: "backward",
 		 expected: "Head\n\n<u>X</u>Tail"),
