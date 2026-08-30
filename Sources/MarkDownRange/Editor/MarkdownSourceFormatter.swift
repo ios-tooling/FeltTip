@@ -286,6 +286,27 @@ enum MarkdownSourceFormatter {
 				location: wrapper.upperBound - closingLength, length: closingLength)))
 	}
 
+	private static func inlineSymmetricParts(
+		in text: NSString,
+		wrapper: NSRange
+	) -> (content: NSRange, marker: String)? {
+		for marker in ["~~", "==", "**", "__", "_", "*", "^", "~"] {
+			let length = (marker as NSString).length
+			guard wrapper.length >= length * 2 else { continue }
+			if text.substring(with: NSRange(
+				location: wrapper.location, length: length)) == marker,
+			   text.substring(with: NSRange(
+				location: wrapper.upperBound - length, length: length)) == marker {
+				return (
+					content: NSRange(
+						location: wrapper.location + length,
+						length: wrapper.length - length * 2),
+					marker: marker)
+			}
+		}
+		return nil
+	}
+
 	private static func toggleDelimited(
 		in text: NSString,
 		selection: NSRange,
@@ -549,6 +570,65 @@ enum MarkdownSourceFormatter {
 								location: opening.location + (prefixWrapper as NSString).length +
 									(leadingWhitespace as NSString).length + residualLength +
 									(underline.opening as NSString).length,
+								length: selection.length))
+					}
+					if let symmetric = inlineSymmetricParts(in: text, wrapper: innerRange),
+					   selection.location >= symmetric.content.location,
+					   selection.upperBound <= symmetric.content.upperBound {
+						if symmetric.content == selection {
+							let inner = text.substring(with: innerRange)
+							return .init(
+								range: NSRange(
+									location: opening.location,
+									length: closing.upperBound - opening.location),
+								replacement: residual + inner + residual,
+								selection: NSRange(
+									location: opening.location + residualLength +
+										(symmetric.marker as NSString).length,
+									length: selection.length))
+						}
+						var prefixEnd = selection.location
+						while prefixEnd > symmetric.content.location {
+							let character = text.character(at: prefixEnd - 1)
+							guard character == 0x20 || character == 0x09 else { break }
+							prefixEnd -= 1
+						}
+						var suffixStart = selection.upperBound
+						while suffixStart < symmetric.content.upperBound {
+							let character = text.character(at: suffixStart)
+							guard character == 0x20 || character == 0x09 else { break }
+							suffixStart += 1
+						}
+						let prefix = text.substring(with: NSRange(
+							location: symmetric.content.location,
+							length: prefixEnd - symmetric.content.location))
+						let leadingWhitespace = text.substring(with: NSRange(
+							location: prefixEnd,
+							length: selection.location - prefixEnd))
+						let trailingWhitespace = text.substring(with: NSRange(
+							location: selection.upperBound,
+							length: suffixStart - selection.upperBound))
+						let suffix = text.substring(with: NSRange(
+							location: suffixStart,
+							length: symmetric.content.upperBound - suffixStart))
+						let openingMarker = text.substring(with: opening)
+						let closingMarker = text.substring(with: closing)
+						let prefixWrapper = prefix.isEmpty ? "" : openingMarker +
+							symmetric.marker + prefix + symmetric.marker + closingMarker
+						let selectedWrapper = residual + symmetric.marker + selected +
+							symmetric.marker + residual
+						let suffixWrapper = suffix.isEmpty ? "" : openingMarker +
+							symmetric.marker + suffix + symmetric.marker + closingMarker
+						return .init(
+							range: NSRange(
+								location: opening.location,
+								length: closing.upperBound - opening.location),
+							replacement: prefixWrapper + leadingWhitespace + selectedWrapper +
+								trailingWhitespace + suffixWrapper,
+							selection: NSRange(
+								location: opening.location + (prefixWrapper as NSString).length +
+									(leadingWhitespace as NSString).length + residualLength +
+									(symmetric.marker as NSString).length,
 								length: selection.length))
 					}
 

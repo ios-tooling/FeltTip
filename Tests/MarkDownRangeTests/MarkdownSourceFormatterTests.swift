@@ -148,6 +148,12 @@ import AppKit
 		(command: MarkdownFormattingCommand.bold,
 		 source: "***<u>Alpha Bravo charlie</u>***", selected: "Bravo",
 		 expected: "***<u>Alpha</u>*** *<u>Bravo</u>* ***<u>charlie</u>***"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***~~Bravo~~***", selected: "Bravo",
+		 expected: "*~~Bravo~~*"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***~~Alpha Bravo charlie~~***", selected: "Bravo",
+		 expected: "***~~Alpha~~*** *~~Bravo~~* ***~~charlie~~***"),
 	])
 	func togglingAStyledRunFragmentSplitsTheRunCleanly(
 		command: MarkdownFormattingCommand,
