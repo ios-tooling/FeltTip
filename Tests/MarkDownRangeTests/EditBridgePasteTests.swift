@@ -1621,7 +1621,10 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
-	@Test func mouseSelectionClearsThePreviousStyledWordNavigationHome() async throws {
+	@Test(arguments: [true, false])
+	func replacingTheSelectionClearsThePreviousStyledWordNavigationHome(
+		mouseDriven: Bool
+	) async throws {
 		let source = "Alpha Beta\n\nHead<u></u>\n\nBravo Tail"
 		let caret = (source as NSString).range(of: "<u></u>").location + 3
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
@@ -1642,9 +1645,11 @@ import Testing
 			  }
 			}
 			optionShift('ArrowRight', 'forward')
+			\(mouseDriven ? """
 			document.body.dispatchEvent(new MouseEvent('mousedown', {
 			  bubbles: true, cancelable: true
 			}))
+			""" : "")
 			window.__mdPlaceCaret(0, 5)
 			optionShift('ArrowLeft', 'backward')
 			""")
@@ -1654,7 +1659,8 @@ import Testing
 		try await harness.type("P")
 		try await harness.waitForSourceEdits(1)
 		try await harness.waitQuiescent()
-		#expect(harness.source == "P Beta\n\nHead<u></u>\n\nBravo Tail")
+		#expect(harness.source == "P Beta\n\nHead<u></u>\n\nBravo Tail",
+			"mouseDriven=\(mouseDriven)")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

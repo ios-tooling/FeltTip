@@ -1105,6 +1105,8 @@
     return true;
   }
   window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, neutralPreviousBoundaryOffset, neutralPreviousBoundarySource, neutralNextBoundaryOffset, neutralNextBoundarySource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap, caretBeforeEmptyUnderline, boundaryPreviousCharacterOffset, boundaryPreviousCharacter, boundaryNextCharacterOffset, boundaryNextCharacter) {
+    inlineNavigationSelection = null;
+    inlineWordSelectionHome = null;
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
