@@ -2397,6 +2397,38 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test(arguments: [false, true])
+	func cutThenPasteMovesAnInteriorSliceOutOfADeepWrapperStack(
+		backward: Bool
+	) async throws {
+		let source = "zero [***`alpha beta`***](https://example.com/a(b)/c) omega"
+		let moved = (source as NSString).range(of: "pha be")
+		let afterCut = "zero [***`alta`***](https://example.com/a(b)/c) omega"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(
+			harness, start: moved.location, length: moved.length, backward: backward)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == "pha be", "backward=\(backward)")
+			#expect(MarkdownPasteboard.source == "pha be", "backward=\(backward)")
+			#expect(harness.source == afterCut, "backward=\(backward)")
+			try await harness.waitQuiescent()
+
+			let destination = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source ==
+				"zero [***`alta`***](https://example.com/a(b)/c) pha beomega",
+				"backward=\(backward)")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func cutThenPasteMovesTextBetweenTableCellsWithoutDamagingPipes() async throws {
 		let source = """
 			| Name | Age |
