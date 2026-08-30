@@ -432,6 +432,10 @@ extension MarkdownWebView.Coordinator {
 			var customCaret = canonicalCaretAfterInsertedText?(pasted)
 			if isPrivateSourcePaste,
 			   let start = body["start"] as? Int,
+			   let origin = boundaryCutPasteOrigin,
+			   origin.source == source,
+			   Self.emptyUnderlineStart(in: source as NSString, caret: start) == origin.wrapperStart,
+			   origin.pasted == pasted,
 			   let structural = Self.privateBoundaryPaste(
 				in: source as NSString, caret: start, pasted: pasted) {
 				payload["start"] = structural.range.location
@@ -506,10 +510,11 @@ extension MarkdownWebView.Coordinator {
 		let isClipboardCut = body["op"] as? String == "cut"
 		switch MarkdownEditSplicer.apply(edit, to: source) {
 		case .applied(let newSource, let selection, let replaced):
+			var wrotePrivateSource = false
 			if isClipboardCut, !replaced.isEmpty {
 				let clipboardExpected = body["clipboardExpected"] as? String
 					?? edit.expected
-				MarkdownPasteboard.writeSource(
+				wrotePrivateSource = MarkdownPasteboard.writeSource(
 					replaced, ifTextMatches: clipboardExpected)
 			}
 			// A preventDefault'ed structural replacement can be a source no-op
@@ -535,6 +540,20 @@ extension MarkdownWebView.Coordinator {
 			// ambiguous when the edit repeats the surrounding characters).
 			let caretHint = selection?.upperBound
 				?? edit.start + ((edit.replacement ?? "") as NSString).length
+			if isClipboardCut,
+			   wrotePrivateSource,
+			   let wrapperStart = Self.emptyUnderlineStart(
+				in: newSource as NSString, caret: caretHint)
+				?? Self.emptyUnderlineStart(
+					in: newSource as NSString, caret: edit.start)
+				?? Self.emptyUnderlineStart(
+					in: newSource as NSString,
+					caret: edit.start + ((edit.replacement ?? "") as NSString).length) {
+				boundaryCutPasteOrigin = BoundaryCutPasteOrigin(
+					source: newSource, wrapperStart: wrapperStart, pasted: replaced)
+			} else {
+				boundaryCutPasteOrigin = nil
+			}
 			if edit.caret != nil, let selection {
 				// Structural edit: re-render (re-stamps data-s) and restore
 				// the selection (style toggles keep their selection alive;
@@ -955,6 +974,18 @@ extension MarkdownWebView.Coordinator {
 		let caret: Int
 	}
 
+	private static func emptyUnderlineStart(in source: NSString, caret: Int) -> Int? {
+		func isEmptyUnderline(at location: Int) -> Bool {
+			guard location >= 0, location + 7 <= source.length else { return false }
+			return source.substring(with: NSRange(location: location, length: 7))
+				.caseInsensitiveCompare("<u></u>") == .orderedSame
+		}
+		if isEmptyUnderline(at: caret) { return caret }
+		if isEmptyUnderline(at: caret - 7) { return caret - 7 }
+		if isEmptyUnderline(at: caret - 3) { return caret - 3 }
+		return nil
+	}
+
 	/// Reverses a styled block-boundary Cut at an external empty-wrapper home.
 	/// Cut preserves the adjacent inline delimiter so the remaining Markdown is
 	/// balanced; the private flavor still owns the original delimiter and must
@@ -964,21 +995,8 @@ extension MarkdownWebView.Coordinator {
 		caret: Int,
 		pasted: String
 	) -> PrivateBoundaryPaste? {
-		func isEmptyUnderline(at location: Int) -> Bool {
-			guard location >= 0, location + 7 <= source.length else { return false }
-			return source.substring(with: NSRange(location: location, length: 7))
-				.caseInsensitiveCompare("<u></u>") == .orderedSame
-		}
-		let wrapperStart: Int
-		if isEmptyUnderline(at: caret) {
-			wrapperStart = caret
-		} else if isEmptyUnderline(at: caret - 7) {
-			wrapperStart = caret - 7
-		} else if isEmptyUnderline(at: caret - 3) {
-			wrapperStart = caret - 3
-		} else {
-			return nil
-		}
+		guard let wrapperStart = emptyUnderlineStart(
+			in: source, caret: caret) else { return nil }
 		let pastedText = pasted as NSString
 		guard pastedText.length > 1 else { return nil }
 

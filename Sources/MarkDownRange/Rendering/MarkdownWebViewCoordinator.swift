@@ -54,6 +54,16 @@ extension MarkdownWebView {
 		/// wrongly suppress a render.
 		struct SelfEdit { var rev: Int; var text: String }
 		var selfEdit: SelfEdit?
+		/// A source-faithful block-boundary Cut may need a special inverse when
+		/// pasted straight back at the synthetic caret it created. Scope that
+		/// inverse to the exact post-Cut document and wrapper so moving the same
+		/// clipboard fragment to another empty wrapper remains an ordinary paste.
+		struct BoundaryCutPasteOrigin {
+			var source: String
+			var wrapperStart: Int
+			var pasted: String
+		}
+		var boundaryCutPasteOrigin: BoundaryCutPasteOrigin?
 		/// Last scroll position reported by the page, restored after any reload
 		/// so re-renders don't jump to the top.
 		/// Internal (not private) so tests can seed it — the page reports it
