@@ -2109,6 +2109,11 @@ import Testing
 			 expected: "***<u>Al</u>***One\n\nTwo***<u>a</u>*** Tail"),
 			(source: "***~~Alpha~~*** Tail", selected: "ph",
 			 expected: "***~~Al~~***One\n\nTwo***~~a~~*** Tail"),
+			(source: "[***`Alpha`***](https://example.com/a(b)/c) Tail", selected: "ph",
+			 expected: "[***`Al`***](https://example.com/a(b)/c)One\n\nTwo[***`a`***](https://example.com/a(b)/c) Tail"),
+			(source: #"[***<u>Alpha</u>***](https://example.com/a\)b) Tail"#, selected: "ph",
+			 expected: "[***<u>Al</u>***](https://example.com/a\\)b)One\n\n" +
+				"Two[***<u>a</u>***](https://example.com/a\\)b) Tail"),
 		]
 		for (index, item) in cases.enumerated() {
 			let selected = (item.source as NSString).range(of: item.selected)

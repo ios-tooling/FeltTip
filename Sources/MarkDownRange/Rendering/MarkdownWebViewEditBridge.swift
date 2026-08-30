@@ -656,12 +656,15 @@ extension MarkdownWebView.Coordinator {
 		      selection.location >= start,
 		      selection.upperBound <= end else { return nil }
 		let visible = NSRange(location: start, length: end - start)
-		guard let initialExpanded = MarkdownEditSplicer.syntaxExpandedRange(
+		let metadataExpanded = MarkdownEditSplicer.syntaxExpandedRange(
 			visible,
 			syntaxStart: metadata["syntaxStart"] as? [String] ?? [],
 			syntaxEnd: metadata["syntaxEnd"] as? [String] ?? [],
-			in: source),
-		      initialExpanded.location < visible.location,
+			in: source)
+		let initialExpanded = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
+			metadataExpanded ?? visible,
+			in: source)
+		guard initialExpanded.location < visible.location,
 		      initialExpanded.upperBound > visible.upperBound else { return nil }
 		let expanded = enclosingInlineWrapperRange(
 			startingAt: initialExpanded,
