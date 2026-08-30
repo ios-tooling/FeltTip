@@ -724,6 +724,51 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", afterDelete: "Alpha<u></u> charlie",
+		 afterTyping: "Alpha<u>X</u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", afterDelete: "alpha <u></u> charlie",
+		 afterTyping: "alpha <u>X</u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", afterDelete: "Alpha<u></u> **charlie** Delta",
+		 afterTyping: "Alpha<u>X</u> **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", afterDelete: "alpha **Bravo** <u></u> Delta",
+		 afterTyping: "alpha **Bravo** <u>X</u> Delta"),
+	])
+	func typingAfterDeletingASelectedWordReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterDelete: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 723, in: harness)
+		try await harness.waitUntil("selected word deletion caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			document.execCommand('delete');
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterDelete, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
 		 direction: "forward", afterCut: "Alpha<u></u> **echo** Delta",
 		 afterTyping: "Alpha<u>X</u> **echo** Delta"),

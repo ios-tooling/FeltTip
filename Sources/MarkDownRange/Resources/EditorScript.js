@@ -1726,6 +1726,42 @@
       e.preventDefault();
       return;
     }
+    // A selected Backspace/Delete beside a synthetic home has the same source
+    // geometry as Cut, but it must not read or write the clipboard. WebKit may
+    // omit its target range or truncate it through the hidden wrapper, so route
+    // the verified live selection before consulting getTargetRanges().
+    var selectedDeletion = e.inputType === 'deleteContentBackward' ||
+      e.inputType === 'deleteContentForward' ||
+      e.inputType === 'deleteWordBackward' ||
+      e.inputType === 'deleteWordForward';
+    if (selectedDeletion) {
+      var deletionNavigation = liveInlineCaretEndpointSelection();
+      if (deletionNavigation) {
+        e.preventDefault();
+        freeze();
+        post({ op: 'deleteSelection', start: deletionNavigation.start,
+               end: deletionNavigation.end == null
+                 ? deletionNavigation.start + deletionNavigation.sourceExpected.length
+                 : deletionNavigation.end,
+               text: '', expected: deletionNavigation.sourceExpected,
+               canonicalSelection:
+                 deletionNavigation.canonicalSourceSelection === true,
+               inlineCaretOffset: deletionNavigation.inlineCaretOffset,
+               inlineCaretAfterWrapper:
+                 deletionNavigation.inlineCaretAfterWrapper === true,
+               selectionStartsAtHome:
+                 deletionNavigation.selectionStartsAtHome === true,
+               crossRun: !!(deletionNavigation.syntaxStart &&
+                 deletionNavigation.syntaxStart.length ||
+                 deletionNavigation.syntaxEnd && deletionNavigation.syntaxEnd.length),
+               selected: true, endAtBlockStart: false,
+               syntaxStart: deletionNavigation.syntaxStart || [],
+               syntaxEnd: deletionNavigation.syntaxEnd || [], blockPrefixes: [],
+               before: '', after: '', caret: deletionNavigation.start,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
     // WebKit reports the zero-width character inside an inline caret home as
     // the replacement target, even though it is a DOM-only anchor and the
     // source selection is collapsed. Route that one synthetic position by its

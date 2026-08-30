@@ -225,12 +225,13 @@ extension MarkdownWebView.Coordinator {
 		// Synthetic empty-wrapper caret homes have no source-backed DOM endpoint.
 		// Their selection route supplies exact mapped offsets instead; now that
 		// the revision is verified, fill in the canonical source spelling so
-		// hidden Markdown delimiters cannot make an otherwise valid Cut or paste
-		// fail visible-text verification.
+		// hidden Markdown delimiters cannot make an otherwise valid Cut, selected
+		// deletion, or paste fail visible-text verification.
 		if body["canonicalSelection"] as? Bool == true {
 			let sourceText = source as NSString
 			guard let operation = body["op"] as? String,
-			      operation == "paste" || operation == "cut",
+			      operation == "paste" || operation == "cut" ||
+			      operation == "deleteSelection",
 			      body["selected"] as? Bool == true,
 			      let start = body["start"] as? Int,
 			      let end = body["end"] as? Int,
@@ -322,7 +323,7 @@ extension MarkdownWebView.Coordinator {
 				location: adjustedStart, length: adjustedEnd - adjustedStart))
 			payload["before"] = ""
 			payload["after"] = ""
-			if operation == "cut" {
+			if operation == "cut" || operation == "deleteSelection" {
 				let replacement = canonicalReplacementTransform?("") ??
 					(payload["text"] as? String ?? "")
 				if canonicalReplacementTransform != nil {
