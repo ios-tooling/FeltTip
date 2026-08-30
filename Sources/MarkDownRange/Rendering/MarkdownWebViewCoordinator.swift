@@ -62,6 +62,7 @@ extension MarkdownWebView {
 			var source: String
 			var wrapperStart: Int
 			var pasted: String
+			var generation: UInt64
 		}
 		var boundaryCutPasteOrigin: BoundaryCutPasteOrigin?
 		/// Last scroll position reported by the page, restored after any reload

@@ -436,6 +436,7 @@ extension MarkdownWebView.Coordinator {
 			   origin.source == source,
 			   Self.emptyUnderlineStart(in: source as NSString, caret: start) == origin.wrapperStart,
 			   origin.pasted == pasted,
+			   origin.generation == MarkdownPasteboard.sourceGeneration,
 			   let structural = Self.privateBoundaryPaste(
 				in: source as NSString, caret: start, pasted: pasted) {
 				payload["start"] = structural.range.location
@@ -550,7 +551,8 @@ extension MarkdownWebView.Coordinator {
 					in: newSource as NSString,
 					caret: edit.start + ((edit.replacement ?? "") as NSString).length) {
 				boundaryCutPasteOrigin = BoundaryCutPasteOrigin(
-					source: newSource, wrapperStart: wrapperStart, pasted: replaced)
+					source: newSource, wrapperStart: wrapperStart, pasted: replaced,
+					generation: MarkdownPasteboard.sourceGeneration)
 			} else {
 				boundaryCutPasteOrigin = nil
 			}

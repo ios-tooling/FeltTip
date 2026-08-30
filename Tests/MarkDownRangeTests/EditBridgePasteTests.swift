@@ -1923,6 +1923,47 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func identicalCutInAnotherDocumentInvalidatesTheFirstBoundaryOrigin() async throws {
+		let source = "Alpha Bravo\n\n<u></u>Tail"
+		let first = try await CoordinatorBridgeHarness(source: "First")
+		let second = try await CoordinatorBridgeHarness(source: "Second")
+		restore(source, caret: 16, token: 732, in: first)
+		restore(source, caret: 16, token: 733, in: second)
+		for harness in [first, second] {
+			try await harness.waitUntil("cross-document boundary source caret") {
+				try await harness.evaluate(
+					"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+			}
+			harness.rewireRoundTrip()
+			try await harness.run(
+				"window.getSelection().modify('extend', 'backward', 'word')")
+		}
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: first)
+			try await first.waitForSourceEdits(1)
+			try await first.waitQuiescent()
+			try await performResponderCommand(.cut, in: second)
+			try await second.waitForSourceEdits(1)
+			try await second.waitQuiescent()
+			#expect(first.source == second.source)
+
+			try await first.placeCaret(9)
+			try await performResponderCommand(.paste, in: first)
+			try await first.waitForSourceEdits(2)
+		}
+		try await first.waitQuiescent()
+		#expect(first.source == "Alpha Bravo\n\nTail")
+
+		try await first.type("X")
+		try await first.waitForSourceEdits(3)
+		try await first.waitQuiescent()
+		#expect(first.source == "Alpha Bravo\n\nXTail")
+		#expect(try await first.stampMismatches() == [])
+		#expect(first.coordinator.resyncCount == 0)
+		#expect(first.coordinator.hardRejections == 0)
+	}
+
 	@Test(arguments: [
 		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
 		 direction: "forward", afterDelete: "Alpha<u></u> charlie",

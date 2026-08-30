@@ -32,6 +32,9 @@ enum MarkdownPasteboard {
 	nonisolated(unsafe) static var substitute: (@Sendable () -> String?)?
 	nonisolated(unsafe) static var sourceSubstitute: (@Sendable () -> String?)?
 	nonisolated(unsafe) static var writeSourceSubstitute: (@Sendable (String) -> Void)?
+	/// Process-local identity of the newest private-source write. The source
+	/// text alone cannot distinguish identical Cuts made in two open documents.
+	nonisolated(unsafe) private(set) static var sourceGeneration: UInt64 = 0
 
 	/// The clipboard's plain text, or nil when there is nothing pastable.
 	static var text: String? {
@@ -66,6 +69,7 @@ enum MarkdownPasteboard {
 		guard text(text, matches: expectedText) else { return false }
 		if let writeSourceSubstitute {
 			writeSourceSubstitute(source)
+			sourceGeneration &+= 1
 			return true
 		}
 		let data = Data(source.utf8)
@@ -75,6 +79,7 @@ enum MarkdownPasteboard {
 		#else
 			UIPasteboard.general.setData(data, forPasteboardType: sourceType)
 		#endif
+		sourceGeneration &+= 1
 		return true
 	}
 
