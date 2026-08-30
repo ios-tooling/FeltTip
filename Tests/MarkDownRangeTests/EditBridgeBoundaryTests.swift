@@ -1105,6 +1105,36 @@ import Testing
 	}
 
 	@Test(arguments: [
+		"Before\n\n<!-- <u></u> -->\n\nAfter",
+		"Before\n\n<!-- hidden\n<u></u>\nstill hidden -->\n\nAfter",
+	])
+	func aWrapperSpellingInsideAnHTMLCommentCannotEditTheHiddenComment(
+		source: String
+	) async throws {
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 722))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('insertText', false, 'X')")
+		try await Task.sleep(for: .milliseconds(500))
+
+		#expect(harness.source == source)
+		#expect(harness.sourceEditCount == 0)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphXa<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u> XTail"),
 	])

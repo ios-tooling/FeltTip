@@ -604,8 +604,21 @@ extension MarkdownWebView {
 				}
 				return inTag && quote != nil
 			}
+			func isInsideHTMLComment(_ location: Int) -> Bool {
+				guard location >= 0, location <= source.length else { return false }
+				let prefix = NSRange(location: 0, length: location)
+				let opening = source.range(of: "<!--", options: .backwards, range: prefix)
+				guard opening.location != NSNotFound else { return false }
+				let closing = source.range(of: "-->", options: .backwards, range: prefix)
+				guard closing.location == NSNotFound || opening.location > closing.location else {
+					return false
+				}
+				let suffix = NSRange(location: location, length: source.length - location)
+				return source.range(of: "-->", range: suffix).location != NSNotFound
+			}
 			let forceVisibleSyntaxSnap = isInsideInlineLinkDestination(offset) ||
-				isInsideReferenceDestination(offset) || isInsideHTMLAttribute(offset)
+				isInsideReferenceDestination(offset) || isInsideHTMLAttribute(offset) ||
+				isInsideHTMLComment(offset)
 			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
 				!isEscaped(at: offset - 3) &&
 				!forceVisibleSyntaxSnap &&
