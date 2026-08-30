@@ -1052,8 +1052,13 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
-	@Test func aCaretInAHiddenReferenceDestinationCannotEditAnInventedStyledLine() async throws {
-		let source = "[Link][id]\n\n[id]: https://example.com/<u></u>\n\nTail"
+	@Test(arguments: [
+		"[Link][id]\n\n[id]: https://example.com/<u></u>\n\nTail",
+		"[Link][id]\n\n[id]: /url\n  \"<u></u>\"\n\nTail",
+	])
+	func aCaretInAHiddenReferenceDestinationCannotEditAnInventedStyledLine(
+		source: String
+	) async throws {
 		let caret = (source as NSString).range(of: "<u></u>").upperBound
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
 		harness.focusWebView()
@@ -1131,6 +1136,94 @@ import Testing
 		#expect(harness.source == source)
 		#expect(harness.sourceEditCount == 0)
 		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func anActualEmptyUnderlineInsideVisibleRawHTMLRemainsEditable() async throws {
+		let source = "<span>Alpha<u></u> Tail</span>"
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 723))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "<span>Alpha<u></u>X Tail</span>")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		"[id]: /url\n    <u></u>\n\nTail",
+		"[id]: /url\n\t\"<u></u>\"\n\nTail",
+	])
+	func anIndentedCodeLiteralAfterAReferenceDefinitionRemainsEditable(
+		source: String
+	) async throws {
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let expected = NSMutableString(string: source)
+		expected.insert("X", at: caret)
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 724))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected as String)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func aQuotedLineAfterACompletedReferenceDefinitionRemainsEditable() async throws {
+		let source = "[id]: /url \"done\"\n\"<u></u>\"\n\nTail"
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 725))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "[id]: /url \"done\"\n\"<u></u>X\"\n\nTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 

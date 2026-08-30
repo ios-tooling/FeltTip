@@ -571,19 +571,116 @@ extension MarkdownWebView {
 			}
 			func isInsideReferenceDestination(_ location: Int) -> Bool {
 				guard location >= lineStart, location <= lineEnd else { return false }
-				let line = source.substring(with: NSRange(
-					location: lineStart, length: lineEnd - lineStart)) as NSString
-				let delimiter = line.range(of: "]:")
-				guard delimiter.location != NSNotFound else { return false }
-				var firstContent = 0
-				while firstContent < delimiter.location {
-					let character = line.character(at: firstContent)
-					if character != 0x20, character != 0x09 { break }
-					firstContent += 1
+				func definitionDelimiter(in range: NSRange) -> NSRange? {
+					let line = source.substring(with: range) as NSString
+					let delimiter = line.range(of: "]:")
+					guard delimiter.location != NSNotFound else { return nil }
+					var firstContent = 0
+					while firstContent < delimiter.location {
+						let character = line.character(at: firstContent)
+						if character != 0x20, character != 0x09 { break }
+						firstContent += 1
+					}
+					guard firstContent < delimiter.location,
+						  line.character(at: firstContent) == 0x5B else { return nil }
+					return NSRange(
+						location: range.location + delimiter.location,
+						length: delimiter.length)
 				}
-				return firstContent < delimiter.location &&
-					line.character(at: firstContent) == 0x5B &&
-					location - lineStart >= delimiter.upperBound
+				let currentLine = NSRange(location: lineStart, length: lineEnd - lineStart)
+				if let delimiter = definitionDelimiter(in: currentLine) {
+					return location >= delimiter.upperBound
+				}
+
+				// A CommonMark reference title may occupy the immediately following,
+				// up-to-three-space-indented line. That line is hidden along with the
+				// destination, so a restored Styled caret must not invent an editable run.
+				guard lineStart > 0 else { return false }
+				var previousEnd = lineStart
+				while previousEnd > 0 {
+					let character = source.character(at: previousEnd - 1)
+					guard character == 0x0A || character == 0x0D else { break }
+					previousEnd -= 1
+				}
+				var previousStart = previousEnd
+				while previousStart > 0 {
+					let character = source.character(at: previousStart - 1)
+					if character == 0x0A || character == 0x0D { break }
+					previousStart -= 1
+				}
+				let previousLine = NSRange(
+					location: previousStart, length: previousEnd - previousStart)
+				guard let delimiter = definitionDelimiter(in: previousLine) else { return false }
+				var destinationStart = delimiter.upperBound
+				while destinationStart < previousEnd {
+					let character = source.character(at: destinationStart)
+					if character != 0x20, character != 0x09 { break }
+					destinationStart += 1
+				}
+				guard destinationStart < previousEnd else { return false }
+				var destinationEnd = destinationStart
+				if source.character(at: destinationStart) == 0x3C {
+					destinationEnd += 1
+					while destinationEnd < previousEnd {
+						let character = source.character(at: destinationEnd)
+						if character == 0x5C, destinationEnd + 1 < previousEnd {
+							destinationEnd += 2
+							continue
+						}
+						destinationEnd += 1
+						if character == 0x3E { break }
+					}
+					guard destinationEnd <= previousEnd,
+						  source.character(at: destinationEnd - 1) == 0x3E else { return false }
+				} else {
+					while destinationEnd < previousEnd {
+						let character = source.character(at: destinationEnd)
+						if character == 0x5C, destinationEnd + 1 < previousEnd {
+							destinationEnd += 2
+							continue
+						}
+						if character == 0x20 || character == 0x09 { break }
+						destinationEnd += 1
+					}
+				}
+				var trailingContent = destinationEnd
+				while trailingContent < previousEnd {
+					let character = source.character(at: trailingContent)
+					if character != 0x20, character != 0x09 { break }
+					trailingContent += 1
+				}
+				guard trailingContent == previousEnd else { return false }
+
+				var titleStart = lineStart
+				var indentationColumns = 0
+				while titleStart < lineEnd, indentationColumns <= 3 {
+					let character = source.character(at: titleStart)
+					if character == 0x20 {
+						indentationColumns += 1
+					} else if character == 0x09 {
+						indentationColumns += 4 - indentationColumns % 4
+					} else {
+						break
+					}
+					titleStart += 1
+				}
+				guard indentationColumns <= 3, titleStart < lineEnd else { return false }
+				let opener = source.character(at: titleStart)
+				let closer: unichar
+				switch opener {
+				case 0x22, 0x27: closer = opener
+				case 0x28: closer = 0x29
+				default: return false
+				}
+				var titleEnd = lineEnd
+				while titleEnd > titleStart + 1 {
+					let character = source.character(at: titleEnd - 1)
+					if character != 0x20, character != 0x09 { break }
+					titleEnd -= 1
+				}
+				guard titleEnd > titleStart + 1,
+					  source.character(at: titleEnd - 1) == closer else { return false }
+				return location > titleStart && location < titleEnd
 			}
 			func isInsideHTMLAttribute(_ location: Int) -> Bool {
 				guard location >= lineStart, location <= lineEnd else { return false }
