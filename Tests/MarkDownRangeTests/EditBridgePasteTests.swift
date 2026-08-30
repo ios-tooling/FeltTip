@@ -1685,6 +1685,18 @@ import Testing
 		(source: "Head<u></u>\n\nBravo\tCharlie Tail", caret: 7,
 		 direction: "forward", moves: 2,
 		 afterTyping: "Head<u></u>\n\nBravo\tCharlieX Tail"),
+		(source: "Alpha Bravo  \ncontinuation\n\n<u></u>Tail", caret: 31,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo  \ncontinuation\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo  \ncontinuation Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\nBravo  \ncontinuationX Tail"),
+		(source: "Alpha **Bravo  \ncontinuation**\n\n<u></u>Tail", caret: 35,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha **Bravo  \ncontinuation**\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\n**Bravo  \ncontinuation** Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\n**Bravo  \ncontinuationX** Tail"),
 	])
 	func immediateCutPasteAfterACrossBlockWordSelectionRestoresTheDirectionalCaret(
 		source: String,

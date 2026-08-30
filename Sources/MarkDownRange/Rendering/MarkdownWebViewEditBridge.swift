@@ -991,27 +991,34 @@ extension MarkdownWebView.Coordinator {
 			}
 		}
 		guard firstBreak != NSNotFound else { return nil }
+		var boundaryStart = firstBreak
+		for separator in ["\r\n\r\n", "\n\n", "\r\r"] {
+			let candidate = pastedText.range(of: separator, options: .backwards)
+			if candidate.location != NSNotFound {
+				boundaryStart = max(boundaryStart, candidate.location)
+			}
+		}
 
 		// Backward selection: visible suffix + closing delimiter + separator.
-		if firstBreak > 0 {
+		if boundaryStart > 0 {
 			var delimiterStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
-				in: pastedText, boundary: firstBreak)
-			if delimiterStart == firstBreak {
+				in: pastedText, boundary: boundaryStart)
+			if delimiterStart == boundaryStart {
 				while delimiterStart > 0,
 				      isInlineDelimiterUnit(pastedText.character(at: delimiterStart - 1)) {
 					delimiterStart -= 1
 				}
 			}
-			if delimiterStart > 0, delimiterStart < firstBreak {
+			if delimiterStart > 0, delimiterStart < boundaryStart {
 				let delimiter = pastedText.substring(with: NSRange(
-					location: delimiterStart, length: firstBreak - delimiterStart))
+					location: delimiterStart, length: boundaryStart - delimiterStart))
 				let delimiterLength = (delimiter as NSString).length
 				if wrapperStart >= delimiterLength,
 				   source.substring(with: NSRange(
 					location: wrapperStart - delimiterLength,
 					length: delimiterLength)) == delimiter {
 					let visible = pastedText.substring(to: delimiterStart)
-					let boundary = pastedText.substring(from: firstBreak)
+					let boundary = pastedText.substring(from: boundaryStart)
 					let replacement = visible + delimiter + boundary
 					let start = wrapperStart - delimiterLength
 					return PrivateBoundaryPaste(
@@ -1020,7 +1027,7 @@ extension MarkdownWebView.Coordinator {
 						caret: start + (replacement as NSString).length + 3)
 				}
 			}
-			let boundary = pastedText.substring(from: firstBreak)
+			let boundary = pastedText.substring(from: boundaryStart)
 			if (caret == wrapperStart || caret == wrapperStart + 3),
 			   boundary.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) }) {
 				return PrivateBoundaryPaste(
