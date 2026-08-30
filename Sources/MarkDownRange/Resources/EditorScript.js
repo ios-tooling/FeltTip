@@ -1493,6 +1493,32 @@
              rev: stampRev, seq: seq++ });
       return true;
     }
+    var formatNavigation = liveInlineCaretEndpointSelection();
+    if (formatNavigation) {
+      freeze();
+      post({ op: 'format', command: command,
+             start: formatNavigation.start,
+             end: formatNavigation.end == null
+               ? formatNavigation.start + formatNavigation.sourceExpected.length
+               : formatNavigation.end,
+             expected: formatNavigation.sourceExpected,
+             canonicalSelection:
+               formatNavigation.canonicalSourceSelection === true,
+             inlineCaretOffset: formatNavigation.inlineCaretOffset,
+             inlineCaretAfterWrapper:
+               formatNavigation.inlineCaretAfterWrapper === true,
+             selectionStartsAtHome:
+               formatNavigation.selectionStartsAtHome === true,
+             crossRun: !!(formatNavigation.syntaxStart &&
+               formatNavigation.syntaxStart.length ||
+               formatNavigation.syntaxEnd && formatNavigation.syntaxEnd.length),
+             selected: true, endAtBlockStart: false,
+             syntaxStart: formatNavigation.syntaxStart || [],
+             syntaxEnd: formatNavigation.syntaxEnd || [], blockPrefixes: [],
+             before: '', after: '', caret: formatNavigation.end,
+             rev: stampRev, seq: seq++ });
+      return true;
+    }
     var startPos = normalizePosition(range.startContainer, range.startOffset, true);
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);

@@ -823,6 +823,53 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8, command: "bold",
+		 direction: "forward", expected: "Alpha<u></u>  **Bravo** charlie",
+		 afterTyping: "Alpha<u></u>  **X** charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14, command: "bold",
+		 direction: "backward", expected: "alpha **Bravo**<u></u> charlie",
+		 afterTyping: "alpha **X**<u></u> charlie"),
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8, command: "italic",
+		 direction: "forward", expected: "Alpha<u></u>  _Bravo_ charlie",
+		 afterTyping: "Alpha<u></u>  _X_ charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14, command: "italic",
+		 direction: "backward", expected: "alpha _Bravo_<u></u> charlie",
+		 afterTyping: "alpha _X_<u></u> charlie"),
+	])
+	func formattingAWordSelectionFromTheSyntheticCaretPreservesItsWrapper(
+		source: String,
+		caret: Int,
+		command: String,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 725, in: harness)
+		try await harness.waitUntil("selected word formatting caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			window.__mdApplyFormat('\(command)');
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping,
+			"command=\(command), direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
 		 direction: "forward", afterCut: "Alpha<u></u> **echo** Delta",
 		 afterTyping: "Alpha<u>X</u> **echo** Delta"),

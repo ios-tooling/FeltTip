@@ -231,7 +231,8 @@ extension MarkdownWebView.Coordinator {
 			let sourceText = source as NSString
 			guard let operation = body["op"] as? String,
 			      operation == "paste" || operation == "cut" ||
-			      operation == "deleteSelection" || operation == "replaceSelection",
+			      operation == "deleteSelection" || operation == "replaceSelection" ||
+			      operation == "format",
 			      body["selected"] as? Bool == true,
 			      let start = body["start"] as? Int,
 			      let end = body["end"] as? Int,
@@ -269,7 +270,14 @@ extension MarkdownWebView.Coordinator {
 						location: start + localWord.location, length: localWord.length)
 					let fullyExpandedWord = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
 						word, in: sourceText)
-					if fullyExpandedWord != word {
+					if operation == "format" {
+						// Native word selection owns adjacent visual whitespace, but
+						// inline Markdown delimiters may not: `** word**` does not
+						// render as the requested bold word. Format only the trimmed
+						// visible selection while leaving its spacing in place.
+						adjustedStart = word.location
+						adjustedEnd = word.upperBound
+					} else if fullyExpandedWord != word {
 						// A complete styled word follows the ordinary owned-syntax
 						// route; only a partial run needs delimiter preservation.
 					} else if body["selectionStartsAtHome"] as? Bool == true {
