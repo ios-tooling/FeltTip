@@ -879,6 +879,10 @@ import Testing
 		 command: "inlineCode", direction: "forward",
 		 expected: "Alpha<u></u>  Bravo `charlie` Delta",
 		 afterTyping: "Alpha<u></u>  X `charlie` Delta"),
+		(source: "[Alpha](https://a)<u></u> Bravo [charlie](https://c)", caret: 21,
+		 command: "link", direction: "forward",
+		 expected: "[Alpha](https://a)<u></u> [Bravo]() [charlie](https://c)",
+		 afterTyping: "[Alpha](https://a)<u></u> [X]() [charlie](https://c)"),
 	])
 	func formattingAWordSelectionFromTheSyntheticCaretPreservesItsWrapper(
 		source: String,

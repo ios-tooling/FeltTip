@@ -363,6 +363,53 @@ enum MarkdownSourceFormatter {
 			return nil
 		}
 
+		func labelDelimitersMatch(opening: Int, closing: Int) -> Bool {
+			guard opening >= 0, closing < text.length,
+			      text.character(at: opening) == 0x5B,
+			      text.character(at: closing) == 0x5D else { return false }
+			var depth = 0
+			var escaped = false
+			var offset = opening
+			while offset <= closing {
+				let character = text.character(at: offset)
+				if escaped {
+					escaped = false
+				} else if character == 0x5C {
+					escaped = true
+				} else if character == 0x5B {
+					depth += 1
+				} else if character == 0x5D {
+					depth -= 1
+					if depth == 0 { return offset == closing }
+					if depth < 0 { return false }
+				}
+				offset += 1
+			}
+			return false
+		}
+
+		func labelOpening(closing: Int, lineStart: Int) -> Int? {
+			guard lineStart >= 0, closing < text.length else { return nil }
+			var stack: [Int] = []
+			var escaped = false
+			var offset = lineStart
+			while offset <= closing {
+				let character = text.character(at: offset)
+				if escaped {
+					escaped = false
+				} else if character == 0x5C {
+					escaped = true
+				} else if character == 0x5B {
+					stack.append(offset)
+				} else if character == 0x5D {
+					guard let opening = stack.popLast() else { return nil }
+					if offset == closing { return opening }
+				}
+				offset += 1
+			}
+			return nil
+		}
+
 		let selected = text.substring(with: selection)
 		if selection.location > 0,
 		   text.substring(with: NSRange(location: selection.location - 1, length: 1)) == "[",
@@ -427,21 +474,17 @@ enum MarkdownSourceFormatter {
 				if character == 0x0A || character == 0x0D { break }
 				lineEnd += 1
 			}
-			let opening = text.range(
-				of: "[",
-				options: .backwards,
-				range: NSRange(
-					location: lineStart,
-					length: selection.location - lineStart))
 			let labelClose = text.range(
 				of: "](",
 				options: [],
 				range: NSRange(
 					location: selection.upperBound,
 					length: lineEnd - selection.upperBound))
-			if opening.location != NSNotFound,
-			   labelClose.location != NSNotFound,
+			if labelClose.location != NSNotFound,
+			   let openingLocation = labelOpening(
+				closing: labelClose.location, lineStart: lineStart),
 			   let close = destinationClose(labelEnd: labelClose.location) {
+				let opening = NSRange(location: openingLocation, length: 1)
 				var prefixEnd = selection.location
 				while prefixEnd > opening.upperBound {
 					let character = text.character(at: prefixEnd - 1)
@@ -495,13 +538,9 @@ enum MarkdownSourceFormatter {
 				if character == 0x0A || character == 0x0D { break }
 				lineStart -= 1
 			}
-			let opening = text.range(
-				of: "[",
-				options: .backwards,
-				range: NSRange(
-					location: lineStart,
-					length: selection.location - lineStart))
-			if opening.location != NSNotFound {
+			if let openingLocation = labelOpening(
+				closing: selection.upperBound, lineStart: lineStart) {
+				let opening = NSRange(location: openingLocation, length: 1)
 				var prefixEnd = selection.location
 				while prefixEnd > opening.upperBound {
 					let character = text.character(at: prefixEnd - 1)
