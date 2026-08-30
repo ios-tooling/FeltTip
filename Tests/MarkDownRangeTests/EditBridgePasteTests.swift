@@ -1114,6 +1114,62 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "d\n",
+		 selectedSource: "d**\n\n"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\nI",
+		 selectedSource: "\n\n*I"),
+	])
+	func copyOnlyPartialBoundarySelectionPastesCleanPublicTextAtADistantCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		selectedSource: String
+	) async throws {
+		#expect(selectedSource != publicCopy)
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1008 + caret, in: harness)
+		try await harness.waitUntil("Copy-only boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-only public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+			#expect(TestPasteboard.source == nil, "direction=\(direction)")
+			#expect(harness.source == source, "direction=\(direction)")
+
+			try await harness.run("window.__mdPlaceCaret(\((source as NSString).length));")
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source + publicCopy, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Head\n\n<u></u>Tail", caret: 9,
 		 key: "ArrowLeft", direction: "backward",
 		 expected: "Head\n\n<u>X</u>Tail"),
