@@ -427,6 +427,12 @@ import Testing
 		(source: "A<u></u><u></u>  Bravo charlie", caret: 15,
 		 direction: "forward", copied: "  Bravo",
 		 expected: "A<u></u><u></u>P charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha **Bravo P**<u></u> Delta"),
 	])
 	func optionShiftSelectionFromAnEmptyUnderlineCaretCopiesAndReplacesTheVisibleWord(
 		source: String,
@@ -493,6 +499,12 @@ import Testing
 		(source: "A<u></u><u></u>  Bravo charlie", caret: 15,
 		 direction: "forward", copied: "  Bravo",
 		 expected: "A<u></u><u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha **Bravo** <u></u> Delta"),
 	])
 	func optionShiftCutFromAnEmptyUnderlineCaretDeletesOnlyTheVisibleWord(
 		source: String,

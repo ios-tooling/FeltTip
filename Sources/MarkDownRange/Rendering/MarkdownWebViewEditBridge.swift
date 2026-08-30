@@ -220,6 +220,7 @@ extension MarkdownWebView.Coordinator {
 		}
 		let source = currentSource ?? parent.text
 		var payload = body
+		var canonicalReplacementTransform: ((String) -> String)?
 		// Synthetic empty-wrapper caret homes have no source-backed DOM endpoint.
 		// Their selection route supplies exact mapped offsets instead; now that
 		// the revision is verified, fill in the canonical source spelling so
@@ -250,10 +251,72 @@ extension MarkdownWebView.Coordinator {
 				resync(caretAt: body["start"] as? Int)
 				return
 			}
-			payload["expected"] = sourceText.substring(
-				with: NSRange(location: start, length: end - start))
+			var adjustedStart = start
+			var adjustedEnd = end
+			let syntaxStart = body["syntaxStart"] as? [String] ?? []
+			let syntaxEnd = body["syntaxEnd"] as? [String] ?? []
+			let visibleSelection = (body["expected"] as? String ?? "")
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+			if body["crossRun"] as? Bool != true,
+			   syntaxStart.isEmpty, syntaxEnd.isEmpty, !visibleSelection.isEmpty {
+				let selectedSource = sourceText.substring(with: NSRange(
+					location: start, length: end - start)) as NSString
+				let localWord = selectedSource.range(of: visibleSelection)
+				if localWord.location != NSNotFound {
+					let word = NSRange(
+						location: start + localWord.location, length: localWord.length)
+					let fullyExpandedWord = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
+						word, in: sourceText)
+					if fullyExpandedWord != word {
+						// A complete styled word follows the ordinary owned-syntax
+						// route; only a partial run needs delimiter preservation.
+					} else if body["selectionStartsAtHome"] as? Bool == true {
+						let prefix = Self.hiddenInlinePrefixToPreserve(
+							in: sourceText, boundary: start, wordStart: word.location)
+						if !prefix.isEmpty {
+							while adjustedEnd < sourceText.length {
+								let character = sourceText.character(at: adjustedEnd)
+								guard character == 0x20 || character == 0x09 else { break }
+								adjustedEnd += 1
+							}
+							let whitespace = sourceText.substring(with: NSRange(
+								location: end, length: adjustedEnd - end))
+							canonicalReplacementTransform = { $0 + whitespace + prefix }
+						}
+					} else {
+						let visibleBoundary = Self.visibleWordBoundaryBeforeHiddenInlineSuffix(
+							in: sourceText, boundary: end)
+						let suffix = Self.hiddenInlineSuffixToPreserve(
+							in: sourceText, wordEnd: word.upperBound,
+							visibleBoundary: visibleBoundary, boundary: end)
+						if !suffix.isEmpty {
+							while adjustedStart > 0 {
+								let character = sourceText.character(at: adjustedStart - 1)
+								guard character == 0x20 || character == 0x09 else { break }
+								adjustedStart -= 1
+							}
+							let whitespace = sourceText.substring(with: NSRange(
+								location: adjustedStart, length: start - adjustedStart))
+							canonicalReplacementTransform = { inserted in
+								inserted.isEmpty
+									? suffix + whitespace
+									: whitespace + inserted + suffix
+							}
+						}
+					}
+				}
+			}
+			payload["start"] = adjustedStart
+			payload["end"] = adjustedEnd
+			payload["expected"] = sourceText.substring(with: NSRange(
+				location: adjustedStart, length: adjustedEnd - adjustedStart))
 			payload["before"] = ""
 			payload["after"] = ""
+			if operation == "cut", let transform = canonicalReplacementTransform {
+				let replacement = transform("")
+				payload["text"] = replacement
+				payload["caret"] = adjustedStart + (replacement as NSString).length
+			}
 		}
 		if body["op"] as? String == "neutralWordDelete" {
 			guard let caret = body["start"] as? Int,
@@ -301,6 +364,9 @@ extension MarkdownWebView.Coordinator {
 				return
 			}
 			payload["text"] = pasted
+			if let transform = canonicalReplacementTransform {
+				payload["text"] = transform(pasted)
+			}
 			var customCaret: Int?
 			if pasted.contains("\n"),
 			   let start = body["start"] as? Int,
@@ -644,7 +710,7 @@ extension MarkdownWebView.Coordinator {
 		guard let word else { return nil }
 		let expandedWord = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
 			word, in: text)
-		let range = backward
+		var range = backward
 			? NSRange(
 				location: expandedWord.location,
 				length: boundary - expandedWord.location)
@@ -660,7 +726,35 @@ extension MarkdownWebView.Coordinator {
 				visibleBoundary: visibleBoundary, boundary: boundary)
 			: hiddenInlinePrefixToPreserve(
 				in: text, boundary: boundary, wordStart: word.location)
-		return AdjacentWordDeletion(range: range, replacement: preservedSyntax)
+		guard !preservedSyntax.isEmpty else {
+			return AdjacentWordDeletion(range: range, replacement: "")
+		}
+		if backward {
+			var visibleStart = word.location
+			while visibleStart > 0 {
+				let character = text.character(at: visibleStart - 1)
+				guard character == 0x20 || character == 0x09 else { break }
+				visibleStart -= 1
+			}
+			let movedWhitespace = text.substring(with: NSRange(
+				location: visibleStart, length: word.location - visibleStart))
+			range = NSRange(location: visibleStart, length: boundary - visibleStart)
+			return AdjacentWordDeletion(
+				range: range,
+				replacement: preservedSyntax + movedWhitespace)
+		}
+		var visibleEnd = word.upperBound
+		while visibleEnd < text.length {
+			let character = text.character(at: visibleEnd)
+			guard character == 0x20 || character == 0x09 else { break }
+			visibleEnd += 1
+		}
+		let movedWhitespace = text.substring(with: NSRange(
+			location: word.upperBound, length: visibleEnd - word.upperBound))
+		range = NSRange(location: boundary, length: visibleEnd - boundary)
+		return AdjacentWordDeletion(
+			range: range,
+			replacement: movedWhitespace + preservedSyntax)
 	}
 
 	private static func isInlineDelimiterUnit(_ character: unichar) -> Bool {
