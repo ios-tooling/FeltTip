@@ -1715,6 +1715,18 @@ import Testing
 		(source: "> - Head<u></u>\n\n- [ ] Bravo Tail", caret: 11,
 		 direction: "forward", moves: 1,
 		 afterTyping: "> - Head<u></u>\n\n- [ ] BravoX Tail"),
+		(source: "12) Alpha Bravo\n\n12) <u></u>Tail", caret: 24,
+		 direction: "backward", moves: 1,
+		 afterTyping: "12) Alpha Bravo\n\n12) <u>X</u>Tail"),
+		(source: "## Head<u></u>\n\n12) Bravo Tail", caret: 10,
+		 direction: "forward", moves: 1,
+		 afterTyping: "## Head<u></u>\n\n12) BravoX Tail"),
+		(source: "## Alpha Bravo\n\n### <u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 afterTyping: "## Alpha Bravo\n\n### <u>X</u>Tail"),
+		(source: "- [x] Head<u></u>\n\n## Bravo Tail", caret: 13,
+		 direction: "forward", moves: 1,
+		 afterTyping: "- [x] Head<u></u>\n\n## BravoX Tail"),
 	])
 	func immediateCutPasteAfterACrossBlockWordSelectionRestoresTheDirectionalCaret(
 		source: String,
@@ -1750,6 +1762,42 @@ import Testing
 		try await harness.waitForSourceEdits(3)
 		try await harness.waitQuiescent()
 		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func privateMultilinePasteEndingInAListPrefixDoesNotImitateABoundaryCut() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let savedText = MarkdownPasteboard.substitute
+		let savedSource = MarkdownPasteboard.sourceSubstitute
+		defer {
+			MarkdownPasteboard.substitute = savedText
+			MarkdownPasteboard.sourceSubstitute = savedSource
+		}
+		let pasted = "Alpha\n123. "
+		MarkdownPasteboard.substitute = { pasted }
+		MarkdownPasteboard.sourceSubstitute = { pasted }
+
+		let source = "Head<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 7, token: 728, in: harness)
+		try await harness.waitUntil("independent private multiline paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+
+		try await performResponderCommand(.paste, in: harness)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "HeadAlpha\n123. Tail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "HeadAlpha\n123. XTail")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

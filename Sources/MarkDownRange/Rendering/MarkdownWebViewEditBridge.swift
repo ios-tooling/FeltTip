@@ -1002,6 +1002,7 @@ extension MarkdownWebView.Coordinator {
 			return 0
 		}
 		var boundaryStart = firstBreak
+		var foundBlockSeparator = false
 		var scan = firstBreak
 		while scan < pastedText.length {
 			let firstLength = lineBreakLength(at: scan)
@@ -1014,12 +1015,14 @@ extension MarkdownWebView.Coordinator {
 				}
 				if lineBreakLength(at: second) > 0 {
 					boundaryStart = scan
+					foundBlockSeparator = true
 				}
 				scan += firstLength
 			} else {
 				scan += 1
 			}
 		}
+		guard foundBlockSeparator else { return nil }
 
 		// Backward selection: visible suffix + closing delimiter + separator.
 		if boundaryStart > 0 {
