@@ -276,6 +276,42 @@ struct EditorSelectionHandoffTests {
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test(arguments: [
+		(range: NSRange(location: 0, length: 9), selected: "AB", expected: "X"),
+		(range: NSRange(location: 0, length: 8), selected: "A", expected: "XB"),
+		(range: NSRange(location: 1, length: 8), selected: "B", expected: "AX"),
+	])
+	func restoredSelectionsAcrossAnEmptyUnderlineReplaceTheirWholeSourceRange(
+		range: NSRange,
+		selected: String,
+		expected: String
+	) async throws {
+		let source = "A<u></u>B"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(MarkdownSelectionTarget(range: range, token: 2))
+		.onSourceEdit { [weak harness] newText, _ in
+			harness?.recordExternalEdit(newText)
+		}
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+		try await harness.waitUntil("selection spanning an empty underline") {
+			try await harness.evaluate("window.getSelection().toString()") == selected
+		}
+		harness.rewireRoundTrip()
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected)
+		#expect(harness.coordinator.resyncCount == 0,
+			"incidents: \(harness.coordinator.bridgeIncidents), reason: \(harness.coordinator.lastResyncReason ?? "none")")
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	private func findTextView(in view: NSView) -> NSTextView? {
 		if let textView = view as? NSTextView { return textView }
 		for child in view.subviews {
