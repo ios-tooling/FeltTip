@@ -163,6 +163,91 @@ enum MarkdownSourceFormatter {
 			}
 		}
 
+		// Toggling only the leading or trailing part of one delimited run
+		// splits the run instead of stacking another pair of markers. Keep
+		// horizontal boundary whitespace outside the surviving styled fragment
+		// so the resulting Markdown remains valid.
+		if selection.length > 0 {
+			for candidate in [marker] + alternates {
+				let length = (candidate as NSString).length
+				let markerBefore = selection.location >= length &&
+					text.substring(with: NSRange(
+						location: selection.location - length, length: length)) == candidate
+				let markerAfter = selection.upperBound + length <= text.length &&
+					text.substring(with: NSRange(
+						location: selection.upperBound, length: length)) == candidate
+
+				if markerBefore, !markerAfter {
+					var lineEnd = selection.upperBound
+					while lineEnd < text.length {
+						let character = text.character(at: lineEnd)
+						if character == 0x0A || character == 0x0D { break }
+						lineEnd += 1
+					}
+					let closing = text.range(
+						of: candidate,
+						options: [],
+						range: NSRange(
+							location: selection.upperBound,
+							length: lineEnd - selection.upperBound))
+					guard closing.location != NSNotFound else { continue }
+					var remainderStart = selection.upperBound
+					while remainderStart < closing.location {
+						let character = text.character(at: remainderStart)
+						guard character == 0x20 || character == 0x09 else { break }
+						remainderStart += 1
+					}
+					guard remainderStart < closing.location else { continue }
+					let selected = text.substring(with: selection)
+					let whitespace = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: remainderStart - selection.upperBound))
+					return .init(
+						range: NSRange(
+							location: selection.location - length,
+							length: remainderStart - selection.location + length),
+						replacement: selected + whitespace + candidate,
+						selection: NSRange(
+							location: selection.location - length,
+							length: selection.length))
+				}
+
+				if markerAfter, !markerBefore {
+					var lineStart = selection.location
+					while lineStart > 0 {
+						let character = text.character(at: lineStart - 1)
+						if character == 0x0A || character == 0x0D { break }
+						lineStart -= 1
+					}
+					let opening = text.range(
+						of: candidate,
+						options: .backwards,
+						range: NSRange(
+							location: lineStart,
+							length: selection.location - lineStart))
+					guard opening.location != NSNotFound else { continue }
+					var prefixEnd = selection.location
+					while prefixEnd > opening.upperBound {
+						let character = text.character(at: prefixEnd - 1)
+						guard character == 0x20 || character == 0x09 else { break }
+						prefixEnd -= 1
+					}
+					guard prefixEnd > opening.upperBound else { continue }
+					let whitespace = text.substring(with: NSRange(
+						location: prefixEnd, length: selection.location - prefixEnd))
+					let selected = text.substring(with: selection)
+					return .init(
+						range: NSRange(
+							location: prefixEnd,
+							length: selection.upperBound + length - prefixEnd),
+						replacement: candidate + whitespace + selected,
+						selection: NSRange(
+							location: prefixEnd + length + (whitespace as NSString).length,
+							length: selection.length))
+				}
+			}
+		}
+
 		let length = (marker as NSString).length
 		return .init(
 			range: selection,

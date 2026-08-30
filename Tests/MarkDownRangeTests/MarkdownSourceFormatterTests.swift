@@ -68,6 +68,29 @@ import AppKit
 		}
 	}
 
+	@Test(arguments: [
+		(command: MarkdownFormattingCommand.bold, source: "**Bravo charlie**",
+		 selected: "Bravo", expected: "Bravo **charlie**"),
+		(command: MarkdownFormattingCommand.bold, source: "**Bravo charlie**",
+		 selected: "charlie", expected: "**Bravo** charlie"),
+		(command: MarkdownFormattingCommand.italic, source: "_Bravo charlie_",
+		 selected: "Bravo", expected: "Bravo _charlie_"),
+		(command: MarkdownFormattingCommand.italic, source: "_Bravo charlie_",
+		 selected: "charlie", expected: "_Bravo_ charlie"),
+	])
+	func togglingAStyledRunFragmentSplitsTheRunCleanly(
+		command: MarkdownFormattingCommand,
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let (result, resultSelection) = try apply(
+			command, to: source, selection: selection)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: resultSelection) == selected)
+	}
+
 	@Test func underlineRoundTripsItsAsymmetricHTMLMarkers() throws {
 		let source = "Alpha Beta"
 		let selection = (source as NSString).range(of: "Alpha")
