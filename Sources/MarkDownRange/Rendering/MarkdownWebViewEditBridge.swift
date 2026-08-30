@@ -322,9 +322,12 @@ extension MarkdownWebView.Coordinator {
 				location: adjustedStart, length: adjustedEnd - adjustedStart))
 			payload["before"] = ""
 			payload["after"] = ""
-			if operation == "cut", let transform = canonicalReplacementTransform {
-				let replacement = transform("")
-				payload["text"] = replacement
+			if operation == "cut" {
+				let replacement = canonicalReplacementTransform?("") ??
+					(payload["text"] as? String ?? "")
+				if canonicalReplacementTransform != nil {
+					payload["text"] = replacement
+				}
 				let replacementLength = (replacement as NSString).length
 				payload["caret"] = body["selectionStartsAtHome"] as? Bool == true
 					? inlineCaretOffset

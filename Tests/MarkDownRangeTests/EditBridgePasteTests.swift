@@ -684,6 +684,46 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", afterCut: "Alpha<u></u> charlie",
+		 afterTyping: "Alpha<u>X</u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", afterCut: "alpha <u></u> charlie",
+		 afterTyping: "alpha <u>X</u> charlie"),
+	])
+	func typingAfterPlainWordCutReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 722, in: harness)
+		try await harness.waitUntil("plain word Cut caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
 		 direction: "forward", afterCut: "Alpha<u></u> **echo** Delta",
 		 afterTyping: "Alpha<u>X</u> **echo** Delta"),
