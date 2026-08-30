@@ -991,11 +991,33 @@ extension MarkdownWebView.Coordinator {
 			}
 		}
 		guard firstBreak != NSNotFound else { return nil }
+		func lineBreakLength(at index: Int) -> Int {
+			guard index >= 0, index < pastedText.length else { return 0 }
+			let character = pastedText.character(at: index)
+			if character == 0x0A { return 1 }
+			if character == 0x0D {
+				return index + 1 < pastedText.length &&
+					pastedText.character(at: index + 1) == 0x0A ? 2 : 1
+			}
+			return 0
+		}
 		var boundaryStart = firstBreak
-		for separator in ["\r\n\r\n", "\n\n", "\r\r"] {
-			let candidate = pastedText.range(of: separator, options: .backwards)
-			if candidate.location != NSNotFound {
-				boundaryStart = max(boundaryStart, candidate.location)
+		var scan = firstBreak
+		while scan < pastedText.length {
+			let firstLength = lineBreakLength(at: scan)
+			if firstLength > 0 {
+				var second = scan + firstLength
+				while second < pastedText.length {
+					let character = pastedText.character(at: second)
+					guard character == 0x20 || character == 0x09 else { break }
+					second += 1
+				}
+				if lineBreakLength(at: second) > 0 {
+					boundaryStart = scan
+				}
+				scan += firstLength
+			} else {
+				scan += 1
 			}
 		}
 
@@ -1028,8 +1050,18 @@ extension MarkdownWebView.Coordinator {
 				}
 			}
 			let boundary = pastedText.substring(from: boundaryStart)
+			let prefixUnits = CharacterSet(charactersIn: ">-+*#[]xX0123456789.)")
+			let prefixMarkers = CharacterSet(charactersIn: ">-+*#[].)")
+			let isWhitespaceBoundary = boundary.unicodeScalars.allSatisfy {
+				CharacterSet.whitespacesAndNewlines.contains($0)
+			}
+			let isPrefixedBoundary = boundary.unicodeScalars.allSatisfy {
+				CharacterSet.whitespacesAndNewlines.contains($0) || prefixUnits.contains($0)
+			} && boundary.unicodeScalars.contains {
+				prefixMarkers.contains($0) && !CharacterSet.whitespaces.contains($0)
+			}
 			if (caret == wrapperStart || caret == wrapperStart + 3),
-			   boundary.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) }) {
+			   (isWhitespaceBoundary || isPrefixedBoundary) {
 				return PrivateBoundaryPaste(
 					range: NSRange(location: wrapperStart, length: 0),
 					replacement: pasted,
