@@ -201,6 +201,66 @@ enum MarkdownSourceFormatter {
 		return nil
 	}
 
+	private static func inlineLinkParts(
+		in text: NSString,
+		wrapper: NSRange
+	) -> (label: NSRange, destination: String)? {
+		guard wrapper.length >= 4,
+		      text.character(at: wrapper.location) == 0x5B else { return nil }
+		var depth = 0
+		var escaped = false
+		var labelClose: Int?
+		var offset = wrapper.location
+		while offset < wrapper.upperBound {
+			let character = text.character(at: offset)
+			if escaped {
+				escaped = false
+			} else if character == 0x5C {
+				escaped = true
+			} else if character == 0x5B {
+				depth += 1
+			} else if character == 0x5D {
+				depth -= 1
+				if depth == 0 {
+					labelClose = offset
+					break
+				}
+			}
+			offset += 1
+		}
+		guard let labelClose,
+		      labelClose + 2 <= wrapper.upperBound,
+		      text.substring(with: NSRange(location: labelClose, length: 2)) == "](" else {
+			return nil
+		}
+		var destinationDepth = 0
+		escaped = false
+		offset = labelClose + 2
+		while offset < wrapper.upperBound {
+			let character = text.character(at: offset)
+			if escaped {
+				escaped = false
+			} else if character == 0x5C {
+				escaped = true
+			} else if character == 0x28 {
+				destinationDepth += 1
+			} else if character == 0x29, destinationDepth > 0 {
+				destinationDepth -= 1
+			} else if character == 0x29 {
+				guard offset + 1 == wrapper.upperBound else { return nil }
+				return (
+					label: NSRange(
+						location: wrapper.location + 1,
+						length: labelClose - wrapper.location - 1),
+					destination: text.substring(with: NSRange(
+						location: labelClose,
+						length: offset + 1 - labelClose)))
+			}
+			offset += 1
+		}
+		return nil
+	}
+
 	private static func toggleDelimited(
 		in text: NSString,
 		selection: NSRange,
@@ -350,6 +410,62 @@ enum MarkdownSourceFormatter {
 										selectedCode.selection.location,
 									length: selection.length))
 						}
+					}
+					if let link = inlineLinkParts(in: text, wrapper: innerRange),
+					   selection.location >= link.label.location,
+					   selection.upperBound <= link.label.upperBound {
+						if link.label == selection {
+							let inner = text.substring(with: innerRange)
+							return .init(
+								range: NSRange(
+									location: opening.location,
+									length: closing.upperBound - opening.location),
+								replacement: residual + inner + residual,
+								selection: NSRange(
+									location: opening.location + residualLength + 1,
+									length: selection.length))
+						}
+						var prefixEnd = selection.location
+						while prefixEnd > link.label.location {
+							let character = text.character(at: prefixEnd - 1)
+							guard character == 0x20 || character == 0x09 else { break }
+							prefixEnd -= 1
+						}
+						var suffixStart = selection.upperBound
+						while suffixStart < link.label.upperBound {
+							let character = text.character(at: suffixStart)
+							guard character == 0x20 || character == 0x09 else { break }
+							suffixStart += 1
+						}
+						let prefix = text.substring(with: NSRange(
+							location: link.label.location,
+							length: prefixEnd - link.label.location))
+						let leadingWhitespace = text.substring(with: NSRange(
+							location: prefixEnd,
+							length: selection.location - prefixEnd))
+						let trailingWhitespace = text.substring(with: NSRange(
+							location: selection.upperBound,
+							length: suffixStart - selection.upperBound))
+						let suffix = text.substring(with: NSRange(
+							location: suffixStart,
+							length: link.label.upperBound - suffixStart))
+						let openingMarker = text.substring(with: opening)
+						let closingMarker = text.substring(with: closing)
+						let prefixWrapper = prefix.isEmpty ? "" :
+							openingMarker + "[" + prefix + link.destination + closingMarker
+						let selectedWrapper = residual + "[" + selected + link.destination + residual
+						let suffixWrapper = suffix.isEmpty ? "" :
+							openingMarker + "[" + suffix + link.destination + closingMarker
+						return .init(
+							range: NSRange(
+								location: opening.location,
+								length: closing.upperBound - opening.location),
+							replacement: prefixWrapper + leadingWhitespace + selectedWrapper +
+								trailingWhitespace + suffixWrapper,
+							selection: NSRange(
+								location: opening.location + (prefixWrapper as NSString).length +
+									(leadingWhitespace as NSString).length + residualLength + 1,
+								length: selection.length))
 					}
 
 					var prefixEnd = selection.location
