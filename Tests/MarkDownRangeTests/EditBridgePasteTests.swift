@@ -2303,6 +2303,38 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func cutThenPasteMovesAWholeNestedCombinedLinkWithItsSourceSyntax() async throws {
+		let source = "zero ***[alpha beta](https://x)*** omega"
+		let visible = (source as NSString).range(of: "alpha beta")
+		let whole = (source as NSString).range(of: "***[alpha beta](https://x)***")
+		let afterCut = (source as NSString).replacingCharacters(in: whole, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(
+			harness, start: visible.location, length: visible.length, backward: true)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == "alpha beta")
+			#expect(MarkdownPasteboard.source == "***[alpha beta](https://x)***")
+			#expect(harness.source == afterCut)
+			try await harness.waitQuiescent()
+
+			let destination = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "zero ***[alpha beta](https://x)***X omega")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func cutThenPasteMovesTextBetweenTableCellsWithoutDamagingPipes() async throws {
 		let source = """
 			| Name | Age |
