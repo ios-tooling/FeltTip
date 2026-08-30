@@ -585,8 +585,27 @@ extension MarkdownWebView {
 					line.character(at: firstContent) == 0x5B &&
 					location - lineStart >= delimiter.upperBound
 			}
+			func isInsideHTMLAttribute(_ location: Int) -> Bool {
+				guard location >= lineStart, location <= lineEnd else { return false }
+				var inTag = false
+				var quote: unichar?
+				var cursor = lineStart
+				while cursor < location {
+					let character = source.character(at: cursor)
+					if let activeQuote = quote {
+						if character == activeQuote, !isEscaped(at: cursor) { quote = nil }
+					} else if inTag {
+						if character == 0x22 || character == 0x27 { quote = character }
+						else if character == 0x3E { inTag = false }
+					} else if character == 0x3C {
+						inTag = true
+					}
+					cursor += 1
+				}
+				return inTag && quote != nil
+			}
 			let forceVisibleSyntaxSnap = isInsideInlineLinkDestination(offset) ||
-				isInsideReferenceDestination(offset)
+				isInsideReferenceDestination(offset) || isInsideHTMLAttribute(offset)
 			let sourceNeutralCaretHome = offset >= 3 && offset + 4 <= source.length &&
 				!isEscaped(at: offset - 3) &&
 				!forceVisibleSyntaxSnap &&
