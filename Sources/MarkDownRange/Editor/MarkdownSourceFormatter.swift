@@ -1073,6 +1073,104 @@ enum MarkdownSourceFormatter {
 					if let closingRange {
 						let openingMarker = text.substring(with: openingRange)
 						let closingMarker = text.substring(with: closingRange)
+						if openingRange.upperBound < selection.location,
+						   text.character(at: openingRange.upperBound) == 0x5B {
+							var labelDepth = 0
+							var escaped = false
+							var labelClose: Int?
+							var offset = openingRange.upperBound
+							while offset < closingRange.location {
+								let character = text.character(at: offset)
+								if escaped {
+									escaped = false
+								} else if character == 0x5C {
+									escaped = true
+								} else if character == 0x5B {
+									labelDepth += 1
+								} else if character == 0x5D {
+									labelDepth -= 1
+									if labelDepth == 0 {
+										labelClose = offset
+										break
+									}
+								}
+								offset += 1
+							}
+							if let labelClose,
+							   labelClose + 2 <= closingRange.location,
+							   text.substring(with: NSRange(
+								location: labelClose, length: 2)) == "](",
+							   selection.location > openingRange.upperBound,
+							   selection.upperBound <= labelClose {
+								var destinationClose = labelClose + 2
+								var destinationDepth = 0
+								escaped = false
+								while destinationClose < closingRange.location {
+									let character = text.character(at: destinationClose)
+									if escaped {
+										escaped = false
+									} else if character == 0x5C {
+										escaped = true
+									} else if character == 0x28 {
+										destinationDepth += 1
+									} else if character == 0x29, destinationDepth > 0 {
+										destinationDepth -= 1
+									} else if character == 0x29 {
+										break
+									}
+									destinationClose += 1
+								}
+								if destinationClose + 1 == closingRange.location {
+									let contentStart = openingRange.upperBound + 1
+									var prefixEnd = selection.location
+									while prefixEnd > contentStart {
+										let character = text.character(at: prefixEnd - 1)
+										guard character == 0x20 || character == 0x09 else { break }
+										prefixEnd -= 1
+									}
+									var suffixStart = selection.upperBound
+									while suffixStart < labelClose {
+										let character = text.character(at: suffixStart)
+										guard character == 0x20 || character == 0x09 else { break }
+										suffixStart += 1
+									}
+									let prefix = text.substring(with: NSRange(
+										location: contentStart,
+										length: prefixEnd - contentStart))
+									let leadingWhitespace = text.substring(with: NSRange(
+										location: prefixEnd,
+										length: selection.location - prefixEnd))
+									let trailingWhitespace = text.substring(with: NSRange(
+										location: selection.upperBound,
+										length: suffixStart - selection.upperBound))
+									let suffix = text.substring(with: NSRange(
+										location: suffixStart,
+										length: labelClose - suffixStart))
+									if !prefix.isEmpty || !suffix.isEmpty {
+										let destination = text.substring(with: NSRange(
+											location: labelClose,
+											length: destinationClose + 1 - labelClose))
+										let prefixWrapper = prefix.isEmpty ? "" :
+											openingMarker + "[" + prefix + destination + closingMarker
+										let selectedWrapper = "[" + selected + destination
+										let suffixWrapper = suffix.isEmpty ? "" :
+											openingMarker + "[" + suffix + destination + closingMarker
+										let replacement = prefixWrapper + leadingWhitespace +
+											selectedWrapper + trailingWhitespace + suffixWrapper
+										return .init(
+											range: NSRange(
+												location: openingRange.location,
+												length: closingRange.upperBound - openingRange.location),
+											replacement: replacement,
+											selection: NSRange(
+												location: openingRange.location +
+													(prefixWrapper as NSString).length +
+													(leadingWhitespace as NSString).length + 1,
+												length: selection.length))
+									}
+								}
+							}
+						}
 						let innerCandidates = ["~~", "==", "**", "__", "_", "*", "^", "~"]
 						for inner in innerCandidates {
 							let innerLength = (inner as NSString).length
