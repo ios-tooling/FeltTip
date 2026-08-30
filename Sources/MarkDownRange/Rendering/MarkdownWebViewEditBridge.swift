@@ -220,6 +220,39 @@ extension MarkdownWebView.Coordinator {
 		}
 		let source = currentSource ?? parent.text
 		var payload = body
+		// Synthetic empty-wrapper caret homes have no source-backed DOM endpoint.
+		// Their selection route supplies exact mapped offsets instead; now that
+		// the revision is verified, fill in the canonical source spelling so
+		// hidden Markdown delimiters cannot make an otherwise valid Cut or paste
+		// fail visible-text verification.
+		if body["canonicalSelection"] as? Bool == true {
+			let sourceText = source as NSString
+			guard let operation = body["op"] as? String,
+			      operation == "paste" || operation == "cut",
+			      body["selected"] as? Bool == true,
+			      let start = body["start"] as? Int,
+			      let end = body["end"] as? Int,
+			      start >= 0, end >= start, end <= sourceText.length,
+			      let inlineCaretOffset = body["inlineCaretOffset"] as? Int,
+			      let wrapperRange = Self.emptyUnderlineClusterRange(
+					in: sourceText, caret: inlineCaretOffset, afterWrapper: false),
+			      let expandedRange = MarkdownEditSplicer.syntaxExpandedRange(
+					NSRange(location: start, length: end - start),
+					syntaxStart: body["syntaxStart"] as? [String] ?? [],
+					syntaxEnd: body["syntaxEnd"] as? [String] ?? [],
+					in: sourceText),
+			      body["selectionStartsAtHome"] as? Bool == true
+					? expandedRange.location == wrapperRange.upperBound
+					: expandedRange.upperBound == wrapperRange.location else {
+				bridgeIncidents.append("invalid canonical synthetic-caret selection")
+				resync(caretAt: body["start"] as? Int)
+				return
+			}
+			payload["expected"] = sourceText.substring(
+				with: NSRange(location: start, length: end - start))
+			payload["before"] = ""
+			payload["after"] = ""
+		}
 		if body["op"] as? String == "neutralWordDelete" {
 			guard let caret = body["start"] as? Int,
 			      let wrapperRange = Self.emptyUnderlineClusterRange(

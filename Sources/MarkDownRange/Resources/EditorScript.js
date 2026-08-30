@@ -590,19 +590,39 @@
     var expected = plain(rangeTextWithoutInlineCaretHome(range, home));
     if (!expected) return null;
     var start;
+    var end;
     if (startsAtHome) {
       start = home.__mdNeutralNextOffset;
+      var endPosition = normalizePosition(range.endContainer, range.endOffset, false);
+      end = sourceOffsetOf(endPosition.node, endPosition.offset);
     } else {
+      var startPosition = normalizePosition(range.startContainer, range.startOffset, true);
+      start = sourceOffsetOf(startPosition.node, startPosition.offset);
       var previousOffset = home.__mdNeutralPreviousOffset;
       var previousSource = home.__mdNeutralPreviousCharacter || '';
-      if (!Number.isFinite(previousOffset)) return null;
-      start = previousOffset + previousSource.length - expected.length;
+      end = Number.isFinite(previousOffset)
+        ? previousOffset + previousSource.length : null;
     }
-    if (!Number.isFinite(start) || start < 0) return null;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return null;
+    var syntaxStart = selectedSyntaxBoundaries(range, true);
+    var syntaxEnd = selectedSyntaxBoundaries(range, false);
+    // A synthetic home sits outside the adjacent inline element. When the
+    // selection begins at that element's first visible character and ends at
+    // the home, the DOM start owns both of its hidden source delimiters.
+    if (endsAtHome && syntaxStart.length && !syntaxEnd.length) {
+      syntaxEnd = syntaxStart.slice();
+    }
     return {
       start: start,
+      end: end,
       expected: expected,
       sourceExpected: expected,
+      canonicalSourceSelection: true,
+      inlineCaretOffset: parseInt(
+        home.getAttribute('data-md-inline-caret-offset'), 10),
+      selectionStartsAtHome: startsAtHome,
+      syntaxStart: syntaxStart,
+      syntaxEnd: syntaxEnd,
       range: range.cloneRange()
     };
   }
@@ -1464,10 +1484,17 @@
       freeze();
       post({ op: 'paste', matchStyle: navigationMatchStyle, inCell: false,
              start: navigation.start,
-             end: navigation.start + navigation.sourceExpected.length,
-             expected: navigation.sourceExpected, crossRun: false, selected: true,
-             endAtBlockStart: false, syntaxStart: [], syntaxEnd: [],
-             blockPrefixes: [], before: '', after: '',
+             end: navigation.end == null
+               ? navigation.start + navigation.sourceExpected.length : navigation.end,
+             expected: navigation.sourceExpected, selected: true,
+             endAtBlockStart: false, blockPrefixes: [], before: '', after: '',
+             canonicalSelection: navigation.canonicalSourceSelection === true,
+             inlineCaretOffset: navigation.inlineCaretOffset,
+             selectionStartsAtHome: navigation.selectionStartsAtHome === true,
+             crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
+               navigation.syntaxEnd && navigation.syntaxEnd.length),
+             syntaxStart: navigation.syntaxStart || [],
+             syntaxEnd: navigation.syntaxEnd || [],
              rev: stampRev, seq: seq++ });
       e.preventDefault();
       return;
@@ -1512,10 +1539,17 @@
         if (frozen || frozenInputReplayTimer) return;
         freeze();
         post({ op: 'cut', start: navigation.start,
-               end: navigation.start + navigation.sourceExpected.length,
+               end: navigation.end == null
+                 ? navigation.start + navigation.sourceExpected.length : navigation.end,
                text: '', expected: navigation.sourceExpected,
-               crossRun: false, selected: true, endAtBlockStart: false,
-               syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
+               canonicalSelection: navigation.canonicalSourceSelection === true,
+               inlineCaretOffset: navigation.inlineCaretOffset,
+               selectionStartsAtHome: navigation.selectionStartsAtHome === true,
+               crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
+                 navigation.syntaxEnd && navigation.syntaxEnd.length),
+               selected: true, endAtBlockStart: false,
+               syntaxStart: navigation.syntaxStart || [],
+               syntaxEnd: navigation.syntaxEnd || [], blockPrefixes: [],
                before: '', after: '', caret: navigation.start,
                rev: stampRev, seq: seq++ });
       }, 0);
