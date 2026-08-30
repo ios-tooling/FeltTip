@@ -1053,6 +1053,14 @@ import Testing
 		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31,
 		 direction: "backward", afterCut: "alpha **Bravo** <u></u> Delta",
 		 afterTyping: "alpha **Bravo** <u>X</u> Delta"),
+		(source: "Alpha<u></u>  [***`Bravo charlie echo`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 afterCut: "Alpha<u></u> [***`echo`***](https://x) Delta",
+		 afterTyping: "Alpha<u>X</u> [***`echo`***](https://x) Delta"),
+		(source: "alpha [***`Bravo charlie echo`***](https://x)<u></u> Delta", caret: 48,
+		 direction: "backward",
+		 afterCut: "alpha [***`Bravo`***](https://x) <u></u> Delta",
+		 afterTyping: "alpha [***`Bravo`***](https://x) <u>X</u> Delta"),
 	])
 	func typingAfterRepeatedWordExpansionAndCutReturnsToTheSyntheticCaret(
 		source: String,
@@ -1095,6 +1103,14 @@ import Testing
 		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31,
 		 direction: "backward", expected: "alpha **Bravo P**<u></u> Delta",
 		 afterTyping: "alpha **Bravo PX**<u></u> Delta"),
+		(source: "Alpha<u></u>  [***`Bravo charlie echo`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 expected: "Alpha<u></u>P [***`echo`***](https://x) Delta",
+		 afterTyping: "Alpha<u></u>PX [***`echo`***](https://x) Delta"),
+		(source: "alpha [***`Bravo charlie echo`***](https://x)<u></u> Delta", caret: 48,
+		 direction: "backward",
+		 expected: "alpha [***`Bravo P`***](https://x)<u></u> Delta",
+		 afterTyping: "alpha [***`Bravo PX`***](https://x)<u></u> Delta"),
 	])
 	func repeatedWordExpansionPastePreservesThePartialRunAndVisibleCaret(
 		source: String,
