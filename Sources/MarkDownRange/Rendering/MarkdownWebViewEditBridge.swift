@@ -298,8 +298,8 @@ extension MarkdownWebView.Coordinator {
 							let whitespace = sourceText.substring(with: NSRange(
 								location: adjustedStart, length: start - adjustedStart))
 							canonicalReplacementTransform = { inserted in
-								inserted.isEmpty
-									? suffix + whitespace
+								inserted.isEmpty || inserted.contains("\n") || inserted.contains("\r")
+									? suffix + whitespace + inserted
 									: whitespace + inserted + suffix
 							}
 						}

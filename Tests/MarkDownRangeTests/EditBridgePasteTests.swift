@@ -538,6 +538,41 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>One\n\nTwo **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", expected: "alpha **Bravo** One\n\nTwo<u></u> Delta"),
+	])
+	func multilinePasteOverAPartialStyledWordSelectionKeepsTheRemainderBalanced(
+		source: String,
+		caret: Int,
+		direction: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 717, in: harness)
+		try await harness.waitUntil("partial styled multiline selection caret") {
+			try await harness.evaluate("""
+				String(!!document.querySelector('[data-md-inline-caret-home]'))
+				""") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", copied: "A", expected: "P<u></u><u></u>B"),
 		(direction: "forward", copied: "B", expected: "A<u></u><u></u>P"),
 	])
