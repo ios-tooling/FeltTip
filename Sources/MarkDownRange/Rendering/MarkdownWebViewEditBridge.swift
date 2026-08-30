@@ -544,9 +544,27 @@ extension MarkdownWebView.Coordinator {
 			// ambiguous when the edit repeats the surrounding characters).
 			let caretHint = selection?.upperBound
 				?? edit.start + ((edit.replacement ?? "") as NSString).length
+			let mappedInlineWrapperStart: Int? = {
+				guard let inlineCaretOffset = body["inlineCaretOffset"] as? Int,
+				      let originalWrapperStart = Self.emptyUnderlineStart(
+						in: source as NSString, caret: inlineCaretOffset)
+				else { return nil }
+				let replacementLength = ((edit.replacement ?? "") as NSString).length
+				let mappedStart: Int
+				if originalWrapperStart >= edit.end {
+					mappedStart = originalWrapperStart + replacementLength - (edit.end - edit.start)
+				} else if originalWrapperStart <= edit.start {
+					mappedStart = originalWrapperStart
+				} else {
+					return nil
+				}
+				return Self.emptyUnderlineStart(
+					in: newSource as NSString, caret: mappedStart) == mappedStart
+					? mappedStart : nil
+			}()
 			if isClipboardCut,
 			   wrotePrivateSource,
-			   let wrapperStart = Self.emptyUnderlineStart(
+			   let wrapperStart = mappedInlineWrapperStart ?? Self.emptyUnderlineStart(
 				in: newSource as NSString, caret: caretHint)
 				?? Self.emptyUnderlineStart(
 					in: newSource as NSString, caret: edit.start)
@@ -1077,18 +1095,25 @@ extension MarkdownWebView.Coordinator {
 				let delimiter = pastedText.substring(with: NSRange(
 					location: delimiterStart, length: boundaryStart - delimiterStart))
 				let delimiterLength = (delimiter as NSString).length
-				if wrapperStart >= delimiterLength,
+				var beforeWrapperCluster = wrapperStart
+				while beforeWrapperCluster >= 7,
+				      source.substring(with: NSRange(
+						location: beforeWrapperCluster - 7, length: 7))
+						.caseInsensitiveCompare("<u></u>") == .orderedSame {
+					beforeWrapperCluster -= 7
+				}
+				if beforeWrapperCluster >= delimiterLength,
 				   source.substring(with: NSRange(
-					location: wrapperStart - delimiterLength,
+					location: beforeWrapperCluster - delimiterLength,
 					length: delimiterLength)) == delimiter {
 					let visible = pastedText.substring(to: delimiterStart)
 					let boundary = pastedText.substring(from: boundaryStart)
 					let replacement = visible + delimiter + boundary
-					let start = wrapperStart - delimiterLength
+					let start = beforeWrapperCluster - delimiterLength
 					return PrivateBoundaryPaste(
 						range: NSRange(location: start, length: delimiterLength),
 						replacement: replacement,
-						caret: start + (replacement as NSString).length + 3)
+						caret: wrapperStart + (replacement as NSString).length - delimiterLength + 3)
 				}
 			}
 			let boundary = pastedText.substring(from: boundaryStart)
@@ -1170,10 +1195,11 @@ extension MarkdownWebView.Coordinator {
 			location: afterWrapperCluster, length: delimiterLength)) == delimiter else { return nil }
 		let boundary = pastedText.substring(to: contentStart)
 		let visible = pastedText.substring(from: delimiterEnd)
+		let replacement = boundary + delimiter + visible
 		return PrivateBoundaryPaste(
 			range: NSRange(location: afterWrapperCluster, length: delimiterLength),
-			replacement: boundary + delimiter + visible,
-			caret: wrapperStart + 3)
+			replacement: replacement,
+			caret: afterWrapperCluster + (replacement as NSString).length)
 	}
 
 	/// Opening inline syntax can begin with link/image brackets in addition to
