@@ -259,11 +259,11 @@ enum MarkdownSourceFormatter {
 		in text: NSString,
 		selection: NSRange
 	) -> MarkdownSourceFormattingChange {
-		if selection.location > 0,
-		   text.substring(with: NSRange(location: selection.location - 1, length: 1)) == "[",
-		   selection.upperBound + 2 <= text.length,
-		   text.substring(with: NSRange(location: selection.upperBound, length: 2)) == "](" {
-			var close = selection.upperBound + 2
+		func destinationClose(labelEnd: Int) -> Int? {
+			guard labelEnd >= 0, labelEnd + 2 <= text.length,
+			      text.substring(with: NSRange(location: labelEnd, length: 2)) == "]("
+			else { return nil }
+			var close = labelEnd + 2
 			var nested = 0
 			var escaped = false
 			while close < text.length {
@@ -277,20 +277,105 @@ enum MarkdownSourceFormatter {
 				} else if character == 0x29, nested > 0 {
 					nested -= 1
 				} else if character == 0x29 {
-					let selected = text.substring(with: selection)
-					return .init(
-						range: NSRange(
-							location: selection.location - 1,
-							length: close - selection.location + 2),
-						replacement: selected,
-						selection: NSRange(location: selection.location - 1, length: selection.length))
+					return close
 				}
-				if character == 0x0A || character == 0x0D { break }
+				if character == 0x0A || character == 0x0D { return nil }
 				close += 1
 			}
+			return nil
 		}
 
 		let selected = text.substring(with: selection)
+		if selection.location > 0,
+		   text.substring(with: NSRange(location: selection.location - 1, length: 1)) == "[",
+		   let close = destinationClose(labelEnd: selection.upperBound) {
+			return .init(
+				range: NSRange(
+					location: selection.location - 1,
+					length: close - selection.location + 2),
+				replacement: selected,
+				selection: NSRange(
+					location: selection.location - 1, length: selection.length))
+		}
+
+		if selection.length > 0, selection.location > 0,
+		   text.character(at: selection.location - 1) == 0x5B {
+			var lineEnd = selection.upperBound
+			while lineEnd < text.length {
+				let character = text.character(at: lineEnd)
+				if character == 0x0A || character == 0x0D { break }
+				lineEnd += 1
+			}
+			let labelClose = text.range(
+				of: "](",
+				options: [],
+				range: NSRange(
+					location: selection.upperBound,
+					length: lineEnd - selection.upperBound))
+			if labelClose.location != NSNotFound,
+			   destinationClose(labelEnd: labelClose.location) != nil {
+				var remainderStart = selection.upperBound
+				while remainderStart < labelClose.location {
+					let character = text.character(at: remainderStart)
+					guard character == 0x20 || character == 0x09 else { break }
+					remainderStart += 1
+				}
+				if remainderStart < labelClose.location {
+					let whitespace = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: remainderStart - selection.upperBound))
+					return .init(
+						range: NSRange(
+							location: selection.location - 1,
+							length: remainderStart - selection.location + 1),
+						replacement: selected + whitespace + "[",
+						selection: NSRange(
+							location: selection.location - 1,
+							length: selection.length))
+				}
+			}
+		}
+
+		if selection.length > 0,
+		   let close = destinationClose(labelEnd: selection.upperBound) {
+			var lineStart = selection.location
+			while lineStart > 0 {
+				let character = text.character(at: lineStart - 1)
+				if character == 0x0A || character == 0x0D { break }
+				lineStart -= 1
+			}
+			let opening = text.range(
+				of: "[",
+				options: .backwards,
+				range: NSRange(
+					location: lineStart,
+					length: selection.location - lineStart))
+			if opening.location != NSNotFound {
+				var prefixEnd = selection.location
+				while prefixEnd > opening.upperBound {
+					let character = text.character(at: prefixEnd - 1)
+					guard character == 0x20 || character == 0x09 else { break }
+					prefixEnd -= 1
+				}
+				if prefixEnd > opening.upperBound {
+					let destination = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: close + 1 - selection.upperBound))
+					let whitespace = text.substring(with: NSRange(
+						location: prefixEnd,
+						length: selection.location - prefixEnd))
+					return .init(
+						range: NSRange(
+							location: prefixEnd, length: close + 1 - prefixEnd),
+						replacement: destination + whitespace + selected,
+						selection: NSRange(
+							location: prefixEnd + (destination as NSString).length +
+								(whitespace as NSString).length,
+							length: selection.length))
+				}
+			}
+		}
+
 		let label = selected.isEmpty ? "link text" : selected
 		let replacement = "[\(label)]()"
 		return .init(

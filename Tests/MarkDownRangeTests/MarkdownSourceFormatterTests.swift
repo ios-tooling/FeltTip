@@ -205,6 +205,28 @@ import AppKit
 		#expect(restoredSelection == selection)
 	}
 
+	@Test(arguments: [
+		(source: "[Bravo charlie](https://x)", selected: "Bravo",
+		 expected: "Bravo [charlie](https://x)"),
+		(source: "[Bravo charlie](https://x)", selected: "charlie",
+		 expected: "[Bravo](https://x) charlie"),
+		(source: "[Bravo charlie](https://x/a(b)/c)", selected: "Bravo",
+		 expected: "Bravo [charlie](https://x/a(b)/c)"),
+		(source: "[Bravo charlie](https://x/a\\)/c)", selected: "charlie",
+		 expected: "[Bravo](https://x/a\\)/c) charlie"),
+	])
+	func togglingALinkLabelFragmentPreservesTheRemainingDestination(
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let (result, resultSelection) = try apply(
+			.link, to: source, selection: selection)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: resultSelection) == selected)
+	}
+
 	@Test func listCommandsConvertAndToggleMultipleLines() throws {
 		let source = "Alpha\nBeta\n"
 		let selection = NSRange(location: 0, length: 10)
