@@ -38,8 +38,21 @@ extension MarkdownWebView.Coordinator {
 }
 
 enum MarkdownWebViewScripts {
+	/// SwiftPM currently flattens processed resources into the bundle root.
+	/// Prefer that exact file over Bundle's recursive lookup: an incremental
+	/// build can retain an obsolete `Resources/` subtree from an older package
+	/// layout, and `url(forResource:)` is then free to return the stale script.
+	static func directResourceURL(_ name: String, resourceRoot: URL?) -> URL? {
+		guard let url = resourceRoot?
+			.appendingPathComponent(name)
+			.appendingPathExtension("js"),
+		      FileManager.default.fileExists(atPath: url.path) else { return nil }
+		return url
+	}
+
 	static func load(_ name: String) -> String {
-		guard let url = Bundle.module.url(forResource: name, withExtension: "js"),
+		guard let url = directResourceURL(name, resourceRoot: Bundle.module.resourceURL)
+				?? Bundle.module.url(forResource: name, withExtension: "js"),
 		      let script = try? String(contentsOf: url, encoding: .utf8) else {
 			assertionFailure("Missing bundled script \(name).js")
 			return ""

@@ -131,7 +131,8 @@ struct EditBridgeWhitespaceBoundaryTests {
 
 		#expect(harness.source == "text de ewor samle beta")
 		#expect(harness.coordinator.resyncCount == 0)
-		#expect(try await harness.stampMismatches() == [])
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], Comment(rawValue: mismatches.joined(separator: "; ")))
 	}
 
 	@Test func insertingAnotherRepeatedSpaceDoesNotNeedRecovery() async throws {
