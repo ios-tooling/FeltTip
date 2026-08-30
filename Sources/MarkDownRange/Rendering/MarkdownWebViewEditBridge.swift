@@ -342,16 +342,8 @@ extension MarkdownWebView.Coordinator {
 					location: adjustedStart, length: adjustedEnd - adjustedStart)) as NSString
 				let visibleRange = selectedSource.range(of: visibleSelection)
 				if visibleRange.location != NSNotFound {
-					var delimiterEnd = visibleRange.upperBound
-					while delimiterEnd < selectedSource.length,
-					      Self.isInlineDelimiterUnit(
-							selectedSource.character(at: delimiterEnd)) {
-						delimiterEnd += 1
-					}
-					if delimiterEnd > visibleRange.upperBound {
-						let preserved = selectedSource.substring(with: NSRange(
-							location: visibleRange.upperBound,
-							length: delimiterEnd - visibleRange.upperBound))
+					if let preserved = Self.blockBoundaryHiddenSuffix(
+						in: selectedSource, visibleEnd: visibleRange.upperBound) {
 						canonicalReplacementTransform = { _ in preserved }
 					}
 				}
@@ -925,6 +917,38 @@ extension MarkdownWebView.Coordinator {
 		character == 0x3D || character == 0x5E || character == 0x60
 	}
 
+	/// Returns hidden closing syntax between a selected visible endpoint and
+	/// the following block separator. Besides symmetric delimiters this covers
+	/// link destinations and normalized wrapper closers such as `</u>`.
+	private static func blockBoundaryHiddenSuffix(
+		in selectedSource: NSString,
+		visibleEnd: Int
+	) -> String? {
+		guard visibleEnd >= 0, visibleEnd < selectedSource.length else { return nil }
+		var separator = visibleEnd
+		while separator < selectedSource.length {
+			let character = selectedSource.character(at: separator)
+			if character == 0x0A || character == 0x0D { break }
+			separator += 1
+		}
+		guard separator > visibleEnd, separator < selectedSource.length else { return nil }
+		let visibleBoundary = visibleWordBoundaryBeforeHiddenInlineSuffix(
+			in: selectedSource, boundary: separator)
+		if visibleBoundary == visibleEnd {
+			return selectedSource.substring(with: NSRange(
+				location: visibleEnd, length: separator - visibleEnd))
+		}
+		var delimiterEnd = visibleEnd
+		while delimiterEnd < separator,
+		      isInlineDelimiterUnit(selectedSource.character(at: delimiterEnd)) {
+			delimiterEnd += 1
+		}
+		return delimiterEnd > visibleEnd
+			? selectedSource.substring(with: NSRange(
+				location: visibleEnd, length: delimiterEnd - visibleEnd))
+			: nil
+	}
+
 	private struct PrivateBoundaryPaste {
 		let range: NSRange
 		let replacement: String
@@ -958,10 +982,13 @@ extension MarkdownWebView.Coordinator {
 
 		// Backward selection: visible suffix + closing delimiter + separator.
 		if firstBreak > 0 {
-			var delimiterStart = firstBreak
-			while delimiterStart > 0,
-			      isInlineDelimiterUnit(pastedText.character(at: delimiterStart - 1)) {
-				delimiterStart -= 1
+			var delimiterStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
+				in: pastedText, boundary: firstBreak)
+			if delimiterStart == firstBreak {
+				while delimiterStart > 0,
+				      isInlineDelimiterUnit(pastedText.character(at: delimiterStart - 1)) {
+					delimiterStart -= 1
+				}
 			}
 			if delimiterStart > 0, delimiterStart < firstBreak {
 				let delimiter = pastedText.substring(with: NSRange(
@@ -991,9 +1018,15 @@ extension MarkdownWebView.Coordinator {
 			contentStart += 1
 		}
 		var delimiterEnd = contentStart
-		while delimiterEnd < pastedText.length,
-		      isInlineDelimiterUnit(pastedText.character(at: delimiterEnd)) {
-			delimiterEnd += 1
+		if contentStart + 3 <= pastedText.length,
+		   pastedText.substring(with: NSRange(location: contentStart, length: 3))
+			.caseInsensitiveCompare("<u>") == .orderedSame {
+			delimiterEnd = contentStart + 3
+		} else {
+			while delimiterEnd < pastedText.length,
+			      isInlineOpeningDelimiterUnit(pastedText.character(at: delimiterEnd)) {
+				delimiterEnd += 1
+			}
 		}
 		guard contentStart > 0, delimiterEnd > contentStart,
 		      delimiterEnd < pastedText.length else { return nil }
@@ -1011,6 +1044,14 @@ extension MarkdownWebView.Coordinator {
 			range: NSRange(location: caret, length: 7 + delimiterLength),
 			replacement: wrapper + boundary + delimiter + visible,
 			caret: caret + 3)
+	}
+
+	/// Opening inline syntax can begin with link/image brackets in addition to
+	/// symmetric emphasis/code delimiters. Keep this broader than
+	/// `isInlineDelimiterUnit`: a closing bracket alone is not sufficient to
+	/// preserve a link's complete hidden destination during a backward Cut.
+	private static func isInlineOpeningDelimiterUnit(_ character: unichar) -> Bool {
+		isInlineDelimiterUnit(character) || character == 0x21 || character == 0x5B
 	}
 
 	private static func hiddenInlineSuffixToPreserve(
