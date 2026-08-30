@@ -270,6 +270,7 @@ extension MarkdownWebView {
 			pendingHostText = text
 			currentSource = text
 			selfEdit = nil
+			boundaryCutPasteOrigin = nil
 			pendingStructuralTailDelta = nil
 			pendingStructuralTailBoundary = nil
 			pendingStructuralText = nil
