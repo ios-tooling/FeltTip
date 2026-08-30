@@ -277,17 +277,79 @@ enum MarkdownSourceFormatter {
 					let innerRange = NSRange(
 						location: opening.upperBound,
 						length: closing.location - opening.upperBound)
-					if inlineCodeContentRange(in: text, wrapper: innerRange) == selection {
-						let inner = text.substring(with: innerRange)
-						return .init(
-							range: NSRange(
-								location: opening.location,
-								length: closing.upperBound - opening.location),
-							replacement: residual + inner + residual,
+					if let codeContent = inlineCodeContentRange(in: text, wrapper: innerRange),
+					   selection.location >= codeContent.location,
+					   selection.upperBound <= codeContent.upperBound {
+						if codeContent == selection {
+							let inner = text.substring(with: innerRange)
+							return .init(
+								range: NSRange(
+									location: opening.location,
+									length: closing.upperBound - opening.location),
+								replacement: residual + inner + residual,
+								selection: NSRange(
+									location: opening.location + residualLength +
+										selection.location - opening.upperBound,
+									length: selection.length))
+						}
+						var prefixEnd = selection.location
+						while prefixEnd > codeContent.location {
+							let character = text.character(at: prefixEnd - 1)
+							guard character == 0x20 || character == 0x09 else { break }
+							prefixEnd -= 1
+						}
+						var suffixStart = selection.upperBound
+						while suffixStart < codeContent.upperBound {
+							let character = text.character(at: suffixStart)
+							guard character == 0x20 || character == 0x09 else { break }
+							suffixStart += 1
+						}
+						let prefix = text.substring(with: NSRange(
+							location: codeContent.location,
+							length: prefixEnd - codeContent.location))
+						let leadingWhitespace = text.substring(with: NSRange(
+							location: prefixEnd,
+							length: selection.location - prefixEnd))
+						let trailingWhitespace = text.substring(with: NSRange(
+							location: selection.upperBound,
+							length: suffixStart - selection.upperBound))
+						let suffix = text.substring(with: NSRange(
+							location: suffixStart,
+							length: codeContent.upperBound - suffixStart))
+						if (!prefix.isEmpty || !suffix.isEmpty),
+						   let selectedCode = MarkdownInlineCodeToggle.change(
+							in: selected,
 							selection: NSRange(
-								location: opening.location + residualLength +
-									selection.location - opening.upperBound,
-								length: selection.length))
+								location: 0, length: (selected as NSString).length)) {
+							let prefixCode = prefix.isEmpty ? "" :
+								MarkdownInlineCodeToggle.change(
+									in: prefix,
+									selection: NSRange(
+										location: 0, length: (prefix as NSString).length))?.replacement ?? ""
+							let suffixCode = suffix.isEmpty ? "" :
+								MarkdownInlineCodeToggle.change(
+									in: suffix,
+									selection: NSRange(
+										location: 0, length: (suffix as NSString).length))?.replacement ?? ""
+							let openingMarker = text.substring(with: opening)
+							let closingMarker = text.substring(with: closing)
+							let prefixWrapper = prefix.isEmpty ? "" :
+								openingMarker + prefixCode + closingMarker
+							let suffixWrapper = suffix.isEmpty ? "" :
+								openingMarker + suffixCode + closingMarker
+							let selectedWrapper = residual + selectedCode.replacement + residual
+							return .init(
+								range: NSRange(
+									location: opening.location,
+									length: closing.upperBound - opening.location),
+								replacement: prefixWrapper + leadingWhitespace + selectedWrapper +
+									trailingWhitespace + suffixWrapper,
+								selection: NSRange(
+									location: opening.location + (prefixWrapper as NSString).length +
+										(leadingWhitespace as NSString).length + residualLength +
+										selectedCode.selection.location,
+									length: selection.length))
+						}
 					}
 
 					var prefixEnd = selection.location
