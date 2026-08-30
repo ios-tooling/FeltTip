@@ -1514,6 +1514,12 @@ import Testing
 		(source: "Head<u></u>\n\n👩‍💻 Tail", caret: 7,
 		 direction: "forward", moves: 1,
 		 expected: "Head<u>X</u>\n\n👩‍💻 Tail"),
+		(source: "Alpha Bravo\n\n<u></u><u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 expected: "Alpha Bravo\n\n<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 expected: "Head<u>X</u><u></u>\n\nBravo Tail"),
 	])
 	func fullyReversingACrossBlockWordSelectionReturnsToTheStyledCaret(
 		source: String,
@@ -1575,6 +1581,12 @@ import Testing
 		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
 		 direction: "forward", afterDelete: "Head<u></u>Charlie Tail",
 		 afterTyping: "Head<u>X</u>Charlie Tail"),
+		(source: "Alpha Bravo Charlie\n\n<u></u><u></u>Tail", caret: 31,
+		 direction: "backward", afterDelete: "Alpha Bravo<u></u><u></u>Tail",
+		 afterTyping: "Alpha Bravo<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", afterDelete: "Head<u></u><u></u>Charlie Tail",
+		 afterTyping: "Head<u>X</u><u></u>Charlie Tail"),
 	])
 	func deletingAfterAPartialCrossBlockWordContractionKeepsTheStyledCaret(
 		source: String,
