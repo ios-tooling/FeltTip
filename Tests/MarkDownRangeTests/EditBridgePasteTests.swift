@@ -1508,6 +1508,12 @@ import Testing
 		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
 		 direction: "forward", moves: 2,
 		 expected: "Head<u>X</u>\n\nBravo Charlie Tail"),
+		(source: "Alpha café\n\n<u></u>Tail", caret: 15,
+		 direction: "backward", moves: 1,
+		 expected: "Alpha café\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\n👩‍💻 Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 expected: "Head<u>X</u>\n\n👩‍💻 Tail"),
 	])
 	func fullyReversingACrossBlockWordSelectionReturnsToTheStyledCaret(
 		source: String,
@@ -1557,6 +1563,98 @@ import Testing
 		try await harness.waitForSourceEdits(1)
 		try await harness.waitQuiescent()
 		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha Bravo Charlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", afterDelete: "Alpha Bravo<u></u>Tail",
+		 afterTyping: "Alpha Bravo<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", afterDelete: "Head<u></u>Charlie Tail",
+		 afterTyping: "Head<u>X</u>Charlie Tail"),
+	])
+	func deletingAfterAPartialCrossBlockWordContractionKeepsTheStyledCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterDelete: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 725, in: harness)
+		try await harness.waitUntil("partial cross-block word contraction caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		let reverse = direction == "backward" ? "forward" : "backward"
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		let reverseKey = direction == "backward" ? "ArrowRight" : "ArrowLeft"
+		try await harness.run("""
+			function optionShift(key, direction) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: key, altKey: true, shiftKey: true,
+			    bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', direction, 'word')
+			  }
+			}
+			optionShift('\(key)', '\(direction)')
+			optionShift('\(key)', '\(direction)')
+			optionShift('\(reverseKey)', '\(reverse)')
+			document.execCommand('delete')
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterDelete, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func mouseSelectionClearsThePreviousStyledWordNavigationHome() async throws {
+		let source = "Alpha Beta\n\nHead<u></u>\n\nBravo Tail"
+		let caret = (source as NSString).range(of: "<u></u>").location + 3
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 726, in: harness)
+		try await harness.waitUntil("stale word-navigation caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			function optionShift(key, direction) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: key, altKey: true, shiftKey: true,
+			    bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', direction, 'word')
+			  }
+			}
+			optionShift('ArrowRight', 'forward')
+			document.body.dispatchEvent(new MouseEvent('mousedown', {
+			  bubbles: true, cancelable: true
+			}))
+			window.__mdPlaceCaret(0, 5)
+			optionShift('ArrowLeft', 'backward')
+			""")
+		#expect(try await harness.evaluate("String(window.getSelection().isCollapsed)") == "false")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "Alpha")
+
+		try await harness.type("P")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "P Beta\n\nHead<u></u>\n\nBravo Tail")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

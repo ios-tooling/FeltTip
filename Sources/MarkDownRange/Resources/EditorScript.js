@@ -437,7 +437,10 @@
       repaintMirror();
     }
   }
-  document.addEventListener('mousedown', clearOwnMirror, true);
+  document.addEventListener('mousedown', function () {
+    inlineWordSelectionHome = null;
+    clearOwnMirror();
+  }, true);
   window.addEventListener('focus', function () {
     clearOwnMirror();
     // Deferred: during the focus event document.hasFocus() can still be
