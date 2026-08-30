@@ -400,6 +400,90 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha P<u></u> charlie"),
+	])
+	func optionShiftSelectionFromAnEmptyUnderlineCaretCopiesAndReplacesTheVisibleWord(
+		source: String,
+		caret: Int,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 715, in: harness)
+		try await harness.waitUntil("empty-wrapper word-selection caret") {
+			try await harness.evaluate("""
+				String(!!document.querySelector('[data-md-inline-caret-home]'))
+				""") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("word selection Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha <u></u> charlie"),
+	])
+	func optionShiftCutFromAnEmptyUnderlineCaretDeletesOnlyTheVisibleWord(
+		source: String,
+		caret: Int,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 716, in: harness)
+		try await harness.waitUntil("empty-wrapper word-cut caret") {
+			try await harness.evaluate("""
+				String(!!document.querySelector('[data-md-inline-caret-home]'))
+				""") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", copied: "A", expected: "P<u></u><u></u>B"),
 		(direction: "forward", copied: "B", expected: "A<u></u><u></u>P"),
 	])

@@ -572,6 +572,40 @@
     return sameRange && plain(selection.toString()) === navigation.expected
       ? navigation : null;
   }
+
+  // Option-Shift/word selection is performed by WebKit itself, so it bypasses
+  // the single-character keydown route that records inlineNavigationSelection.
+  // If one endpoint is still the synthetic caret home, recover the exact
+  // adjacent source edge from the metadata installed with that home. WebKit
+  // otherwise omits Paste's beforeinput for this geometry and silently drops
+  // the replacement.
+  function liveInlineCaretEndpointSelection() {
+    var selection = window.getSelection();
+    var home = selectedInlineCaretHome();
+    if (!home || !selection || !selection.rangeCount || selection.isCollapsed) return null;
+    var range = selection.getRangeAt(0);
+    var startsAtHome = range.startContainer === home || home.contains(range.startContainer);
+    var endsAtHome = range.endContainer === home || home.contains(range.endContainer);
+    if (startsAtHome === endsAtHome) return null;
+    var expected = plain(rangeTextWithoutInlineCaretHome(range, home));
+    if (!expected) return null;
+    var start;
+    if (startsAtHome) {
+      start = home.__mdNeutralNextOffset;
+    } else {
+      var previousOffset = home.__mdNeutralPreviousOffset;
+      var previousSource = home.__mdNeutralPreviousCharacter || '';
+      if (!Number.isFinite(previousOffset)) return null;
+      start = previousOffset + previousSource.length - expected.length;
+    }
+    if (!Number.isFinite(start) || start < 0) return null;
+    return {
+      start: start,
+      expected: expected,
+      sourceExpected: expected,
+      range: range.cloneRange()
+    };
+  }
   function rangeTextWithoutInlineCaretHome(range, inlineHome) {
     var value = rangeText(range);
     var marker = inlineHome && inlineHome.firstChild;
@@ -1421,7 +1455,8 @@
   // only that marked synthetic position here; every ordinary paste continues
   // through the native beforeinput route below.
   document.body.addEventListener('paste', function (e) {
-    var navigation = currentInlineNavigationSelection();
+    var navigation = currentInlineNavigationSelection() ||
+      liveInlineCaretEndpointSelection();
     if (navigation && !frozen && !frozenInputReplayTimer) {
       inlineNavigationSelection = null;
       var navigationMatchStyle = nextPasteMatchesStyle;
@@ -1466,7 +1501,8 @@
   // syntax-boundary expansion, freeze, and caret restoration.
   document.body.addEventListener('cut', function (e) {
     var liveSelection = window.getSelection();
-    var navigation = currentInlineNavigationSelection();
+    var navigation = currentInlineNavigationSelection() ||
+      liveInlineCaretEndpointSelection();
     if (navigation && e.clipboardData) {
       inlineNavigationSelection = null;
       e.clipboardData.setData('text/plain', navigation.expected);
