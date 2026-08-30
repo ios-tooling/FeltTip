@@ -333,6 +333,89 @@ enum MarkdownSourceFormatter {
 					location: selection.location - openingLength,
 					length: selection.length))
 		}
+		if selection.length > 0 {
+			let openingBefore = selection.location >= openingLength &&
+				text.substring(with: NSRange(
+					location: selection.location - openingLength,
+					length: openingLength)).caseInsensitiveCompare(opening) == .orderedSame
+			let closingAfter = selection.upperBound + closingLength <= text.length &&
+				text.substring(with: NSRange(
+					location: selection.upperBound,
+					length: closingLength)).caseInsensitiveCompare(closing) == .orderedSame
+
+			if openingBefore, !closingAfter {
+				var lineEnd = selection.upperBound
+				while lineEnd < text.length {
+					let character = text.character(at: lineEnd)
+					if character == 0x0A || character == 0x0D { break }
+					lineEnd += 1
+				}
+				let closingRange = text.range(
+					of: closing,
+					options: .caseInsensitive,
+					range: NSRange(
+						location: selection.upperBound,
+						length: lineEnd - selection.upperBound))
+				if closingRange.location != NSNotFound {
+					var remainderStart = selection.upperBound
+					while remainderStart < closingRange.location {
+						let character = text.character(at: remainderStart)
+						guard character == 0x20 || character == 0x09 else { break }
+						remainderStart += 1
+					}
+					if remainderStart < closingRange.location {
+						let whitespace = text.substring(with: NSRange(
+							location: selection.upperBound,
+							length: remainderStart - selection.upperBound))
+						return .init(
+							range: NSRange(
+								location: selection.location - openingLength,
+								length: remainderStart - selection.location + openingLength),
+							replacement: selected + whitespace + opening,
+							selection: NSRange(
+								location: selection.location - openingLength,
+								length: selection.length))
+					}
+				}
+			}
+
+			if closingAfter, !openingBefore {
+				var lineStart = selection.location
+				while lineStart > 0 {
+					let character = text.character(at: lineStart - 1)
+					if character == 0x0A || character == 0x0D { break }
+					lineStart -= 1
+				}
+				let openingRange = text.range(
+					of: opening,
+					options: [.backwards, .caseInsensitive],
+					range: NSRange(
+						location: lineStart,
+						length: selection.location - lineStart))
+				if openingRange.location != NSNotFound {
+					var prefixEnd = selection.location
+					while prefixEnd > openingRange.upperBound {
+						let character = text.character(at: prefixEnd - 1)
+						guard character == 0x20 || character == 0x09 else { break }
+						prefixEnd -= 1
+					}
+					if prefixEnd > openingRange.upperBound {
+						let whitespace = text.substring(with: NSRange(
+							location: prefixEnd,
+							length: selection.location - prefixEnd))
+						return .init(
+							range: NSRange(
+								location: prefixEnd,
+								length: selection.upperBound + closingLength - prefixEnd),
+							replacement: closing + whitespace + selected,
+							selection: NSRange(
+								location: prefixEnd + closingLength +
+									(whitespace as NSString).length,
+								length: selection.length))
+					}
+				}
+			}
+		}
 		return .init(
 			range: selection,
 			replacement: opening + selected + closing,

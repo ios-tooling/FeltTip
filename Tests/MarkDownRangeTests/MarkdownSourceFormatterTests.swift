@@ -108,6 +108,24 @@ import AppKit
 		#expect(restoredSelection == selection)
 	}
 
+	@Test(arguments: [
+		(source: "<u>Bravo charlie</u>", selected: "Bravo",
+		 expected: "Bravo <u>charlie</u>"),
+		(source: "<u>Bravo charlie</u>", selected: "charlie",
+		 expected: "<u>Bravo</u> charlie"),
+	])
+	func togglingAnUnderlineFragmentSplitsTheRunCleanly(
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let (result, resultSelection) = try apply(
+			.underline, to: source, selection: selection)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: resultSelection) == selected)
+	}
+
 	@Test func linkWrapsAndUnwrapsWithoutLosingItsLabel() throws {
 		let source = "Read Marker today"
 		let selection = (source as NSString).range(of: "Marker")
