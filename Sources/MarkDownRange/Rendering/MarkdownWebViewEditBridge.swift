@@ -221,6 +221,7 @@ extension MarkdownWebView.Coordinator {
 		let source = currentSource ?? parent.text
 		var payload = body
 		var canonicalReplacementTransform: ((String) -> String)?
+		var canonicalCaretAfterInsertedText: ((String) -> Int)?
 		// Synthetic empty-wrapper caret homes have no source-backed DOM endpoint.
 		// Their selection route supplies exact mapped offsets instead; now that
 		// the revision is verified, fill in the canonical source spelling so
@@ -282,6 +283,9 @@ extension MarkdownWebView.Coordinator {
 							let whitespace = sourceText.substring(with: NSRange(
 								location: end, length: adjustedEnd - end))
 							canonicalReplacementTransform = { $0 + whitespace + prefix }
+							canonicalCaretAfterInsertedText = {
+								adjustedStart + ($0 as NSString).length
+							}
 						}
 					} else {
 						let visibleBoundary = Self.visibleWordBoundaryBeforeHiddenInlineSuffix(
@@ -301,6 +305,12 @@ extension MarkdownWebView.Coordinator {
 								inserted.isEmpty || inserted.contains("\n") || inserted.contains("\r")
 									? suffix + whitespace + inserted
 									: whitespace + inserted + suffix
+							}
+							canonicalCaretAfterInsertedText = { inserted in
+								let prefix = inserted.contains("\n") || inserted.contains("\r")
+									? suffix + whitespace : whitespace
+								return adjustedStart + (prefix as NSString).length +
+									(inserted as NSString).length
 							}
 						}
 					}
@@ -367,7 +377,7 @@ extension MarkdownWebView.Coordinator {
 			if let transform = canonicalReplacementTransform {
 				payload["text"] = transform(pasted)
 			}
-			var customCaret: Int?
+			var customCaret = canonicalCaretAfterInsertedText?(pasted)
 			if pasted.contains("\n"),
 			   let start = body["start"] as? Int,
 			   let end = body["end"] as? Int,

@@ -539,15 +539,18 @@ import Testing
 
 	@Test(arguments: [
 		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
-		 direction: "forward", expected: "Alpha<u></u>One\n\nTwo **charlie** Delta"),
+		 direction: "forward", expected: "Alpha<u></u>One\n\nTwo **charlie** Delta",
+		 afterTyping: "Alpha<u></u>One\n\nTwoX **charlie** Delta"),
 		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
-		 direction: "backward", expected: "alpha **Bravo** One\n\nTwo<u></u> Delta"),
+		 direction: "backward", expected: "alpha **Bravo** One\n\nTwo<u></u> Delta",
+		 afterTyping: "alpha **Bravo** One\n\nTwoX<u></u> Delta"),
 	])
 	func multilinePasteOverAPartialStyledWordSelectionKeepsTheRemainderBalanced(
 		source: String,
 		caret: Int,
 		direction: String,
-		expected: String
+		expected: String,
+		afterTyping: String
 	) async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
 		restore(source, caret: caret, token: 717, in: harness)
@@ -567,6 +570,50 @@ import Testing
 		try await harness.waitQuiescent()
 
 		#expect(harness.source == expected, "direction=\(direction)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P **charlie** Delta",
+		 afterTyping: "Alpha<u></u>PX **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", expected: "alpha **Bravo P**<u></u> Delta",
+		 afterTyping: "alpha **Bravo PX**<u></u> Delta"),
+	])
+	func typingAfterPartialStyledWordPasteUsesTheVisibleReplacementCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 718, in: harness)
+		try await harness.waitUntil("partial styled paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
