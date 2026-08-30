@@ -245,6 +245,84 @@ enum MarkdownSourceFormatter {
 							location: prefixEnd + length + (whitespace as NSString).length,
 							length: selection.length))
 				}
+
+				if !markerBefore, !markerAfter {
+					var lineStart = selection.location
+					while lineStart > 0 {
+						let character = text.character(at: lineStart - 1)
+						if character == 0x0A || character == 0x0D { break }
+						lineStart -= 1
+					}
+					var opening = NSRange(location: NSNotFound, length: 0)
+					var occurrenceCount = 0
+					var scan = lineStart
+					while scan + length <= selection.location {
+						let occurrence = text.range(
+							of: candidate,
+							options: [],
+							range: NSRange(
+								location: scan,
+								length: selection.location - scan))
+						if occurrence.location == NSNotFound { break }
+						opening = occurrence
+						occurrenceCount += 1
+						scan = occurrence.upperBound
+					}
+					guard occurrenceCount % 2 == 1 else { continue }
+
+					var lineEnd = selection.upperBound
+					while lineEnd < text.length {
+						let character = text.character(at: lineEnd)
+						if character == 0x0A || character == 0x0D { break }
+						lineEnd += 1
+					}
+					let closing = text.range(
+						of: candidate,
+						options: [],
+						range: NSRange(
+							location: selection.upperBound,
+							length: lineEnd - selection.upperBound))
+					guard closing.location != NSNotFound else { continue }
+
+					var prefixEnd = selection.location
+					while prefixEnd > opening.upperBound {
+						let character = text.character(at: prefixEnd - 1)
+						guard character == 0x20 || character == 0x09 else { break }
+						prefixEnd -= 1
+					}
+					var suffixStart = selection.upperBound
+					while suffixStart < closing.location {
+						let character = text.character(at: suffixStart)
+						guard character == 0x20 || character == 0x09 else { break }
+						suffixStart += 1
+					}
+					guard prefixEnd > opening.upperBound,
+					      suffixStart < closing.location else { continue }
+
+					let prefix = text.substring(with: NSRange(
+						location: opening.location,
+						length: prefixEnd - opening.location))
+					let leadingWhitespace = text.substring(with: NSRange(
+						location: prefixEnd,
+						length: selection.location - prefixEnd))
+					let trailingWhitespace = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: suffixStart - selection.upperBound))
+					let suffix = text.substring(with: NSRange(
+						location: suffixStart,
+						length: closing.location - suffixStart))
+					let replacement = prefix + candidate + leadingWhitespace +
+						selected + trailingWhitespace + candidate + suffix + candidate
+					return .init(
+						range: NSRange(
+							location: opening.location,
+							length: closing.upperBound - opening.location),
+						replacement: replacement,
+						selection: NSRange(
+							location: opening.location + (prefix as NSString).length +
+								length + (leadingWhitespace as NSString).length,
+							length: selection.length))
+				}
 			}
 		}
 
