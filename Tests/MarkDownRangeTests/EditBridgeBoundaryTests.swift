@@ -711,6 +711,10 @@ import Testing
 		 expected: "<u></u> Tail"),
 		(command: "deleteWordForward", source: "Alpha<u></u> **Tail**", caret: 12,
 		 expected: "Alpha<u></u>"),
+		(command: "delete", source: "Alpha\n\n<u></u>Tail", caret: 10,
+		 expected: "Alpha\n<u></u>Tail"),
+		(command: "forwardDelete", source: "Head<u></u>\n\nTail", caret: 7,
+		 expected: "Head<u></u>\nTail"),
 	])
 	func deletionAfterAHostRestoredEmptyUnderlineTargetsVisibleText(
 		command: String,
@@ -753,6 +757,52 @@ import Testing
 			try await harness.run("document.execCommand('\(command)')")
 		}
 		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "command=\(command)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(command: "delete", source: "Alpha\n\n<u></u>Tail", caret: 10,
+		 expected: "Alpha<u>X</u>Tail"),
+		(command: "forwardDelete", source: "Head<u></u>\n\nTail", caret: 7,
+		 expected: "Head<u>X</u>Tail"),
+	])
+	func repeatedDeletionTraversesAStyledBlockSeparatorAndKeepsTheCaretTypable(
+		command: String,
+		source: String,
+		caret: Int,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 704))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("repeated block-separator deletion caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('\(command)')")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
 		try await harness.waitQuiescent()
 
 		#expect(harness.source == expected, "command=\(command)")

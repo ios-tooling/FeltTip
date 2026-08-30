@@ -856,6 +856,63 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "[Link](https://x.test)\n\n<u></u>Tail", caret: 27,
+		 key: "ArrowLeft", direction: "backward",
+		 afterDelete: "[Lin](https://x.test)<u></u>Tail",
+		 afterTyping: "[Lin](https://x.test)<u>X</u>Tail"),
+		(source: "Head<u></u>\n\n[Link](https://x.test)", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterDelete: "Head<u></u>[ink](https://x.test)",
+		 afterTyping: "Head<u>X</u>[ink](https://x.test)"),
+		(source: "<u>Mark</u>\n\n<u></u>Tail", caret: 16,
+		 key: "ArrowLeft", direction: "backward",
+		 afterDelete: "<u>Mar</u><u></u>Tail",
+		 afterTyping: "<u>Mar</u><u>X</u>Tail"),
+		(source: "Head<u></u>\n\n<u>Mark</u>", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterDelete: "Head<u></u><u>ark</u>",
+		 afterTyping: "Head<u>X</u><u>ark</u>"),
+	])
+	func deletingAnAsymmetricStyledBoundaryKeepsSyntaxBalancedAndCaretTypable(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		afterDelete: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 883 + caret, in: harness)
+		try await harness.waitUntil("asymmetric selected-deletion caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			document.execCommand('delete')
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterDelete, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphP<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u>PTail"),
 	])

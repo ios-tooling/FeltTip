@@ -2145,7 +2145,8 @@
       e.inputType === 'deleteWordBackward' ||
       e.inputType === 'deleteWordForward';
     if (selectedDeletion) {
-      var deletionNavigation = liveInlineCaretEndpointSelection();
+      var deletionNavigation = currentInlineNavigationSelection() ||
+        liveInlineCaretEndpointSelection();
       if (deletionNavigation) {
         e.preventDefault();
         freeze();
@@ -2163,6 +2164,7 @@
                  deletionNavigation.inlineCaretBeforeWrapper === true,
                selectionStartsAtHome:
                  deletionNavigation.selectionStartsAtHome === true,
+               blockBoundary: deletionNavigation.blockBoundary === true,
                crossRun: !!(deletionNavigation.syntaxStart &&
                  deletionNavigation.syntaxStart.length ||
                  deletionNavigation.syntaxEnd && deletionNavigation.syntaxEnd.length),

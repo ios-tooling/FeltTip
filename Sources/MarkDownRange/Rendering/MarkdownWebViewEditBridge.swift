@@ -361,7 +361,7 @@ extension MarkdownWebView.Coordinator {
 					payload["text"] = replacement
 				}
 				let replacementLength = (replacement as NSString).length
-				if body["blockBoundary"] as? Bool == true {
+				if body["blockBoundary"] as? Bool == true, operation == "cut" {
 					payload["caret"] = adjustedStart + replacementLength
 				} else {
 					payload["caret"] = body["selectionStartsAtHome"] as? Bool == true
