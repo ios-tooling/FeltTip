@@ -77,7 +77,9 @@ struct InitialRenderProgressTests {
 		let host = TestWindowHost(root)
 
 		var webView: WKWebView?
-		for _ in 0..<100 {
+		// Parallel WebKit-heavy suites can delay SwiftUI hierarchy installation
+		// well beyond the usual subsecond path on loaded CI/developer hosts.
+		for _ in 0..<400 {
 			webView = findWebView(in: host.view)
 			if events.last.map({ $0 == nil }) == true, webView != nil { break }
 			try await Task.sleep(for: .milliseconds(25))

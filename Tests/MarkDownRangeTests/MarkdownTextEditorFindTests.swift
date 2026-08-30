@@ -35,7 +35,9 @@ struct MarkdownTextEditorFindTests {
 		window.orderFront(nil)
 
 		var textView: NSTextView?
-		for _ in 0..<40 where textView == nil {
+		// SwiftUI view installation can be delayed while the WebKit integration
+		// suites are running in parallel; keep this bounded but load-tolerant.
+		for _ in 0..<160 where textView == nil {
 			textView = findTextView(in: hostingView)
 			if textView == nil {
 				try await Task.sleep(for: .milliseconds(25))
