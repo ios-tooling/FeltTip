@@ -529,6 +529,18 @@ import Testing
 		(source: "alpha [Bravo charlie](https://x)<u></u> Delta", caret: 35,
 		 direction: "backward", copied: "charlie",
 		 expected: "alpha [Bravo](https://x) <u></u> Delta"),
+		(source: "Alpha<u></u>  ***[Bravo charlie](https://x)*** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> ***[charlie](https://x)*** Delta"),
+		(source: "alpha ***[Bravo charlie](https://x)***<u></u> Delta", caret: 41,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha ***[Bravo](https://x)*** <u></u> Delta"),
+		(source: "Alpha<u></u>  ***<u>Bravo charlie</u>*** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> ***<u>charlie</u>*** Delta"),
+		(source: "alpha ***<u>Bravo charlie</u>***<u></u> Delta", caret: 35,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha ***<u>Bravo</u>*** <u></u> Delta"),
 	])
 	func optionShiftCutFromAnEmptyUnderlineCaretDeletesOnlyTheVisibleWord(
 		source: String,

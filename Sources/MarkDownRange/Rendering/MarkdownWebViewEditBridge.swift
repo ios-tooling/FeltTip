@@ -898,10 +898,22 @@ extension MarkdownWebView.Coordinator {
 		if wordStart >= 3,
 		   text.substring(with: NSRange(location: wordStart - 3, length: 3))
 			.caseInsensitiveCompare("<u>") == .orderedSame {
-			return text.substring(with: NSRange(location: wordStart - 3, length: 3))
+			var start = wordStart - 3
+			while start > boundary,
+			      isInlineDelimiterUnit(text.character(at: start - 1)) {
+				start -= 1
+			}
+			return text.substring(with: NSRange(
+				location: start, length: wordStart - start))
 		}
 		if wordStart > boundary, text.character(at: wordStart - 1) == 0x5B {
-			return "["
+			var start = wordStart - 1
+			while start > boundary,
+			      isInlineDelimiterUnit(text.character(at: start - 1)) {
+				start -= 1
+			}
+			return text.substring(with: NSRange(
+				location: start, length: wordStart - start))
 		}
 		var start = wordStart
 		while start > boundary, isInlineDelimiterUnit(text.character(at: start - 1)) {
@@ -920,15 +932,21 @@ extension MarkdownWebView.Coordinator {
 		in text: NSString,
 		boundary: Int
 	) -> Int {
-		if boundary >= 4,
-		   text.substring(with: NSRange(location: boundary - 4, length: 4))
-			.caseInsensitiveCompare("</u>") == .orderedSame {
-			return boundary - 4
+		var wrapperBoundary = boundary
+		while wrapperBoundary > 0,
+		      isInlineDelimiterUnit(text.character(at: wrapperBoundary - 1)) {
+			wrapperBoundary -= 1
 		}
-		guard boundary > 0, text.character(at: boundary - 1) == 0x29 else {
+		if wrapperBoundary >= 4,
+		   text.substring(with: NSRange(location: wrapperBoundary - 4, length: 4))
+			.caseInsensitiveCompare("</u>") == .orderedSame {
+			return wrapperBoundary - 4
+		}
+		guard wrapperBoundary > 0,
+		      text.character(at: wrapperBoundary - 1) == 0x29 else {
 			return boundary
 		}
-		var scan = boundary - 1
+		var scan = wrapperBoundary - 1
 		var depth = 0
 		while scan >= 0 {
 			let character = text.character(at: scan)
