@@ -325,7 +325,10 @@ extension MarkdownWebView.Coordinator {
 			if operation == "cut", let transform = canonicalReplacementTransform {
 				let replacement = transform("")
 				payload["text"] = replacement
-				payload["caret"] = adjustedStart + (replacement as NSString).length
+				let replacementLength = (replacement as NSString).length
+				payload["caret"] = body["selectionStartsAtHome"] as? Bool == true
+					? inlineCaretOffset
+					: inlineCaretOffset - (adjustedEnd - adjustedStart) + replacementLength
 			}
 		}
 		if body["op"] as? String == "neutralWordDelete" {
