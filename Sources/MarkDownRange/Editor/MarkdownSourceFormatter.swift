@@ -261,6 +261,31 @@ enum MarkdownSourceFormatter {
 		return nil
 	}
 
+	private static func inlineUnderlineParts(
+		in text: NSString,
+		wrapper: NSRange
+	) -> (content: NSRange, opening: String, closing: String)? {
+		let openingLength = 3
+		let closingLength = 4
+		guard wrapper.length >= openingLength + closingLength,
+		      text.substring(with: NSRange(
+				location: wrapper.location,
+				length: openingLength)).caseInsensitiveCompare("<u>") == .orderedSame,
+		      text.substring(with: NSRange(
+				location: wrapper.upperBound - closingLength,
+				length: closingLength)).caseInsensitiveCompare("</u>") == .orderedSame else {
+			return nil
+		}
+		return (
+			content: NSRange(
+				location: wrapper.location + openingLength,
+				length: wrapper.length - openingLength - closingLength),
+			opening: text.substring(with: NSRange(
+				location: wrapper.location, length: openingLength)),
+			closing: text.substring(with: NSRange(
+				location: wrapper.upperBound - closingLength, length: closingLength)))
+	}
+
 	private static func toggleDelimited(
 		in text: NSString,
 		selection: NSRange,
@@ -465,6 +490,65 @@ enum MarkdownSourceFormatter {
 							selection: NSRange(
 								location: opening.location + (prefixWrapper as NSString).length +
 									(leadingWhitespace as NSString).length + residualLength + 1,
+								length: selection.length))
+					}
+					if let underline = inlineUnderlineParts(in: text, wrapper: innerRange),
+					   selection.location >= underline.content.location,
+					   selection.upperBound <= underline.content.upperBound {
+						if underline.content == selection {
+							let inner = text.substring(with: innerRange)
+							return .init(
+								range: NSRange(
+									location: opening.location,
+									length: closing.upperBound - opening.location),
+								replacement: residual + inner + residual,
+								selection: NSRange(
+									location: opening.location + residualLength +
+										(underline.opening as NSString).length,
+									length: selection.length))
+						}
+						var prefixEnd = selection.location
+						while prefixEnd > underline.content.location {
+							let character = text.character(at: prefixEnd - 1)
+							guard character == 0x20 || character == 0x09 else { break }
+							prefixEnd -= 1
+						}
+						var suffixStart = selection.upperBound
+						while suffixStart < underline.content.upperBound {
+							let character = text.character(at: suffixStart)
+							guard character == 0x20 || character == 0x09 else { break }
+							suffixStart += 1
+						}
+						let prefix = text.substring(with: NSRange(
+							location: underline.content.location,
+							length: prefixEnd - underline.content.location))
+						let leadingWhitespace = text.substring(with: NSRange(
+							location: prefixEnd,
+							length: selection.location - prefixEnd))
+						let trailingWhitespace = text.substring(with: NSRange(
+							location: selection.upperBound,
+							length: suffixStart - selection.upperBound))
+						let suffix = text.substring(with: NSRange(
+							location: suffixStart,
+							length: underline.content.upperBound - suffixStart))
+						let openingMarker = text.substring(with: opening)
+						let closingMarker = text.substring(with: closing)
+						let prefixWrapper = prefix.isEmpty ? "" : openingMarker +
+							underline.opening + prefix + underline.closing + closingMarker
+						let selectedWrapper = residual + underline.opening + selected +
+							underline.closing + residual
+						let suffixWrapper = suffix.isEmpty ? "" : openingMarker +
+							underline.opening + suffix + underline.closing + closingMarker
+						return .init(
+							range: NSRange(
+								location: opening.location,
+								length: closing.upperBound - opening.location),
+							replacement: prefixWrapper + leadingWhitespace + selectedWrapper +
+								trailingWhitespace + suffixWrapper,
+							selection: NSRange(
+								location: opening.location + (prefixWrapper as NSString).length +
+									(leadingWhitespace as NSString).length + residualLength +
+									(underline.opening as NSString).length,
 								length: selection.length))
 					}
 
