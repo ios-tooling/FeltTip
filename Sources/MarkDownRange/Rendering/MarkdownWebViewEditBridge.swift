@@ -434,11 +434,14 @@ extension MarkdownWebView.Coordinator {
 			   let start = body["start"] as? Int,
 			   let origin = boundaryCutPasteOrigin,
 			   origin.source == source,
-			   Self.emptyUnderlineStart(in: source as NSString, caret: start) == origin.wrapperStart,
+			   Self.emptyUnderlineClusterStart(
+				in: source as NSString, caret: start) == Self.emptyUnderlineClusterStart(
+					in: source as NSString, caret: origin.wrapperStart),
 			   origin.pasted == pasted,
 			   origin.generation == MarkdownPasteboard.sourceGeneration,
 			   let structural = Self.privateBoundaryPaste(
-				in: source as NSString, caret: start, pasted: pasted) {
+				in: source as NSString, caret: start, pasted: pasted,
+				wrapperStart: origin.wrapperStart) {
 				payload["start"] = structural.range.location
 				payload["end"] = structural.range.upperBound
 				payload["text"] = structural.replacement
@@ -988,6 +991,19 @@ extension MarkdownWebView.Coordinator {
 		return nil
 	}
 
+	private static func emptyUnderlineClusterStart(
+		in source: NSString,
+		caret: Int
+	) -> Int? {
+		guard var start = emptyUnderlineStart(in: source, caret: caret) else { return nil }
+		while start >= 7,
+		      source.substring(with: NSRange(location: start - 7, length: 7))
+				.caseInsensitiveCompare("<u></u>") == .orderedSame {
+			start -= 7
+		}
+		return start
+	}
+
 	/// Reverses a styled block-boundary Cut at an external empty-wrapper home.
 	/// Cut preserves the adjacent inline delimiter so the remaining Markdown is
 	/// balanced; the private flavor still owns the original delimiter and must
@@ -995,10 +1011,13 @@ extension MarkdownWebView.Coordinator {
 	private static func privateBoundaryPaste(
 		in source: NSString,
 		caret: Int,
-		pasted: String
+		pasted: String,
+		wrapperStart activeWrapperStart: Int
 	) -> PrivateBoundaryPaste? {
-		guard let wrapperStart = emptyUnderlineStart(
-			in: source, caret: caret) else { return nil }
+		guard emptyUnderlineStart(in: source, caret: caret) != nil,
+		      emptyUnderlineStart(in: source, caret: activeWrapperStart) == activeWrapperStart
+		else { return nil }
+		let wrapperStart = activeWrapperStart
 		let pastedText = pasted as NSString
 		guard pastedText.length > 1 else { return nil }
 
@@ -1139,16 +1158,21 @@ extension MarkdownWebView.Coordinator {
 		let delimiter = pastedText.substring(with: NSRange(
 			location: contentStart, length: delimiterEnd - contentStart))
 		let delimiterLength = (delimiter as NSString).length
-		let afterWrapper = wrapperStart + 7
-		guard afterWrapper + delimiterLength <= source.length,
+		var afterWrapperCluster = wrapperStart + 7
+		while afterWrapperCluster + 7 <= source.length,
 		      source.substring(with: NSRange(
-			location: afterWrapper, length: delimiterLength)) == delimiter else { return nil }
+				location: afterWrapperCluster, length: 7))
+				.caseInsensitiveCompare("<u></u>") == .orderedSame {
+			afterWrapperCluster += 7
+		}
+		guard afterWrapperCluster + delimiterLength <= source.length,
+		      source.substring(with: NSRange(
+			location: afterWrapperCluster, length: delimiterLength)) == delimiter else { return nil }
 		let boundary = pastedText.substring(to: contentStart)
 		let visible = pastedText.substring(from: delimiterEnd)
-		let wrapper = source.substring(with: NSRange(location: wrapperStart, length: 7))
 		return PrivateBoundaryPaste(
-			range: NSRange(location: wrapperStart, length: 7 + delimiterLength),
-			replacement: wrapper + boundary + delimiter + visible,
+			range: NSRange(location: afterWrapperCluster, length: delimiterLength),
+			replacement: boundary + delimiter + visible,
 			caret: wrapperStart + 3)
 	}
 
