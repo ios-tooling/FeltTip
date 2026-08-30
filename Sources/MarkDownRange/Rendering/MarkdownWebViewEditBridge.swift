@@ -231,7 +231,7 @@ extension MarkdownWebView.Coordinator {
 			let sourceText = source as NSString
 			guard let operation = body["op"] as? String,
 			      operation == "paste" || operation == "cut" ||
-			      operation == "deleteSelection",
+			      operation == "deleteSelection" || operation == "replaceSelection",
 			      body["selected"] as? Bool == true,
 			      let start = body["start"] as? Int,
 			      let end = body["end"] as? Int,
@@ -333,6 +333,13 @@ extension MarkdownWebView.Coordinator {
 				payload["caret"] = body["selectionStartsAtHome"] as? Bool == true
 					? inlineCaretOffset
 					: inlineCaretOffset - (adjustedEnd - adjustedStart) + replacementLength
+			} else if operation == "replaceSelection",
+			          let inserted = payload["text"] as? String {
+				if let transform = canonicalReplacementTransform {
+					payload["text"] = transform(inserted)
+				}
+				payload["caret"] = canonicalCaretAfterInsertedText?(inserted) ??
+					(adjustedStart + (inserted as NSString).length)
 			}
 		}
 		if body["op"] as? String == "neutralWordDelete" {

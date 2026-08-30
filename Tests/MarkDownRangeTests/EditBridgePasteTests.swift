@@ -769,6 +769,60 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8, expansions: 1,
+		 direction: "forward", afterReplacement: "Alpha<u></u>X charlie",
+		 afterTyping: "Alpha<u></u>XY charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14, expansions: 1,
+		 direction: "backward", afterReplacement: "alpha X<u></u> charlie",
+		 afterTyping: "alpha XY<u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8, expansions: 1,
+		 direction: "forward", afterReplacement: "Alpha<u></u>X **charlie** Delta",
+		 afterTyping: "Alpha<u></u>XY **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26, expansions: 1,
+		 direction: "backward", afterReplacement: "alpha **Bravo X**<u></u> Delta",
+		 afterTyping: "alpha **Bravo XY**<u></u> Delta"),
+		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8, expansions: 2,
+		 direction: "forward", afterReplacement: "Alpha<u></u>X **echo** Delta",
+		 afterTyping: "Alpha<u></u>XY **echo** Delta"),
+		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31, expansions: 2,
+		 direction: "backward", afterReplacement: "alpha **Bravo X**<u></u> Delta",
+		 afterTyping: "alpha **Bravo XY**<u></u> Delta"),
+	])
+	func typingOverASelectedWordKeepsTheReplacementCaretVisible(
+		source: String,
+		caret: Int,
+		expansions: Int,
+		direction: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 724, in: harness)
+		try await harness.waitUntil("selected word replacement caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < \(expansions); index++) {
+			  window.getSelection().modify('extend', '\(direction)', 'word');
+			}
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement, "direction=\(direction)")
+
+		try await harness.type("Y")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
 		 direction: "forward", afterCut: "Alpha<u></u> **echo** Delta",
 		 afterTyping: "Alpha<u>X</u> **echo** Delta"),

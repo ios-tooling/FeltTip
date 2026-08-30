@@ -1762,6 +1762,46 @@
         return;
       }
     }
+    // Typing over the same synthetic-home selection needs its inserted text
+    // preserved, unlike deletion, but uses the identical verified endpoints.
+    // Handle it before WebKit can drop the forward edit or consume the hidden
+    // wrapper on a backward edit.
+    if (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') {
+      var replacementNavigation = liveInlineCaretEndpointSelection();
+      var navigationText = e.data;
+      if (navigationText == null && e.dataTransfer) {
+        navigationText = e.dataTransfer.getData('text/plain');
+      }
+      if (replacementNavigation && navigationText != null) {
+        navigationText = plain(navigationText);
+        e.preventDefault();
+        freeze();
+        post({ op: 'replaceSelection', start: replacementNavigation.start,
+               end: replacementNavigation.end == null
+                 ? replacementNavigation.start +
+                   replacementNavigation.sourceExpected.length
+                 : replacementNavigation.end,
+               text: navigationText,
+               expected: replacementNavigation.sourceExpected,
+               canonicalSelection:
+                 replacementNavigation.canonicalSourceSelection === true,
+               inlineCaretOffset: replacementNavigation.inlineCaretOffset,
+               inlineCaretAfterWrapper:
+                 replacementNavigation.inlineCaretAfterWrapper === true,
+               selectionStartsAtHome:
+                 replacementNavigation.selectionStartsAtHome === true,
+               crossRun: !!(replacementNavigation.syntaxStart &&
+                 replacementNavigation.syntaxStart.length ||
+                 replacementNavigation.syntaxEnd &&
+                 replacementNavigation.syntaxEnd.length),
+               selected: true, endAtBlockStart: false,
+               syntaxStart: replacementNavigation.syntaxStart || [],
+               syntaxEnd: replacementNavigation.syntaxEnd || [], blockPrefixes: [],
+               before: '', after: '', caret: replacementNavigation.start,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
     // WebKit reports the zero-width character inside an inline caret home as
     // the replacement target, even though it is a DOM-only anchor and the
     // source selection is collapsed. Route that one synthetic position by its
