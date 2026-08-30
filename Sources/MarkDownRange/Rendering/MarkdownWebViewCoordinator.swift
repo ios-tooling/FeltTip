@@ -731,6 +731,10 @@ extension MarkdownWebView {
 			var neutralNextOffset = "null"
 			var neutralNextCharacterJSON = "\"\""
 			var neutralWrapperJSON = "\"\""
+			var neutralPreviousBoundaryOffset = "null"
+			var neutralPreviousBoundaryJSON = "\"\""
+			var neutralNextBoundaryOffset = "null"
+			var neutralNextBoundaryJSON = "\"\""
 			if sourceNeutralCaretHome || caretAfterEmptyUnderline {
 				let wrapperStart = sourceNeutralCaretHome ? offset - 3 : offset - 7
 				let wrapperEnd = wrapperStart + 7
@@ -751,6 +755,48 @@ extension MarkdownWebView {
 				}
 				while isEmptyUnderline(at: visibleWrapperEnd) {
 					visibleWrapperEnd += 7
+				}
+				func isBoundaryWhitespace(at location: Int) -> Bool {
+					guard location >= 0, location < source.length,
+					      let scalar = Unicode.Scalar(source.character(at: location)) else {
+						return false
+					}
+					return CharacterSet.whitespacesAndNewlines.contains(scalar)
+				}
+				// WebKit exposes a paragraph boundary as one visible selection
+				// character, while its source may be multiple newlines plus blank-line
+				// indentation. Preserve that exact whitespace for Shift-arrow Cut/Paste.
+				var previousBoundaryStart = visibleWrapperStart
+				while previousBoundaryStart > 0,
+				      isBoundaryWhitespace(at: previousBoundaryStart - 1) {
+					previousBoundaryStart -= 1
+				}
+				if previousBoundaryStart < visibleWrapperStart {
+					let range = NSRange(
+						location: previousBoundaryStart,
+						length: visibleWrapperStart - previousBoundaryStart)
+					let boundary = source.substring(with: range)
+					if boundary.contains("\n") || boundary.contains("\r") {
+						neutralPreviousBoundaryOffset = String(previousBoundaryStart)
+						neutralPreviousBoundaryJSON = (try? JSONEncoder().encode(boundary))
+							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+					}
+				}
+				var nextBoundaryEnd = visibleWrapperEnd
+				while nextBoundaryEnd < source.length,
+				      isBoundaryWhitespace(at: nextBoundaryEnd) {
+					nextBoundaryEnd += 1
+				}
+				if nextBoundaryEnd > visibleWrapperEnd {
+					let range = NSRange(
+						location: visibleWrapperEnd,
+						length: nextBoundaryEnd - visibleWrapperEnd)
+					let boundary = source.substring(with: range)
+					if boundary.contains("\n") || boundary.contains("\r") {
+						neutralNextBoundaryOffset = String(visibleWrapperEnd)
+						neutralNextBoundaryJSON = (try? JSONEncoder().encode(boundary))
+							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+					}
 				}
 				if visibleWrapperStart > 0 {
 					let previousLocation = visibleWrapperStart - 1
@@ -782,7 +828,7 @@ extension MarkdownWebView {
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap)"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(neutralPreviousBoundaryOffset), \(neutralPreviousBoundaryJSON), \(neutralNextBoundaryOffset), \(neutralNextBoundaryJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {

@@ -102,8 +102,10 @@
     y, caret, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax,
     visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome,
     neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset,
-    neutralNextCharacter, neutralWrapperSource, caretAfterEmptyUnderline,
-    forceVisibleSyntaxSnap
+    neutralNextCharacter, neutralWrapperSource,
+    neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+    neutralNextBoundaryOffset, neutralNextBoundarySource,
+    caretAfterEmptyUnderline, forceVisibleSyntaxSnap
   ) {
     var deadline = Date.now() + 1000;
     function attempt() {
@@ -117,8 +119,10 @@
             caret, length || 0, sourceLineStart, sourceLineEnd, snapHiddenSyntax,
             visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome,
             neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset,
-            neutralNextCharacter, neutralWrapperSource, caretAfterEmptyUnderline,
-            forceVisibleSyntaxSnap);
+            neutralNextCharacter, neutralWrapperSource,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource,
+            caretAfterEmptyUnderline, forceVisibleSyntaxSnap);
         }
       } else {
         // setTimeout, not requestAnimationFrame: rAF doesn't run in

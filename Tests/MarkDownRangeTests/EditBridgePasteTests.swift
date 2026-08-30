@@ -395,6 +395,224 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "[***A\t<u></u>B***](https://x)", caret: 9,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "\t",
+		 expected: "[***AP<u></u>B***](https://x)"),
+		(source: "[***A<u></u>\tB***](https://x)", caret: 8,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\t",
+		 expected: "[***A<u></u>PB***](https://x)"),
+		(source: "[***A\u{00A0}<u></u>B***](https://x)", caret: 9,
+		 key: "ArrowLeft", direction: "backward", publicCopy: " ",
+		 expected: "[***AP<u></u>B***](https://x)"),
+		(source: "[***A<u></u>\u{00A0}B***](https://x)", caret: 8,
+		 key: "ArrowRight", direction: "forward", publicCopy: " ",
+		 expected: "[***A<u></u>PB***](https://x)"),
+	])
+	func selectingInvisibleWhitespaceFromADeepRestoredCaretCopiesAndReplacesItsSource(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 801 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep invisible-whitespace caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("invisible-whitespace Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy,
+				"direction=\(direction), source=\(String(reflecting: source))")
+		}
+		try await Task.sleep(for: .milliseconds(200))
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("invisible-whitespace Paste source result") {
+				harness.source == expected
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected,
+			"direction=\(direction), source=\(String(reflecting: source))")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "[***A\t<u></u>B***](https://x)", caret: 9,
+		 key: "ArrowLeft", direction: "backward"),
+		(source: "[***A<u></u>\tB***](https://x)", caret: 8,
+		 key: "ArrowRight", direction: "forward"),
+	])
+	func cuttingAndPastingATabFromADeepRestoredCaretRoundTripsExactSource(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String
+	) async throws {
+		let afterCut = "[***A<u></u>B***](https://x)"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 821 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep tab Cut caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("deep tab Cut source result") {
+				harness.source == afterCut
+			}
+			try await harness.waitQuiescent()
+			try await harness.waitUntil("deep tab private source flavor") {
+				TestPasteboard.source != nil
+			}
+			#expect(TestPasteboard.source == "\t", "direction=\(direction)")
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("deep tab Paste source result") {
+				harness.source == source
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward"),
+	])
+	func shiftArrowCopyCutPasteAcrossAWrapperBlockBoundaryRoundTripsTheSeparator(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String
+	) async throws {
+		let afterCut = "Head<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 861 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("block-separator Shift-arrow caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("block-separator Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == "\n\n", "direction=\(direction)")
+			#expect(try await harness.evaluate(
+				"window.getSelection().toString().replace(/\\u200B/g, '')"
+			) == "\n", "Copy collapsed the separator selection")
+
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("block-separator Cut source result") {
+				harness.source == afterCut
+			}
+			try await harness.waitQuiescent()
+			try await harness.waitUntil("block-separator private source flavor") {
+				TestPasteboard.source != nil
+			}
+			#expect(TestPasteboard.source == "\n\n", "direction=\(direction)")
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("block-separator Paste source result") {
+				harness.source == source
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", expected: "AlphP<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u>PTail"),
 	])
