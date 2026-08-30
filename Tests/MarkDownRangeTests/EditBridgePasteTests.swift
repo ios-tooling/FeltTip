@@ -968,27 +968,44 @@ import Testing
 
 	@Test(arguments: [
 		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
-		 key: "ArrowLeft", direction: "backward",
+		 key: "ArrowLeft", direction: "backward", operation: "cut",
 		 afterCut: "**Bol**<u></u><u></u><u></u>Tail",
 		 afterTyping: "**Bol**<u></u><u>X</u><u></u>Tail"),
 		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
-		 key: "ArrowRight", direction: "forward",
+		 key: "ArrowRight", direction: "forward", operation: "cut",
 		 afterCut: "Head<u></u><u></u><u></u>*talic*",
 		 afterTyping: "Head<u></u><u>X</u><u></u>*talic*"),
 		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
-		 key: "ArrowLeft", direction: "backward",
+		 key: "ArrowLeft", direction: "backward", operation: "cut",
 		 afterCut: "**Bol**<U></U><u></u>Tail",
 		 afterTyping: "**Bol**<U></U><u>X</u>Tail"),
 		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
-		 key: "ArrowRight", direction: "forward",
+		 key: "ArrowRight", direction: "forward", operation: "cut",
+		 afterCut: "Head<U></U><u></u>*talic*",
+		 afterTyping: "Head<U>X</U><u></u>*talic*"),
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", operation: "delete",
+		 afterCut: "**Bol**<u></u><u></u><u></u>Tail",
+		 afterTyping: "**Bol**<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward", operation: "delete",
+		 afterCut: "Head<u></u><u></u><u></u>*talic*",
+		 afterTyping: "Head<u></u><u>X</u><u></u>*talic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", operation: "delete",
+		 afterCut: "**Bol**<U></U><u></u>Tail",
+		 afterTyping: "**Bol**<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", operation: "delete",
 		 afterCut: "Head<U></U><u></u>*talic*",
 		 afterTyping: "Head<U>X</U><u></u>*talic*"),
 	])
-	func typingAfterACharacterBoundaryCutStaysAtTheActiveClusterWrapper(
+	func typingAfterACharacterBoundaryRemovalStaysAtTheActiveClusterWrapper(
 		source: String,
 		caret: Int,
 		key: String,
 		direction: String,
+		operation: String,
 		afterCut: String,
 		afterTyping: String
 	) async throws {
@@ -1010,8 +1027,13 @@ import Testing
 			}
 			""")
 
-		try await withClearedPasteboard {
-			try await performResponderCommand(.cut, in: harness)
+		if operation == "cut" {
+			try await withClearedPasteboard {
+				try await performResponderCommand(.cut, in: harness)
+				try await harness.waitForSourceEdits(1)
+			}
+		} else {
+			try await harness.run("document.execCommand('delete')")
 			try await harness.waitForSourceEdits(1)
 		}
 		try await harness.waitQuiescent()
