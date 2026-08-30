@@ -1085,8 +1085,15 @@ extension MarkdownWebView.Coordinator {
 			}
 			if (caret == wrapperStart || caret == wrapperStart + 3),
 			   (isWhitespaceBoundary || isPrefixedBoundary) {
+				var insertionStart = wrapperStart
+				while insertionStart >= 7,
+				      source.substring(with: NSRange(
+						location: insertionStart - 7, length: 7))
+						.caseInsensitiveCompare("<u></u>") == .orderedSame {
+					insertionStart -= 7
+				}
 				return PrivateBoundaryPaste(
-					range: NSRange(location: wrapperStart, length: 0),
+					range: NSRange(location: insertionStart, length: 0),
 					replacement: pasted,
 					caret: wrapperStart + pastedText.length + 3)
 			}
@@ -1116,10 +1123,17 @@ extension MarkdownWebView.Coordinator {
 			let afterWrapper = wrapperStart + 7
 			guard (caret == afterWrapper || caret == wrapperStart + 3),
 			      contentStart < pastedText.length else { return nil }
+			var insertionStart = afterWrapper
+			while insertionStart + 7 <= source.length,
+			      source.substring(with: NSRange(
+					location: insertionStart, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame {
+				insertionStart += 7
+			}
 			return PrivateBoundaryPaste(
-				range: NSRange(location: afterWrapper, length: 0),
+				range: NSRange(location: insertionStart, length: 0),
 				replacement: pasted,
-				caret: afterWrapper + pastedText.length)
+				caret: insertionStart + pastedText.length)
 		}
 		guard delimiterEnd < pastedText.length else { return nil }
 		let delimiter = pastedText.substring(with: NSRange(
