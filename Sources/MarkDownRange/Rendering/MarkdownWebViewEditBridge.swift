@@ -261,7 +261,7 @@ extension MarkdownWebView.Coordinator {
 					in: source as NSString,
 					caret: caret,
 					afterWrapper: body["afterWrapper"] as? Bool == true),
-			      let range = Self.adjacentWordDeletionRange(
+			      let deletion = Self.adjacentWordDeletion(
 					in: source,
 					boundary: body["backward"] as? Bool == true
 						? wrapperRange.location : wrapperRange.upperBound,
@@ -274,14 +274,15 @@ extension MarkdownWebView.Coordinator {
 				}
 				return
 			}
-			payload["start"] = range.location
-			payload["end"] = range.upperBound
-			payload["text"] = ""
-			payload["expected"] = (source as NSString).substring(with: range)
+			payload["start"] = deletion.range.location
+			payload["end"] = deletion.range.upperBound
+			payload["text"] = deletion.replacement
+			payload["expected"] = (source as NSString).substring(with: deletion.range)
 			payload["before"] = ""
 			payload["after"] = ""
 			payload["caret"] = body["backward"] as? Bool == true
-				? caret - range.length : caret
+				? caret - deletion.range.length + (deletion.replacement as NSString).length
+				: caret
 		}
 		// A paste carries no text: the page can't read the clipboard faithfully
 		// (WebKit sanitizes the plain-text flavor of a paste's dataTransfer, and
@@ -601,11 +602,16 @@ extension MarkdownWebView.Coordinator {
 	/// Finds the native word-deletion target next to a source-neutral inline
 	/// caret. The empty HTML wrapper is invisible in the DOM, so WebKit cannot
 	/// produce a useful target range for Option-Backspace/Delete itself.
-	private static func adjacentWordDeletionRange(
+	private struct AdjacentWordDeletion {
+		let range: NSRange
+		let replacement: String
+	}
+
+	private static func adjacentWordDeletion(
 		in source: String,
 		boundary: Int,
 		backward: Bool
-	) -> NSRange? {
+	) -> AdjacentWordDeletion? {
 		let text = source as NSString
 		guard boundary >= 0, boundary <= text.length else { return nil }
 		let visibleBoundary = backward
@@ -638,13 +644,69 @@ extension MarkdownWebView.Coordinator {
 		guard let word else { return nil }
 		let expandedWord = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
 			word, in: text)
-		return backward
+		let range = backward
 			? NSRange(
 				location: expandedWord.location,
 				length: boundary - expandedWord.location)
 			: NSRange(
 				location: boundary,
 				length: expandedWord.upperBound - boundary)
+		guard expandedWord == word else {
+			return AdjacentWordDeletion(range: range, replacement: "")
+		}
+		let preservedSyntax = backward
+			? hiddenInlineSuffixToPreserve(
+				in: text, wordEnd: word.upperBound,
+				visibleBoundary: visibleBoundary, boundary: boundary)
+			: hiddenInlinePrefixToPreserve(
+				in: text, boundary: boundary, wordStart: word.location)
+		return AdjacentWordDeletion(range: range, replacement: preservedSyntax)
+	}
+
+	private static func isInlineDelimiterUnit(_ character: unichar) -> Bool {
+		character == 0x2A || character == 0x5F || character == 0x7E ||
+		character == 0x3D || character == 0x5E || character == 0x60
+	}
+
+	private static func hiddenInlineSuffixToPreserve(
+		in text: NSString,
+		wordEnd: Int,
+		visibleBoundary: Int,
+		boundary: Int
+	) -> String {
+		if visibleBoundary < boundary, visibleBoundary >= wordEnd {
+			return text.substring(with: NSRange(
+				location: visibleBoundary, length: boundary - visibleBoundary))
+		}
+		var start = boundary
+		while start > wordEnd, isInlineDelimiterUnit(text.character(at: start - 1)) {
+			start -= 1
+		}
+		return start < boundary
+			? text.substring(with: NSRange(location: start, length: boundary - start))
+			: ""
+	}
+
+	private static func hiddenInlinePrefixToPreserve(
+		in text: NSString,
+		boundary: Int,
+		wordStart: Int
+	) -> String {
+		if wordStart >= 3,
+		   text.substring(with: NSRange(location: wordStart - 3, length: 3))
+			.caseInsensitiveCompare("<u>") == .orderedSame {
+			return text.substring(with: NSRange(location: wordStart - 3, length: 3))
+		}
+		if wordStart > boundary, text.character(at: wordStart - 1) == 0x5B {
+			return "["
+		}
+		var start = wordStart
+		while start > boundary, isInlineDelimiterUnit(text.character(at: start - 1)) {
+			start -= 1
+		}
+		return start < wordStart
+			? text.substring(with: NSRange(location: start, length: wordStart - start))
+			: ""
 	}
 
 	/// A backward word delete starts from a rendered boundary, but raw source

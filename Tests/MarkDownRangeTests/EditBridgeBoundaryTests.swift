@@ -618,6 +618,18 @@ import Testing
 		 expected: "Alpha<u>X</u> Tail"),
 		(command: "deleteWordForward", source: "Alpha [bravo](https://x) Tail", caret: 5,
 		 expected: "Alpha<u>X</u> Tail"),
+		(command: "deleteWordBackward", source: "**alpha beta** Tail", caret: 14,
+		 expected: "**alpha **<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha **bravo charlie** Tail", caret: 5,
+		 expected: "Alpha<u>X</u>** charlie** Tail"),
+		(command: "deleteWordBackward", source: "<u>alpha beta</u> Tail", caret: 17,
+		 expected: "<u>alpha </u><u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha <u>bravo charlie</u> Tail", caret: 5,
+		 expected: "Alpha<u>X</u><u> charlie</u> Tail"),
+		(command: "deleteWordBackward", source: "[alpha beta](https://x) Tail", caret: 23,
+		 expected: "[alpha ](https://x)<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha [bravo charlie](https://x) Tail", caret: 5,
+		 expected: "Alpha<u>X</u>[ charlie](https://x) Tail"),
 	])
 	func wordDeletionFromAnEmptyUnderlineCaretUsesTheAdjacentVisibleWord(
 		command: String,
