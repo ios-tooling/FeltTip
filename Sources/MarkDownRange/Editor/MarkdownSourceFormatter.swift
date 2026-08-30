@@ -263,6 +263,109 @@ enum MarkdownSourceFormatter {
 			}
 		}
 
+		// When the style being removed is the outer member of a nested pair,
+		// the inner markers must be closed on each untouched fragment and kept
+		// around the selected text. Splitting only the outer marker strands the
+		// inner opener and closer on different fragments.
+		if selection.length > 0 {
+			let innerCandidates = ["~~", "==", "**", "__", "_", "*", "^", "~"]
+			for candidate in [marker] + alternates {
+				let length = (candidate as NSString).length
+				var lineStart = selection.location
+				while lineStart > 0 {
+					let character = text.character(at: lineStart - 1)
+					if character == 0x0A || character == 0x0D { break }
+					lineStart -= 1
+				}
+				var opening = NSRange(location: NSNotFound, length: 0)
+				var occurrenceCount = 0
+				var scan = lineStart
+				while scan + length <= selection.location {
+					let occurrence = text.range(
+						of: candidate,
+						options: [],
+						range: NSRange(
+							location: scan,
+							length: selection.location - scan))
+					if occurrence.location == NSNotFound { break }
+					opening = occurrence
+					occurrenceCount += 1
+					scan = occurrence.upperBound
+				}
+				guard occurrenceCount % 2 == 1 else { continue }
+
+				var lineEnd = selection.upperBound
+				while lineEnd < text.length {
+					let character = text.character(at: lineEnd)
+					if character == 0x0A || character == 0x0D { break }
+					lineEnd += 1
+				}
+				let closing = text.range(
+					of: candidate,
+					options: [],
+					range: NSRange(
+						location: selection.upperBound,
+						length: lineEnd - selection.upperBound))
+				guard closing.location != NSNotFound else { continue }
+
+				for inner in innerCandidates where inner != candidate {
+					let innerLength = (inner as NSString).length
+					guard opening.upperBound + innerLength <= selection.location,
+					      closing.location >= selection.upperBound + innerLength,
+					      text.substring(with: NSRange(
+						location: opening.upperBound, length: innerLength)) == inner,
+					      text.substring(with: NSRange(
+						location: closing.location - innerLength,
+						length: innerLength)) == inner else { continue }
+
+					let contentStart = opening.upperBound + innerLength
+					let contentEnd = closing.location - innerLength
+					guard selection.location >= contentStart,
+					      selection.upperBound <= contentEnd else { continue }
+					var prefixEnd = selection.location
+					while prefixEnd > contentStart {
+						let character = text.character(at: prefixEnd - 1)
+						guard character == 0x20 || character == 0x09 else { break }
+						prefixEnd -= 1
+					}
+					var suffixStart = selection.upperBound
+					while suffixStart < contentEnd {
+						let character = text.character(at: suffixStart)
+						guard character == 0x20 || character == 0x09 else { break }
+						suffixStart += 1
+					}
+					let prefix = text.substring(with: NSRange(
+						location: contentStart, length: prefixEnd - contentStart))
+					let leadingWhitespace = text.substring(with: NSRange(
+						location: prefixEnd,
+						length: selection.location - prefixEnd))
+					let trailingWhitespace = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: suffixStart - selection.upperBound))
+					let suffix = text.substring(with: NSRange(
+						location: suffixStart, length: contentEnd - suffixStart))
+					guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+
+					let prefixWrapper = prefix.isEmpty ? "" :
+						candidate + inner + prefix + inner + candidate
+					let selectedWrapper = inner + selected + inner
+					let suffixWrapper = suffix.isEmpty ? "" :
+						candidate + inner + suffix + inner + candidate
+					let replacement = prefixWrapper + leadingWhitespace + selectedWrapper +
+						trailingWhitespace + suffixWrapper
+					return .init(
+						range: NSRange(
+							location: opening.location,
+							length: closing.upperBound - opening.location),
+						replacement: replacement,
+						selection: NSRange(
+							location: opening.location + (prefixWrapper as NSString).length +
+								(leadingWhitespace as NSString).length + innerLength,
+							length: selection.length))
+				}
+			}
+		}
+
 		// Toggling only the leading or trailing part of one delimited run
 		// splits the run instead of stacking another pair of markers. Keep
 		// horizontal boundary whitespace outside the surviving styled fragment
