@@ -93,6 +93,23 @@ struct EditBridgeWhitespaceBoundaryTests {
 		try await assertHealthy(harness)
 	}
 
+	@Test func typingAndDeletingInATabbedRunPreservesTheTabWithoutRecovery() async throws {
+		let source = "Alpha\tBeta\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.type("X", at: 2)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "AlXpha\tBeta\n\nTail")
+		try await assertHealthy(harness)
+
+		try await harness.batch([
+			"window.__mdPlaceCaret(3)",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == source)
+		try await assertHealthy(harness)
+	}
+
 	@Test func backspaceMergePreservesWhitespaceOnBothSidesOfSeparator() async throws {
 		let source = "Alpha \n\n  Beta\n\nTail"
 		let beta = (source as NSString).range(of: "Beta").location

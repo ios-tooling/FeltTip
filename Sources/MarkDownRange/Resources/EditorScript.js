@@ -1432,6 +1432,13 @@
     return /^[ \t]+$/.test(replacement) &&
       (/[ \t]$/.test(before) || /^[ \t]/.test(after));
   }
+  // WebKit rewrites an existing tab in an editable text node to a plain space
+  // when it mutates any nearby character. The UTF-16 length stays unchanged,
+  // but the stamped run is no longer a verbatim source slice. Re-render edits
+  // in these uncommon runs instead of accepting drift and recovering later.
+  function needsStructuralTabRun(span) {
+    return !!(span && span.textContent && span.textContent.indexOf('\t') >= 0);
+  }
   function needsStructuralBlockPrefixRefresh(range, replacement, before, after) {
     var node = range.startContainer;
     var owner = node.nodeType === 1 ? node : node.parentElement;
@@ -2156,6 +2163,7 @@
       // whitespace makes it part of the following source paragraph. Re-render
       // this first insertion; subsequent characters use the normal fast path.
       if (crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
+          needsStructuralTabRun(startSpan) ||
           needsStructuralWhitespaceInsertion(data, before, after) ||
           needsStructuralBlockPrefixRefresh(range, data, before, after) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
@@ -2197,6 +2205,7 @@
         (!selected && crossRun && isVisualBlockStart(endPos.node, endPos.offset));
       if (crossRun || targetOwnsStampedText || syntaxStart.length ||
           syntaxEnd.length || blockPrefixes.length ||
+          needsStructuralTabRun(startSpan) ||
           needsStructuralWhitespaceDeletion(expected, before, after) ||
           needsStructuralBlockPrefixRefresh(range, '', before, after) ||
           needsStructuralInlineRefresh(range, '', before, after)) {

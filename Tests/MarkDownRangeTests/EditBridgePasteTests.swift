@@ -642,6 +642,14 @@ import Testing
 		 direction: "backward",
 		 expected: "alpha [***`Bravo P`***](https://x)<u></u> Delta",
 		 afterTyping: "alpha [***`Bravo PX`***](https://x)<u></u> Delta"),
+		(source: "Alpha<u></u>\t\t[***`Bravo\tcharlie`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 expected: "Alpha<u></u>P\t[***`charlie`***](https://x) Delta",
+		 afterTyping: "Alpha<u></u>PX\t[***`charlie`***](https://x) Delta"),
+		(source: "alpha [***`Bravo\tcharlie`***](https://x)<u></u> Delta", caret: 43,
+		 direction: "backward",
+		 expected: "alpha [***`Bravo\tP`***](https://x)<u></u> Delta",
+		 afterTyping: "alpha [***`Bravo\tPX`***](https://x)<u></u> Delta"),
 	])
 	func typingAfterPartialStyledWordPasteUsesTheVisibleReplacementCaret(
 		source: String,
@@ -671,7 +679,8 @@ import Testing
 		try await harness.waitQuiescent()
 		#expect(harness.source == afterTyping, "direction=\(direction)")
 		#expect(try await harness.stampMismatches() == [])
-		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.resyncCount == 0,
+			"resync=\(harness.coordinator.lastResyncReason ?? "none"), incidents=\(harness.coordinator.bridgeIncidents)")
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
