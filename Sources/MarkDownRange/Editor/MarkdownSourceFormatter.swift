@@ -163,6 +163,106 @@ enum MarkdownSourceFormatter {
 			}
 		}
 
+		// Bold and italic share a three-character delimiter in combined runs.
+		// Removing only one style from a partial selection must split the whole
+		// triple-delimited run, then keep the complementary marker on the selected
+		// text. Treating `**` or `*` independently leaves unbalanced delimiters.
+		if selection.length > 0 {
+			for candidate in [marker] + alternates {
+				let candidateText = candidate as NSString
+				guard candidateText.length == 1 || candidateText.length == 2 else { continue }
+				let unit = candidateText.character(at: 0)
+				guard (unit == 0x2A || unit == 0x5F),
+				      (0..<candidateText.length).allSatisfy({
+					candidateText.character(at: $0) == unit
+				}) else { continue }
+
+				var lineStart = selection.location
+				while lineStart > 0 {
+					let character = text.character(at: lineStart - 1)
+					if character == 0x0A || character == 0x0D { break }
+					lineStart -= 1
+				}
+				var lineEnd = selection.upperBound
+				while lineEnd < text.length {
+					let character = text.character(at: lineEnd)
+					if character == 0x0A || character == 0x0D { break }
+					lineEnd += 1
+				}
+
+				var triples: [NSRange] = []
+				var scan = lineStart
+				while scan < lineEnd {
+					guard text.character(at: scan) == unit else {
+						scan += 1
+						continue
+					}
+					let start = scan
+					while scan < lineEnd, text.character(at: scan) == unit { scan += 1 }
+					if scan - start == 3 {
+						triples.append(NSRange(location: start, length: 3))
+					}
+				}
+
+				var tripleIndex = 0
+				while tripleIndex + 1 < triples.count {
+					let opening = triples[tripleIndex]
+					let closing = triples[tripleIndex + 1]
+					tripleIndex += 2
+					guard selection.location >= opening.upperBound,
+					      selection.upperBound <= closing.location else { continue }
+
+					var prefixEnd = selection.location
+					while prefixEnd > opening.upperBound {
+						let character = text.character(at: prefixEnd - 1)
+						guard character == 0x20 || character == 0x09 else { break }
+						prefixEnd -= 1
+					}
+					var suffixStart = selection.upperBound
+					while suffixStart < closing.location {
+						let character = text.character(at: suffixStart)
+						guard character == 0x20 || character == 0x09 else { break }
+						suffixStart += 1
+					}
+					let prefix = text.substring(with: NSRange(
+						location: opening.upperBound,
+						length: prefixEnd - opening.upperBound))
+					let leadingWhitespace = text.substring(with: NSRange(
+						location: prefixEnd,
+						length: selection.location - prefixEnd))
+					let trailingWhitespace = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: suffixStart - selection.upperBound))
+					let suffix = text.substring(with: NSRange(
+						location: suffixStart,
+						length: closing.location - suffixStart))
+					guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+
+					let openingMarker = text.substring(with: opening)
+					let closingMarker = text.substring(with: closing)
+					let prefixWrapper = prefix.isEmpty ? "" :
+						openingMarker + prefix + closingMarker
+					let suffixWrapper = suffix.isEmpty ? "" :
+						openingMarker + suffix + closingMarker
+					let residualLength = 3 - candidateText.length
+					let residual = String(
+						repeating: Character(UnicodeScalar(unit)!), count: residualLength)
+					let selectedWrapper = residual + selected + residual
+					let replacement = prefixWrapper + leadingWhitespace + selectedWrapper +
+						trailingWhitespace + suffixWrapper
+					return .init(
+						range: NSRange(
+							location: opening.location,
+							length: closing.upperBound - opening.location),
+						replacement: replacement,
+						selection: NSRange(
+							location: opening.location + (prefixWrapper as NSString).length +
+								(leadingWhitespace as NSString).length + residualLength,
+							length: selection.length))
+				}
+			}
+		}
+
 		// Toggling only the leading or trailing part of one delimited run
 		// splits the run instead of stacking another pair of markers. Keep
 		// horizontal boundary whitespace outside the surviving styled fragment

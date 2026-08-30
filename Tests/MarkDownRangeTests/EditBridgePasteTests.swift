@@ -883,6 +883,10 @@ import Testing
 		 command: "link", direction: "forward",
 		 expected: "[Alpha](https://a)<u></u> [Bravo]() [charlie](https://c)",
 		 afterTyping: "[Alpha](https://a)<u></u> [X]() [charlie](https://c)"),
+		(source: "***Alpha<u></u> Bravo charlie*** Delta", caret: 11,
+		 command: "bold", direction: "forward",
+		 expected: "***Alpha<u></u>*** *Bravo* ***charlie*** Delta",
+		 afterTyping: "***Alpha<u></u>*** *X* ***charlie*** Delta"),
 	])
 	func formattingAWordSelectionFromTheSyntheticCaretPreservesItsWrapper(
 		source: String,
