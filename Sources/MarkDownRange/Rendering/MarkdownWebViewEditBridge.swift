@@ -881,8 +881,10 @@ extension MarkdownWebView.Coordinator {
 		boundary: Int
 	) -> String {
 		if visibleBoundary < boundary, visibleBoundary >= wordEnd {
+			// A link may contain normalized inner wrappers between the visible
+			// word and `]`; preserve those closers along with the destination.
 			return text.substring(with: NSRange(
-				location: visibleBoundary, length: boundary - visibleBoundary))
+				location: wordEnd, length: boundary - wordEnd))
 		}
 		var start = boundary
 		while start > wordEnd, isInlineDelimiterUnit(text.character(at: start - 1)) {
@@ -898,6 +900,12 @@ extension MarkdownWebView.Coordinator {
 		boundary: Int,
 		wordStart: Int
 	) -> String {
+		func includingOuterLink(_ start: Int) -> Int {
+			// DOM metadata can expose the inner code/emphasis stack but omit the
+			// link ancestor, so include its opener after peeling delimiters.
+			start > boundary && text.character(at: start - 1) == 0x5B
+				? start - 1 : start
+		}
 		if wordStart >= 3,
 		   text.substring(with: NSRange(location: wordStart - 3, length: 3))
 			.caseInsensitiveCompare("<u>") == .orderedSame {
@@ -906,6 +914,7 @@ extension MarkdownWebView.Coordinator {
 			      isInlineDelimiterUnit(text.character(at: start - 1)) {
 				start -= 1
 			}
+			start = includingOuterLink(start)
 			return text.substring(with: NSRange(
 				location: start, length: wordStart - start))
 		}
@@ -922,6 +931,7 @@ extension MarkdownWebView.Coordinator {
 		while start > boundary, isInlineDelimiterUnit(text.character(at: start - 1)) {
 			start -= 1
 		}
+		start = includingOuterLink(start)
 		return start < wordStart
 			? text.substring(with: NSRange(location: start, length: wordStart - start))
 			: ""

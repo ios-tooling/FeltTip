@@ -109,6 +109,12 @@ import Testing
 			(source: "**Alpha** Tail", selected: "ha", expected: "**Alp** Tail"),
 			(source: "[Alpha](https://example.com) Tail", selected: "Al", expected: "[pha](https://example.com) Tail"),
 			(source: "[Alpha](https://example.com) Tail", selected: "ha", expected: "[Alp](https://example.com) Tail"),
+			(source: "[***`Alpha bravo`***](https://example.com/a(b)/c) Tail",
+			 selected: "ph",
+			 expected: "[***`Ala bravo`***](https://example.com/a(b)/c) Tail"),
+			(source: #"[***<u>Alpha bravo</u>***](https://example.com/a\)b) Tail"#,
+			 selected: "br",
+			 expected: #"[***<u>Alpha avo</u>***](https://example.com/a\)b) Tail"#),
 		]
 		for item in cases {
 			for backward in [false, true] {
