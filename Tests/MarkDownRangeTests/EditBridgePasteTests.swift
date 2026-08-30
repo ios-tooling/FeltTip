@@ -832,16 +832,28 @@ import Testing
 
 	@Test(arguments: [
 		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
-		 key: "ArrowLeft", direction: "backward",
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
 		 afterTyping: "**Bold**\n\n<u></u><u>X</u><u></u>Tail"),
 		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
-		 key: "ArrowRight", direction: "forward",
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
 		 afterTyping: "Head<u></u><u></u><u></u>\n\n*IXtalic*"),
 		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
-		 key: "ArrowLeft", direction: "backward",
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
 		 afterTyping: "**Bold**\n\n<U></U><u>X</u>Tail"),
 		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
-		 key: "ArrowRight", direction: "forward",
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 afterTyping: "Head<U></U><u></u>\n\n*IXtalic*"),
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
+		 afterTyping: "**Bold**\n\n<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
+		 afterTyping: "Head<u></u><u></u><u></u>\n\n*IXtalic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
+		 afterTyping: "**Bold**\n\n<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
 		 afterTyping: "Head<U></U><u></u>\n\n*IXtalic*"),
 	])
 	func characterCutPasteAcrossAWrapperClusterRestoresTheDirectionalCaret(
@@ -849,6 +861,8 @@ import Testing
 		caret: Int,
 		key: String,
 		direction: String,
+		extensions: Int,
+		reversals: Int,
 		afterTyping: String
 	) async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
@@ -859,12 +873,22 @@ import Testing
 		}
 		harness.rewireRoundTrip()
 		try await harness.run("""
-			for (var index = 0; index < 2; index++) {
+			for (var index = 0; index < \(extensions); index++) {
 			  var arrow = new KeyboardEvent('keydown', {
 			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
 			  })
 			  if (document.body.dispatchEvent(arrow)) {
 			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			for (var index = 0; index < \(reversals); index++) {
+			  var reverseKey = '\(key)' === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft'
+			  var reverseDirection = '\(direction)' === 'backward' ? 'forward' : 'backward'
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: reverseKey, shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', reverseDirection, 'character')
 			  }
 			}
 			""")
