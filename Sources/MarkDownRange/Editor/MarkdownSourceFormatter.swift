@@ -336,6 +336,79 @@ enum MarkdownSourceFormatter {
 			}
 		}
 
+		if selection.length > 0 {
+			var lineStart = selection.location
+			while lineStart > 0 {
+				let character = text.character(at: lineStart - 1)
+				if character == 0x0A || character == 0x0D { break }
+				lineStart -= 1
+			}
+			var lineEnd = selection.upperBound
+			while lineEnd < text.length {
+				let character = text.character(at: lineEnd)
+				if character == 0x0A || character == 0x0D { break }
+				lineEnd += 1
+			}
+			let opening = text.range(
+				of: "[",
+				options: .backwards,
+				range: NSRange(
+					location: lineStart,
+					length: selection.location - lineStart))
+			let labelClose = text.range(
+				of: "](",
+				options: [],
+				range: NSRange(
+					location: selection.upperBound,
+					length: lineEnd - selection.upperBound))
+			if opening.location != NSNotFound,
+			   labelClose.location != NSNotFound,
+			   let close = destinationClose(labelEnd: labelClose.location) {
+				var prefixEnd = selection.location
+				while prefixEnd > opening.upperBound {
+					let character = text.character(at: prefixEnd - 1)
+					guard character == 0x20 || character == 0x09 else { break }
+					prefixEnd -= 1
+				}
+				var suffixStart = selection.upperBound
+				while suffixStart < labelClose.location {
+					let character = text.character(at: suffixStart)
+					guard character == 0x20 || character == 0x09 else { break }
+					suffixStart += 1
+				}
+				if prefixEnd > opening.upperBound,
+				   suffixStart < labelClose.location {
+					let prefix = text.substring(with: NSRange(
+						location: opening.location,
+						length: prefixEnd - opening.location))
+					let leadingWhitespace = text.substring(with: NSRange(
+						location: prefixEnd,
+						length: selection.location - prefixEnd))
+					let trailingWhitespace = text.substring(with: NSRange(
+						location: selection.upperBound,
+						length: suffixStart - selection.upperBound))
+					let suffix = text.substring(with: NSRange(
+						location: suffixStart,
+						length: labelClose.location - suffixStart))
+					let destination = text.substring(with: NSRange(
+						location: labelClose.location,
+						length: close + 1 - labelClose.location))
+					let replacement = prefix + destination + leadingWhitespace +
+						selected + trailingWhitespace + "[" + suffix + destination
+					return .init(
+						range: NSRange(
+							location: opening.location,
+							length: close + 1 - opening.location),
+						replacement: replacement,
+						selection: NSRange(
+							location: opening.location + (prefix as NSString).length +
+								(destination as NSString).length +
+								(leadingWhitespace as NSString).length,
+							length: selection.length))
+				}
+			}
+		}
+
 		if selection.length > 0,
 		   let close = destinationClose(labelEnd: selection.upperBound) {
 			var lineStart = selection.location

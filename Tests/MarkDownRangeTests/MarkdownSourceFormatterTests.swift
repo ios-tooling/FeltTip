@@ -214,6 +214,8 @@ import AppKit
 		 expected: "Bravo [charlie](https://x/a(b)/c)"),
 		(source: "[Bravo charlie](https://x/a\\)/c)", selected: "charlie",
 		 expected: "[Bravo](https://x/a\\)/c) charlie"),
+		(source: "[Alpha Bravo charlie](https://x)", selected: "Bravo",
+		 expected: "[Alpha](https://x) Bravo [charlie](https://x)"),
 	])
 	func togglingALinkLabelFragmentPreservesTheRemainingDestination(
 		source: String,
