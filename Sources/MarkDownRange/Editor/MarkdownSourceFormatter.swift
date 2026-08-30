@@ -1177,6 +1177,109 @@ enum MarkdownSourceFormatter {
 						let openingMarker = text.substring(with: openingRange)
 						let closingMarker = text.substring(with: closingRange)
 						if openingRange.upperBound < selection.location,
+						   text.character(at: openingRange.upperBound) == 0x60 {
+							var openingRunEnd = openingRange.upperBound
+							while openingRunEnd < selection.location,
+							      text.character(at: openingRunEnd) == 0x60 {
+								openingRunEnd += 1
+							}
+							let codeMarkerLength = openingRunEnd - openingRange.upperBound
+							var scan = openingRunEnd
+							var codeClosing: NSRange?
+							while scan < closingRange.location {
+								guard text.character(at: scan) == 0x60 else {
+									scan += 1
+									continue
+								}
+								let runStart = scan
+								while scan < closingRange.location,
+								      text.character(at: scan) == 0x60 { scan += 1 }
+								if scan - runStart == codeMarkerLength {
+									codeClosing = NSRange(
+										location: runStart, length: codeMarkerLength)
+									break
+								}
+							}
+							if let codeClosing, codeClosing.upperBound == closingRange.location {
+								var contentStart = openingRunEnd
+								var contentEnd = codeClosing.location
+								if contentEnd - contentStart >= 2,
+								   text.character(at: contentStart) == 0x20,
+								   text.character(at: contentEnd - 1) == 0x20 {
+									let raw = text.substring(with: NSRange(
+										location: contentStart,
+										length: contentEnd - contentStart))
+									if raw.contains(where: { $0 != " " }) {
+										contentStart += 1
+										contentEnd -= 1
+									}
+								}
+								if selection.location >= contentStart,
+								   selection.upperBound <= contentEnd {
+									var prefixEnd = selection.location
+									while prefixEnd > contentStart {
+										let character = text.character(at: prefixEnd - 1)
+										guard character == 0x20 || character == 0x09 else { break }
+										prefixEnd -= 1
+									}
+									var suffixStart = selection.upperBound
+									while suffixStart < contentEnd {
+										let character = text.character(at: suffixStart)
+										guard character == 0x20 || character == 0x09 else { break }
+										suffixStart += 1
+									}
+									let prefix = text.substring(with: NSRange(
+										location: contentStart,
+										length: prefixEnd - contentStart))
+									let leadingWhitespace = text.substring(with: NSRange(
+										location: prefixEnd,
+										length: selection.location - prefixEnd))
+									let trailingWhitespace = text.substring(with: NSRange(
+										location: selection.upperBound,
+										length: suffixStart - selection.upperBound))
+									let suffix = text.substring(with: NSRange(
+										location: suffixStart,
+										length: contentEnd - suffixStart))
+									if !prefix.isEmpty || !suffix.isEmpty,
+									   let selectedCode = MarkdownInlineCodeToggle.change(
+										in: selected,
+										selection: NSRange(
+											location: 0,
+											length: (selected as NSString).length)) {
+										let prefixCode = prefix.isEmpty ? "" :
+											MarkdownInlineCodeToggle.change(
+												in: prefix,
+												selection: NSRange(
+													location: 0,
+													length: (prefix as NSString).length))?.replacement ?? ""
+										let suffixCode = suffix.isEmpty ? "" :
+											MarkdownInlineCodeToggle.change(
+												in: suffix,
+												selection: NSRange(
+													location: 0,
+													length: (suffix as NSString).length))?.replacement ?? ""
+										let prefixWrapper = prefix.isEmpty ? "" :
+											openingMarker + prefixCode + closingMarker
+										let suffixWrapper = suffix.isEmpty ? "" :
+											openingMarker + suffixCode + closingMarker
+										let replacement = prefixWrapper + leadingWhitespace +
+											selectedCode.replacement + trailingWhitespace + suffixWrapper
+										return .init(
+											range: NSRange(
+												location: openingRange.location,
+												length: closingRange.upperBound - openingRange.location),
+											replacement: replacement,
+											selection: NSRange(
+												location: openingRange.location +
+													(prefixWrapper as NSString).length +
+													(leadingWhitespace as NSString).length +
+													selectedCode.selection.location,
+												length: selection.length))
+									}
+								}
+							}
+						}
+						if openingRange.upperBound < selection.location,
 						   text.character(at: openingRange.upperBound) == 0x5B {
 							var labelDepth = 0
 							var escaped = false
