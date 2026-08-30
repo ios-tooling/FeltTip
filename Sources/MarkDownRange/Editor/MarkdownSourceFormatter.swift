@@ -159,6 +159,48 @@ enum MarkdownSourceFormatter {
 				length: selection.length))
 	}
 
+	private static func inlineCodeContentRange(
+		in text: NSString,
+		wrapper: NSRange
+	) -> NSRange? {
+		guard wrapper.length >= 2,
+		      text.character(at: wrapper.location) == 0x60 else { return nil }
+		var openingEnd = wrapper.location
+		while openingEnd < wrapper.upperBound,
+		      text.character(at: openingEnd) == 0x60 { openingEnd += 1 }
+		let markerLength = openingEnd - wrapper.location
+		var scan = openingEnd
+		while scan < wrapper.upperBound {
+			guard text.character(at: scan) == 0x60 else {
+				scan += 1
+				continue
+			}
+			let runStart = scan
+			while scan < wrapper.upperBound,
+			      text.character(at: scan) == 0x60 { scan += 1 }
+			guard scan - runStart != markerLength else {
+				guard scan == wrapper.upperBound else { return nil }
+				var contentStart = openingEnd
+				var contentEnd = runStart
+				if contentEnd - contentStart >= 2,
+				   text.character(at: contentStart) == 0x20,
+				   text.character(at: contentEnd - 1) == 0x20 {
+					let raw = text.substring(with: NSRange(
+						location: contentStart,
+						length: contentEnd - contentStart))
+					if raw.contains(where: { $0 != " " }) {
+						contentStart += 1
+						contentEnd -= 1
+					}
+				}
+				return NSRange(
+					location: contentStart,
+					length: contentEnd - contentStart)
+			}
+		}
+		return nil
+	}
+
 	private static func toggleDelimited(
 		in text: NSString,
 		selection: NSRange,
@@ -229,6 +271,24 @@ enum MarkdownSourceFormatter {
 					tripleIndex += 2
 					guard selection.location >= opening.upperBound,
 					      selection.upperBound <= closing.location else { continue }
+					let residualLength = 3 - candidateText.length
+					let residual = String(
+						repeating: Character(UnicodeScalar(unit)!), count: residualLength)
+					let innerRange = NSRange(
+						location: opening.upperBound,
+						length: closing.location - opening.upperBound)
+					if inlineCodeContentRange(in: text, wrapper: innerRange) == selection {
+						let inner = text.substring(with: innerRange)
+						return .init(
+							range: NSRange(
+								location: opening.location,
+								length: closing.upperBound - opening.location),
+							replacement: residual + inner + residual,
+							selection: NSRange(
+								location: opening.location + residualLength +
+									selection.location - opening.upperBound,
+								length: selection.length))
+					}
 
 					var prefixEnd = selection.location
 					while prefixEnd > opening.upperBound {
@@ -262,9 +322,6 @@ enum MarkdownSourceFormatter {
 						openingMarker + prefix + closingMarker
 					let suffixWrapper = suffix.isEmpty ? "" :
 						openingMarker + suffix + closingMarker
-					let residualLength = 3 - candidateText.length
-					let residual = String(
-						repeating: Character(UnicodeScalar(unit)!), count: residualLength)
 					let selectedWrapper = residual + selected + residual
 					let replacement = prefixWrapper + leadingWhitespace + selectedWrapper +
 						trailingWhitespace + suffixWrapper
