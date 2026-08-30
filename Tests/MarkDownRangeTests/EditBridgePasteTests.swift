@@ -310,12 +310,14 @@ import Testing
 			}
 			#expect(TestPasteboard.string == copied, "direction=\(direction)")
 		}
+		try await Task.sleep(for: .milliseconds(200))
 		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
 			"Copy collapsed the composed-character selection for direction=\(direction)")
-		let sourceEditsBeforePaste = harness.sourceEditCount
 		try await withPasteboard("P") {
 			try await performResponderCommand(.paste, in: harness)
-			try await harness.waitForSourceEdits(sourceEditsBeforePaste + 1)
+			try await harness.waitUntil("composed-character Paste source result") {
+				harness.source == expected
+			}
 		}
 		try await harness.waitQuiescent()
 
@@ -323,6 +325,73 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [8, 12, 15, 19])
+	func selectingFromEveryCaretInADeepEmptyWrapperClusterPreservesBothWrappers(
+		caret: Int
+	) async throws {
+		let source = "[***A<u></u><u></u>B***](https://x)"
+		for (key, direction, copied, expected) in [
+			("ArrowLeft", "backward", "A", "[***P<u></u><u></u>B***](https://x)"),
+			("ArrowRight", "forward", "B", "[***A<u></u><u></u>P***](https://x)"),
+		] {
+			let harness = try await CoordinatorBridgeHarness(source: "Seed")
+			harness.focusWebView()
+			harness.coordinator.parent = MarkdownWebView(
+				text: source, theme: .default, fontSize: 15)
+				.editable(true)
+				.caretTarget(MarkdownCaretTarget(offset: caret, token: 733 + caret))
+				.onSourceEdit { [weak harness] newText, _ in
+					harness?.recordExternalEdit(newText)
+				}
+			harness.coordinator.applyCaretTarget()
+			harness.coordinator.load(into: harness.webView)
+			harness.adoptHostText(source)
+			try await harness.waitUntil("deep selectable wrapper-cluster caret") {
+				try await harness.evaluate("""
+					(function () {
+					  var home = document.querySelector('[data-md-inline-caret-home]')
+					  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+					})()
+					""") == String(caret)
+			}
+			harness.rewireRoundTrip()
+			try await harness.run("""
+				var arrow = new KeyboardEvent('keydown', {
+				  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+				})
+				if (document.body.dispatchEvent(arrow)) {
+				  window.getSelection().modify('extend', '\(direction)', 'character')
+				}
+				""")
+
+			#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+				"direction=\(direction), caret=\(caret)")
+			try await withClearedPasteboard {
+				try await performResponderCommand(.copy, in: harness)
+				try await harness.waitUntil("wrapper-cluster Copy pasteboard delivery") {
+					TestPasteboard.string != nil
+				}
+				#expect(TestPasteboard.string == copied,
+					"direction=\(direction), caret=\(caret)")
+			}
+			try await Task.sleep(for: .milliseconds(200))
+			#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+				"Copy collapsed the wrapper-cluster selection for direction=\(direction), caret=\(caret)")
+			try await withPasteboard("P") {
+				try await performResponderCommand(.paste, in: harness)
+				try await harness.waitUntil("wrapper-cluster Paste source result") {
+					harness.source == expected
+				}
+			}
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == expected, "direction=\(direction), caret=\(caret)")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
 	}
 
 	@Test(arguments: [

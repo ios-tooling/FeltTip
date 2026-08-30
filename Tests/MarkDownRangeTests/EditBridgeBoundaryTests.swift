@@ -1496,6 +1496,55 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test(arguments: [8, 12, 15, 19])
+	func arrowingFromEveryCaretInADeepEmptyWrapperClusterSkipsTheCluster(
+		caret: Int
+	) async throws {
+		let source = "[***A<u></u><u></u>B***](https://x)"
+		for (key, direction, expected) in [
+			("ArrowLeft", "backward", "[***XA<u></u><u></u>B***](https://x)"),
+			("ArrowRight", "forward", "[***A<u></u><u></u>BX***](https://x)"),
+		] {
+			let harness = try await CoordinatorBridgeHarness(source: "Seed")
+			harness.focusWebView()
+			harness.coordinator.parent = MarkdownWebView(
+				text: source, theme: .default, fontSize: 15)
+				.editable(true)
+				.caretTarget(MarkdownCaretTarget(offset: caret, token: 728 + caret))
+				.onSourceEdit { [weak harness] newText, _ in
+					harness?.recordExternalEdit(newText)
+				}
+			harness.coordinator.applyCaretTarget()
+			harness.coordinator.load(into: harness.webView)
+			harness.adoptHostText(source)
+			try await harness.waitUntil("deep empty-wrapper cluster caret") {
+				try await harness.evaluate("""
+					(function () {
+					  var home = document.querySelector('[data-md-inline-caret-home]')
+					  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+					})()
+					""") == String(caret)
+			}
+			harness.rewireRoundTrip()
+			try await harness.run("""
+				var arrow = new KeyboardEvent('keydown', {
+				  key: '\(key)', bubbles: true, cancelable: true
+				})
+				if (document.body.dispatchEvent(arrow)) {
+				  window.getSelection().modify('move', '\(direction)', 'character')
+				}
+				""")
+			try await harness.type("X")
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == expected, "key=\(key), caret=\(caret)")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
 	@Test(arguments: [
 		(source: "<u></u>Tail", caret: 7, key: "ArrowLeft",
 		 direction: "backward", expected: "<u></u>XTail"),
