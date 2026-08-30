@@ -1839,6 +1839,43 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func repeatingABoundaryPasteConsumesTheSameSiteInverseOnlyOnce() async throws {
+		let source = "Alpha Bravo\n\n<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 16, token: 730, in: harness)
+		try await harness.waitUntil("repeated boundary paste source caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', 'backward', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == source)
+
+			try await harness.placeCaret(16)
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(3)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Bravo\n\nBravo\n\nTail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(4)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Bravo\n\nBravo\n\nXTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test(arguments: [
 		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
 		 direction: "forward", afterDelete: "Alpha<u></u> charlie",
