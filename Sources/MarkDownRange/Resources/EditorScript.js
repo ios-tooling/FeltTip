@@ -454,10 +454,10 @@
     reportSelection(true);
   });
   // Empty-wrapper caret homes represent invisible source syntax. A native
-  // left-arrow move otherwise lands at a hidden wrapper boundary—the same
-  // visual caret stop—and appears not to move. Consume that hidden stop plus
-  // one real character; right-arrow already crosses the holder and following
-  // visible character in one native move.
+  // arrow move otherwise lands at one of the hidden wrapper boundaries—the
+  // same visual caret stop—and appears not to move. Start from the adjacent
+  // real text node so normalized/nested wrapper depth cannot change how many
+  // native moves are needed, then consume exactly one visible character.
   document.body.addEventListener('keydown', function (event) {
     if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
         event.altKey || event.ctrlKey || event.metaKey) return;
@@ -468,15 +468,24 @@
     var selection = window.getSelection();
     if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
     event.preventDefault();
-    if (event.shiftKey) {
-      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      walker.currentNode = home;
-      var adjacent = event.key === 'ArrowLeft'
-        ? walker.previousNode() : walker.nextNode();
-      while (adjacent && (home.contains(adjacent) || !adjacent.nodeValue.length)) {
-        adjacent = event.key === 'ArrowLeft'
-          ? walker.previousNode() : walker.nextNode();
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    walker.currentNode = home;
+    var homeBlock = blockOf(home);
+    var adjacent = event.key === 'ArrowLeft'
+      ? walker.previousNode() : walker.nextNode();
+    while (adjacent && (home.contains(adjacent) || !adjacent.nodeValue.length ||
+           blockOf(adjacent.parentElement) !== homeBlock)) {
+      // Never turn a horizontal arrow at a paragraph edge into navigation
+      // through the body's formatting newline or into another block.
+      if (!home.contains(adjacent) &&
+          blockOf(adjacent.parentElement) !== homeBlock) {
+        adjacent = null;
+        break;
       }
+      adjacent = event.key === 'ArrowLeft'
+        ? walker.previousNode() : walker.nextNode();
+    }
+    if (event.shiftKey) {
       if (adjacent) {
         selection.collapse(
           adjacent,
@@ -517,7 +526,16 @@
       }
       return;
     }
-    selection.modify('move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+    if (adjacent) {
+      selection.collapse(
+        adjacent,
+        event.key === 'ArrowLeft' ? adjacent.nodeValue.length : 0);
+      selection.modify(
+        'move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+      return;
+    }
+    selection.modify(
+      'move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
     if (event.key === 'ArrowLeft') {
       selection.modify('move', 'backward', 'character');
     }

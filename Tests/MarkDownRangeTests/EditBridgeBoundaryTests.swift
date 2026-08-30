@@ -1386,6 +1386,57 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(direction: "backward",
+		 expected: "[***AlphXa<u></u> Bravo***](https://x)"),
+		(direction: "forward",
+		 expected: "[***Alpha<u></u> XBravo***](https://x)"),
+	])
+	func arrowingFromARestoredCaretInsideADeepWrapperMovesOneVisibleCharacter(
+		direction: String,
+		expected: String
+	) async throws {
+		let source = "[***Alpha<u></u> Bravo***](https://x)"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 726))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep-wrapper empty caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('move', '\(direction)', 'character')
+			}
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(caret: 4, key: "ArrowLeft", direction: "backward",
 		 expected: "XA<u></u><u></u>B"),
 		(caret: 4, key: "ArrowRight", direction: "forward",

@@ -1209,6 +1209,12 @@ import Testing
 		 direction: "backward", copied: "\\", expected: "A P<u></u> B"),
 		(source: #"A<u></u>\* B"#, caret: 8, key: "ArrowRight",
 		 direction: "forward", copied: "*", expected: "A<u></u>P B"),
+		(source: #"[***Alpha \\<u></u> Bravo***](https://x)"#, caret: 15,
+		 key: "ArrowLeft", direction: "backward", copied: "\\",
+		 expected: "[***Alpha P<u></u> Bravo***](https://x)"),
+		(source: #"[***Alpha<u></u>\* Bravo***](https://x)"#, caret: 12,
+		 key: "ArrowRight", direction: "forward", copied: "*",
+		 expected: "[***Alpha<u></u>P Bravo***](https://x)"),
 	])
 	func pasteOverAnEscapedVisibleCharacterBesideAnEmptyUnderlineReplacesItsSourcePair(
 		source: String,
