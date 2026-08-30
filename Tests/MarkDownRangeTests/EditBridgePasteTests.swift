@@ -912,6 +912,51 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func copyingAPartialLinkBoundaryPastesCleanPublicTextElsewhere() async throws {
+		let source = "Start here\n\nHead<u></u>\n\n[Link](https://x.test)"
+		let caret = (source as NSString).range(of: "<u></u>").location + 3
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 910, in: harness)
+		try await harness.waitUntil("partial-link Copy boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'forward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("partial-link Copy delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == "\nL")
+			#expect(MarkdownPasteboard.source == nil)
+			#expect(harness.source == source)
+
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		let afterPaste = "Start\nL here\n\nHead<u></u>\n\n[Link](https://x.test)"
+		#expect(harness.source == afterPaste)
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Start\nLQ here\n\nHead<u></u>\n\n[Link](https://x.test)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test(arguments: [
 		(direction: "backward", expected: "AlphP<u></u> Tail"),
 		(direction: "forward", expected: "Alpha<u></u>PTail"),
@@ -3183,6 +3228,50 @@ import Testing
 		try await harness.type("Q")
 		try await harness.waitForSourceEdits(3)
 		#expect(harness.source == pasted + "Q" + afterCut)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func largeBackwardResponderCutPasteRoundTripsMixedBlocksAndNextEdit() async throws {
+		let middle = (0..<120).map { index in
+			switch index % 4 {
+			case 0: return "Paragraph \(index) with **bold** and café 🙂."
+			case 1: return "- item \(index) with [link](https://example.com/\(index))"
+			case 2: return "> quote \(index) with `inline code`"
+			default: return "Line \(index)  \ncontinuation \(index)"
+			}
+		}.joined(separator: "\n\n")
+		let source = "Prefix alpha\n\n" + middle + "\n\nOmega suffix"
+		let text = source as NSString
+		let start = text.range(of: "alpha").location + 2
+		let end = text.range(of: "Omega").location + 3
+		let range = NSRange(location: start, length: end - start)
+		let selectedSource = text.substring(with: range)
+		let afterCut = text.replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length, backward: true)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			#expect(MarkdownPasteboard.source == selectedSource)
+			#expect(TestPasteboard.string?.contains("Paragraph 0 with bold") == true)
+			try await harness.waitQuiescent()
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		let expected = (source as NSString).replacingCharacters(
+			in: NSRange(location: end, length: 0), with: "Q")
+		#expect(harness.source == expected)
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
