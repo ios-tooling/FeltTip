@@ -651,6 +651,112 @@ enum MarkdownSourceFormatter {
 					}
 				}
 			}
+
+			if !openingBefore, !closingAfter {
+				var lineStart = selection.location
+				while lineStart > 0 {
+					let character = text.character(at: lineStart - 1)
+					if character == 0x0A || character == 0x0D { break }
+					lineStart -= 1
+				}
+				var openingStack: [NSRange] = []
+				var scan = lineStart
+				while scan < selection.location {
+					let range = NSRange(
+						location: scan, length: selection.location - scan)
+					let nextOpening = text.range(
+						of: opening, options: .caseInsensitive, range: range)
+					let nextClosing = text.range(
+						of: closing, options: .caseInsensitive, range: range)
+					if nextOpening.location != NSNotFound,
+					   (nextClosing.location == NSNotFound ||
+						nextOpening.location < nextClosing.location) {
+						openingStack.append(nextOpening)
+						scan = nextOpening.upperBound
+					} else if nextClosing.location != NSNotFound {
+						if !openingStack.isEmpty { openingStack.removeLast() }
+						scan = nextClosing.upperBound
+					} else {
+						break
+					}
+				}
+				if let openingRange = openingStack.last {
+					var lineEnd = selection.upperBound
+					while lineEnd < text.length {
+						let character = text.character(at: lineEnd)
+						if character == 0x0A || character == 0x0D { break }
+						lineEnd += 1
+					}
+					var closingRange: NSRange?
+					var nestedDepth = 0
+					scan = selection.upperBound
+					while scan < lineEnd {
+						let range = NSRange(location: scan, length: lineEnd - scan)
+						let nextOpening = text.range(
+							of: opening, options: .caseInsensitive, range: range)
+						let nextClosing = text.range(
+							of: closing, options: .caseInsensitive, range: range)
+						if nextOpening.location != NSNotFound,
+						   (nextClosing.location == NSNotFound ||
+							nextOpening.location < nextClosing.location) {
+							nestedDepth += 1
+							scan = nextOpening.upperBound
+						} else if nextClosing.location != NSNotFound {
+							if nestedDepth == 0 {
+								closingRange = nextClosing
+								break
+							}
+							nestedDepth -= 1
+							scan = nextClosing.upperBound
+						} else {
+							break
+						}
+					}
+					if let closingRange {
+						var prefixEnd = selection.location
+						while prefixEnd > openingRange.upperBound {
+							let character = text.character(at: prefixEnd - 1)
+							guard character == 0x20 || character == 0x09 else { break }
+							prefixEnd -= 1
+						}
+						var suffixStart = selection.upperBound
+						while suffixStart < closingRange.location {
+							let character = text.character(at: suffixStart)
+							guard character == 0x20 || character == 0x09 else { break }
+							suffixStart += 1
+						}
+						if prefixEnd > openingRange.upperBound,
+						   suffixStart < closingRange.location {
+							let prefix = text.substring(with: NSRange(
+								location: openingRange.location,
+								length: prefixEnd - openingRange.location))
+							let leadingWhitespace = text.substring(with: NSRange(
+								location: prefixEnd,
+								length: selection.location - prefixEnd))
+							let trailingWhitespace = text.substring(with: NSRange(
+								location: selection.upperBound,
+								length: suffixStart - selection.upperBound))
+							let suffix = text.substring(with: NSRange(
+								location: suffixStart,
+								length: closingRange.location - suffixStart))
+							let openingMarker = text.substring(with: openingRange)
+							let closingMarker = text.substring(with: closingRange)
+							let replacement = prefix + closingMarker + leadingWhitespace +
+								selected + trailingWhitespace + openingMarker + suffix + closingMarker
+							return .init(
+								range: NSRange(
+									location: openingRange.location,
+									length: closingRange.upperBound - openingRange.location),
+								replacement: replacement,
+								selection: NSRange(
+									location: openingRange.location + (prefix as NSString).length +
+										(closingMarker as NSString).length +
+										(leadingWhitespace as NSString).length,
+									length: selection.length))
+						}
+					}
+				}
+			}
 		}
 		return .init(
 			range: selection,
