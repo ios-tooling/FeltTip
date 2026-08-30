@@ -268,7 +268,17 @@ enum MarkdownSourceFormatter {
 		// around the selected text. Splitting only the outer marker strands the
 		// inner opener and closer on different fragments.
 		if selection.length > 0 {
-			let innerCandidates = ["~~", "==", "**", "__", "_", "*", "^", "~"]
+			let innerCandidates = [
+				(opening: "~~", closing: "~~"),
+				(opening: "==", closing: "=="),
+				(opening: "**", closing: "**"),
+				(opening: "__", closing: "__"),
+				(opening: "_", closing: "_"),
+				(opening: "*", closing: "*"),
+				(opening: "^", closing: "^"),
+				(opening: "~", closing: "~"),
+				(opening: "<u>", closing: "</u>"),
+			]
 			for candidate in [marker] + alternates {
 				let length = (candidate as NSString).length
 				var lineStart = selection.location
@@ -308,18 +318,21 @@ enum MarkdownSourceFormatter {
 						length: lineEnd - selection.upperBound))
 				guard closing.location != NSNotFound else { continue }
 
-				for inner in innerCandidates where inner != candidate {
-					let innerLength = (inner as NSString).length
-					guard opening.upperBound + innerLength <= selection.location,
-					      closing.location >= selection.upperBound + innerLength,
+				for inner in innerCandidates where
+					inner.opening != candidate || inner.closing != candidate {
+					let innerOpeningLength = (inner.opening as NSString).length
+					let innerClosingLength = (inner.closing as NSString).length
+					guard opening.upperBound + innerOpeningLength <= selection.location,
+					      closing.location >= selection.upperBound + innerClosingLength,
 					      text.substring(with: NSRange(
-						location: opening.upperBound, length: innerLength)) == inner,
+						location: opening.upperBound,
+						length: innerOpeningLength)) == inner.opening,
 					      text.substring(with: NSRange(
-						location: closing.location - innerLength,
-						length: innerLength)) == inner else { continue }
+						location: closing.location - innerClosingLength,
+						length: innerClosingLength)) == inner.closing else { continue }
 
-					let contentStart = opening.upperBound + innerLength
-					let contentEnd = closing.location - innerLength
+					let contentStart = opening.upperBound + innerOpeningLength
+					let contentEnd = closing.location - innerClosingLength
 					guard selection.location >= contentStart,
 					      selection.upperBound <= contentEnd else { continue }
 					var prefixEnd = selection.location
@@ -347,10 +360,10 @@ enum MarkdownSourceFormatter {
 					guard !prefix.isEmpty || !suffix.isEmpty else { continue }
 
 					let prefixWrapper = prefix.isEmpty ? "" :
-						candidate + inner + prefix + inner + candidate
-					let selectedWrapper = inner + selected + inner
+						candidate + inner.opening + prefix + inner.closing + candidate
+					let selectedWrapper = inner.opening + selected + inner.closing
 					let suffixWrapper = suffix.isEmpty ? "" :
-						candidate + inner + suffix + inner + candidate
+						candidate + inner.opening + suffix + inner.closing + candidate
 					let replacement = prefixWrapper + leadingWhitespace + selectedWrapper +
 						trailingWhitespace + suffixWrapper
 					return .init(
@@ -360,7 +373,7 @@ enum MarkdownSourceFormatter {
 						replacement: replacement,
 						selection: NSRange(
 							location: opening.location + (prefixWrapper as NSString).length +
-								(leadingWhitespace as NSString).length + innerLength,
+								(leadingWhitespace as NSString).length + innerOpeningLength,
 							length: selection.length))
 				}
 			}
