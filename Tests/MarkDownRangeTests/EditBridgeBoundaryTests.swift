@@ -602,6 +602,22 @@ import Testing
 		 expected: "Alpha<u>X</u> Tail"),
 		(command: "deleteWordForward", source: "Alpha bravo", caret: 5,
 		 expected: "Alpha<u>X</u>"),
+		(command: "deleteWordBackward", source: "**alpha** Tail", caret: 9,
+		 expected: "<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha **bravo** Tail", caret: 5,
+		 expected: "Alpha<u>X</u> Tail"),
+		(command: "deleteWordBackward", source: "***alpha*** Tail", caret: 11,
+		 expected: "<u>X</u> Tail"),
+		(command: "deleteWordBackward", source: "<u>alpha</u> Tail", caret: 12,
+		 expected: "<u>X</u> Tail"),
+		(command: "deleteWordBackward", source: "`alpha` Tail", caret: 7,
+		 expected: "<u>X</u> Tail"),
+		(command: "deleteWordBackward", source: "[alpha](https://x) Tail", caret: 18,
+		 expected: "<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha <u>bravo</u> Tail", caret: 5,
+		 expected: "Alpha<u>X</u> Tail"),
+		(command: "deleteWordForward", source: "Alpha [bravo](https://x) Tail", caret: 5,
+		 expected: "Alpha<u>X</u> Tail"),
 	])
 	func wordDeletionFromAnEmptyUnderlineCaretUsesTheAdjacentVisibleWord(
 		command: String,
@@ -671,28 +687,37 @@ import Testing
 	}
 
 	@Test(arguments: [
-		(command: "delete", expected: "Alph<u></u> Tail"),
-		(command: "forwardDelete", expected: "Alpha<u></u>Tail"),
-		(command: "deleteWordBackward", expected: "<u></u> Tail"),
-		(command: "deleteWordForward", expected: "Alpha<u></u>"),
+		(command: "delete", source: "Alpha<u></u> Tail", caret: 12,
+		 expected: "Alph<u></u> Tail"),
+		(command: "forwardDelete", source: "Alpha<u></u> Tail", caret: 12,
+		 expected: "Alpha<u></u>Tail"),
+		(command: "deleteWordBackward", source: "Alpha<u></u> Tail", caret: 12,
+		 expected: "<u></u> Tail"),
+		(command: "deleteWordForward", source: "Alpha<u></u> Tail", caret: 12,
+		 expected: "Alpha<u></u>"),
+		(command: "deleteWordBackward", source: "**Alpha**<u></u> Tail", caret: 16,
+		 expected: "<u></u> Tail"),
+		(command: "deleteWordForward", source: "Alpha<u></u> **Tail**", caret: 12,
+		 expected: "Alpha<u></u>"),
 	])
 	func deletionAfterAHostRestoredEmptyUnderlineTargetsVisibleText(
 		command: String,
+		source: String,
+		caret: Int,
 		expected: String
 	) async throws {
-		let formatted = "Alpha<u></u> Tail"
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
 		harness.focusWebView()
 		harness.coordinator.parent = MarkdownWebView(
-			text: formatted, theme: .default, fontSize: 15)
+			text: source, theme: .default, fontSize: 15)
 			.editable(true)
-			.caretTarget(MarkdownCaretTarget(offset: 12, token: 703))
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 703))
 			.onSourceEdit { [weak harness] newText, _ in
 				harness?.recordExternalEdit(newText)
 			}
 		harness.coordinator.applyCaretTarget()
 		harness.coordinator.load(into: harness.webView)
-		harness.adoptHostText(formatted)
+		harness.adoptHostText(source)
 		try await harness.waitUntil("full-navigation post-wrapper caret") {
 			try await harness.evaluate("""
 				(function () {
@@ -703,7 +728,7 @@ import Testing
 				  var home = element.closest('[data-md-inline-caret-home]')
 				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
 				})()
-				""") == "12"
+				""") == String(caret)
 		}
 		harness.rewireRoundTrip()
 		if command.contains("Word") {

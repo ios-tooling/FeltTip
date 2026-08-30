@@ -608,6 +608,9 @@ extension MarkdownWebView.Coordinator {
 	) -> NSRange? {
 		let text = source as NSString
 		guard boundary >= 0, boundary <= text.length else { return nil }
+		let visibleBoundary = backward
+			? visibleWordBoundaryBeforeHiddenInlineSuffix(in: text, boundary: boundary)
+			: visibleWordBoundaryAfterHiddenInlinePrefix(in: text, boundary: boundary)
 		var lineStart = boundary
 		while lineStart > 0 {
 			let unit = text.character(at: lineStart - 1)
@@ -627,15 +630,82 @@ extension MarkdownWebView.Coordinator {
 		let options: String.EnumerationOptions = backward ? [.byWords, .reverse] : [.byWords]
 		source.enumerateSubstrings(in: line, options: options) { _, range, _, stop in
 			let candidate = NSRange(range, in: source)
-			if backward ? candidate.upperBound <= boundary : candidate.location >= boundary {
+			if backward ? candidate.upperBound <= visibleBoundary : candidate.location >= visibleBoundary {
 				word = candidate
 				stop = true
 			}
 		}
 		guard let word else { return nil }
+		let expandedWord = MarkdownEditSplicer.fullySyntaxExpandedInlineRange(
+			word, in: text)
 		return backward
-			? NSRange(location: word.location, length: boundary - word.location)
-			: NSRange(location: boundary, length: word.upperBound - boundary)
+			? NSRange(
+				location: expandedWord.location,
+				length: boundary - expandedWord.location)
+			: NSRange(
+				location: boundary,
+				length: expandedWord.upperBound - boundary)
+	}
+
+	/// A backward word delete starts from a rendered boundary, but raw source
+	/// may place a closing HTML tag or link destination between that boundary
+	/// and the visible label. Peel only verified supported suffix shapes before
+	/// asking Foundation for the adjacent visible word.
+	private static func visibleWordBoundaryBeforeHiddenInlineSuffix(
+		in text: NSString,
+		boundary: Int
+	) -> Int {
+		if boundary >= 4,
+		   text.substring(with: NSRange(location: boundary - 4, length: 4))
+			.caseInsensitiveCompare("</u>") == .orderedSame {
+			return boundary - 4
+		}
+		guard boundary > 0, text.character(at: boundary - 1) == 0x29 else {
+			return boundary
+		}
+		var scan = boundary - 1
+		var depth = 0
+		while scan >= 0 {
+			let character = text.character(at: scan)
+			var slashCount = 0
+			var slash = scan
+			while slash > 0, text.character(at: slash - 1) == 0x5C {
+				slashCount += 1
+				slash -= 1
+			}
+			if slashCount.isMultiple(of: 2) {
+				if character == 0x29 {
+					depth += 1
+				} else if character == 0x28 {
+					depth -= 1
+					if depth == 0 {
+						let labelEnd = scan - 1
+						return labelEnd >= 0 && text.character(at: labelEnd) == 0x5D
+							? labelEnd : boundary
+					}
+				}
+			}
+			scan -= 1
+		}
+		return boundary
+	}
+
+	private static func visibleWordBoundaryAfterHiddenInlinePrefix(
+		in text: NSString,
+		boundary: Int
+	) -> Int {
+		var scan = boundary
+		while scan < text.length {
+			let character = text.character(at: scan)
+			guard character == 0x20 || character == 0x09 else { break }
+			scan += 1
+		}
+		guard 3 <= text.length - scan,
+		      text.substring(with: NSRange(location: scan, length: 3))
+			.caseInsensitiveCompare("<u>") == .orderedSame else {
+			return boundary
+		}
+		return scan + 3
 	}
 
 	/// State of the document-wide indexed task-list marker. Checkbox messages
