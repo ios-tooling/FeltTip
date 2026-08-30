@@ -575,17 +575,77 @@
 
   // Option-Shift/word selection is performed by WebKit itself, so it bypasses
   // the single-character keydown route that records inlineNavigationSelection.
-  // If one endpoint is still the synthetic caret home, recover the exact
-  // adjacent source edge from the metadata installed with that home. WebKit
-  // otherwise omits Paste's beforeinput for this geometry and silently drops
-  // the replacement.
+  // If one endpoint is the synthetic caret home — or WebKit normalized it to
+  // that home's exact adjacent text boundary — recover the source edge from
+  // the metadata installed with the home. WebKit otherwise omits Paste's
+  // beforeinput for this geometry and silently drops the replacement.
   function liveInlineCaretEndpointSelection() {
     var selection = window.getSelection();
     var home = selectedInlineCaretHome();
-    if (!home || !selection || !selection.rangeCount || selection.isCollapsed) return null;
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
     var range = selection.getRangeAt(0);
-    var startsAtHome = range.startContainer === home || home.contains(range.startContainer);
-    var endsAtHome = range.endContainer === home || home.contains(range.endContainer);
+    var startPosition = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPosition = normalizePosition(range.endContainer, range.endOffset, false);
+    var mappedStart = sourceOffsetOf(startPosition.node, startPosition.offset);
+    var mappedEnd = sourceOffsetOf(endPosition.node, endPosition.offset);
+    var startsAtHome = !!home &&
+      (range.startContainer === home || home.contains(range.startContainer));
+    var endsAtHome = !!home &&
+      (range.endContainer === home || home.contains(range.endContainer));
+    // Repeated native word extension can normalize an anchor out of the
+    // zero-width holder and onto the immediately adjacent text boundary. Keep
+    // treating that exact, source-verified edge as the synthetic home; a real
+    // visible gap or a different mapped offset must continue through the
+    // ordinary selection route.
+    if (!home || startsAtHome === endsAtHome) {
+      function hasEmptyOrderedGap(startNode, startOffset, endNode, endOffset) {
+        var startPoint = document.createRange();
+        var endPoint = document.createRange();
+        var gap = document.createRange();
+        try {
+          startPoint.setStart(startNode, startOffset);
+          startPoint.collapse(true);
+          endPoint.setStart(endNode, endOffset);
+          endPoint.collapse(true);
+          if (startPoint.compareBoundaryPoints(Range.START_TO_START, endPoint) > 0) {
+            return false;
+          }
+          gap.setStart(startNode, startOffset);
+          gap.setEnd(endNode, endOffset);
+          return plain(gap.toString()) === '';
+        } catch (_) {
+          return false;
+        }
+      }
+      var homes = document.querySelectorAll('[data-md-inline-caret-home]');
+      for (var i = 0; i < homes.length; i++) {
+        var candidate = homes[i];
+        var parent = candidate.parentNode;
+        if (!parent) continue;
+        var childIndex = Array.prototype.indexOf.call(parent.childNodes, candidate);
+        var nextOffset = candidate.__mdNeutralNextOffset;
+        if (Number.isFinite(nextOffset) && mappedStart === nextOffset &&
+            hasEmptyOrderedGap(
+              parent, childIndex + 1, range.startContainer, range.startOffset)) {
+          home = candidate;
+          startsAtHome = true;
+          endsAtHome = false;
+          break;
+        }
+        var previousOffset = candidate.__mdNeutralPreviousOffset;
+        var previousSource = candidate.__mdNeutralPreviousCharacter || '';
+        if (Number.isFinite(previousOffset) &&
+            mappedEnd === previousOffset + previousSource.length &&
+            hasEmptyOrderedGap(
+              range.endContainer, range.endOffset, parent, childIndex)) {
+          home = candidate;
+          startsAtHome = false;
+          endsAtHome = true;
+          break;
+        }
+      }
+    }
+    if (!home) return null;
     if (startsAtHome === endsAtHome) return null;
     var expected = plain(rangeTextWithoutInlineCaretHome(range, home));
     if (!expected) return null;
@@ -593,11 +653,9 @@
     var end;
     if (startsAtHome) {
       start = home.__mdNeutralNextOffset;
-      var endPosition = normalizePosition(range.endContainer, range.endOffset, false);
-      end = sourceOffsetOf(endPosition.node, endPosition.offset);
+      end = mappedEnd;
     } else {
-      var startPosition = normalizePosition(range.startContainer, range.startOffset, true);
-      start = sourceOffsetOf(startPosition.node, startPosition.offset);
+      start = mappedStart;
       var previousOffset = home.__mdNeutralPreviousOffset;
       var previousSource = home.__mdNeutralPreviousCharacter || '';
       end = Number.isFinite(previousOffset)

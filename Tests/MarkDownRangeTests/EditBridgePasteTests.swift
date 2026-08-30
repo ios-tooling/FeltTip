@@ -684,6 +684,90 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
+		 direction: "forward", afterCut: "Alpha<u></u> **echo** Delta",
+		 afterTyping: "Alpha<u>X</u> **echo** Delta"),
+		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31,
+		 direction: "backward", afterCut: "alpha **Bravo** <u></u> Delta",
+		 afterTyping: "alpha **Bravo** <u>X</u> Delta"),
+	])
+	func typingAfterRepeatedWordExpansionAndCutReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 720, in: harness)
+		try await harness.waitUntil("repeated word-selection caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P **echo** Delta",
+		 afterTyping: "Alpha<u></u>PX **echo** Delta"),
+		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31,
+		 direction: "backward", expected: "alpha **Bravo P**<u></u> Delta",
+		 afterTyping: "alpha **Bravo PX**<u></u> Delta"),
+	])
+	func repeatedWordExpansionPastePreservesThePartialRunAndVisibleCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 721, in: harness)
+		try await harness.waitUntil("repeated word-paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			""")
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(direction: "backward", copied: "A", expected: "P<u></u><u></u>B"),
 		(direction: "forward", copied: "B", expected: "A<u></u><u></u>P"),
 	])
