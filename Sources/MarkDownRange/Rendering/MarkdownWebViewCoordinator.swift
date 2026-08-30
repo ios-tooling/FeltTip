@@ -683,10 +683,10 @@ extension MarkdownWebView {
 				return location > titleStart && location < titleEnd
 			}
 			func isInsideHTMLAttribute(_ location: Int) -> Bool {
-				guard location >= lineStart, location <= lineEnd else { return false }
+				guard location >= 0, location <= source.length else { return false }
 				var inTag = false
 				var quote: unichar?
-				var cursor = lineStart
+				var cursor = 0
 				while cursor < location {
 					let character = source.character(at: cursor)
 					if let activeQuote = quote {

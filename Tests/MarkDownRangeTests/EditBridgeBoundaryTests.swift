@@ -1082,8 +1082,13 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
-	@Test func aWrapperSpellingInsideAnHTMLAttributeCannotEditTheHiddenAttribute() async throws {
-		let source = #"<a href="https://example.com/<u></u>">Link</a> Tail"#
+	@Test(arguments: [
+		#"<a href="https://example.com/<u></u>">Link</a> Tail"#,
+		"<a\n href=\"https://example.com/<u></u>\">\nLink</a> Tail",
+	])
+	func aWrapperSpellingInsideAnHTMLAttributeCannotEditTheHiddenAttribute(
+		source: String
+	) async throws {
 		let caret = (source as NSString).range(of: "<u></u>").upperBound
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
 		harness.focusWebView()
@@ -1100,10 +1105,42 @@ import Testing
 		try await harness.waitQuiescent()
 		harness.rewireRoundTrip()
 		try await harness.type("X")
-		try await harness.waitForSourceEdits(1)
+		try await Task.sleep(for: .milliseconds(500))
 		try await harness.waitQuiescent()
 
 		#expect(!harness.source.contains("<u></u>X"))
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		#"A `<a href="<u></u>">Z</a>` B"#,
+		"```html\n<a href=\"<u></u>\">Z</a>\n```\n\nTail",
+	])
+	func anHTMLAttributeLookalikeInCodeRemainsEditable(source: String) async throws {
+		let caret = (source as NSString).range(of: "<u></u>").upperBound
+		let expected = NSMutableString(string: source)
+		expected.insert("X", at: caret)
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 726))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitQuiescent()
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected as String)
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
