@@ -1720,8 +1720,8 @@
       liveInlineCaretEndpointSelection();
     if (navigation && e.clipboardData) {
       inlineNavigationSelection = null;
-      e.clipboardData.setData(
-        'text/plain', inlineNavigationClipboardText(navigation));
+      var clipboardExpected = inlineNavigationClipboardText(navigation);
+      e.clipboardData.setData('text/plain', clipboardExpected);
       e.preventDefault();
       if (frozen || frozenInputReplayTimer) return;
       setTimeout(function () {
@@ -1731,6 +1731,7 @@
                end: navigation.end == null
                  ? navigation.start + navigation.sourceExpected.length : navigation.end,
                text: '', expected: navigation.sourceExpected,
+               clipboardExpected: clipboardExpected,
                canonicalSelection: navigation.canonicalSourceSelection === true,
                inlineCaretOffset: navigation.inlineCaretOffset,
                inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,

@@ -538,15 +538,43 @@ import Testing
 
 	@Test(arguments: [
 		(source: "Head\n\n<u></u>Tail", caret: 9,
-		 key: "ArrowLeft", direction: "backward"),
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n", publicCopy: "\n\n"),
 		(source: "Head<u></u>\n\nTail", caret: 7,
-		 key: "ArrowRight", direction: "forward"),
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n", publicCopy: "\n\n"),
+		(source: "Head  \n \t\n<u></u>Tail", caret: 13,
+		 key: "ArrowLeft", direction: "backward", boundary: "  \n \t\n", publicCopy: "  \n \t\n"),
+		(source: "Head<u></u>  \n \t\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "  \n \t\n", publicCopy: "  \n \t\n"),
+		(source: "Head\n\n- <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n- ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n- Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n- ", publicCopy: "\n"),
+		(source: "Head\n\n> <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n> ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n> Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n> ", publicCopy: "\n"),
+		(source: "Head\n\n1. <u></u>Tail", caret: 12,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n1. ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n1. Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n1. ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n- [ ] Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n- [ ] ", publicCopy: "\n"),
+		(source: "Head\n\n# <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n# ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n# Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n# ", publicCopy: "\n"),
+		(source: "Head\n\n> - <u></u>Tail", caret: 13,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n> - ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n> - Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n> - ", publicCopy: "\n"),
 	])
 	func shiftArrowCopyCutPasteAcrossAWrapperBlockBoundaryRoundTripsTheSeparator(
 		source: String,
 		caret: Int,
 		key: String,
-		direction: String
+		direction: String,
+		boundary: String,
+		publicCopy: String
 	) async throws {
 		let afterCut = "Head<u></u>Tail"
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
@@ -584,7 +612,7 @@ import Testing
 			try await harness.waitUntil("block-separator Copy pasteboard delivery") {
 				TestPasteboard.string != nil
 			}
-			#expect(TestPasteboard.string == "\n\n", "direction=\(direction)")
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
 			#expect(try await harness.evaluate(
 				"window.getSelection().toString().replace(/\\u200B/g, '')"
 			) == "\n", "Copy collapsed the separator selection")
@@ -597,7 +625,7 @@ import Testing
 			try await harness.waitUntil("block-separator private source flavor") {
 				TestPasteboard.source != nil
 			}
-			#expect(TestPasteboard.source == "\n\n", "direction=\(direction)")
+			#expect(TestPasteboard.source == boundary, "direction=\(direction)")
 
 			try await performResponderCommand(.paste, in: harness)
 			try await harness.waitUntil("block-separator Paste source result") {

@@ -468,7 +468,10 @@ extension MarkdownWebView.Coordinator {
 		switch MarkdownEditSplicer.apply(edit, to: source) {
 		case .applied(let newSource, let selection, let replaced):
 			if isClipboardCut, !replaced.isEmpty {
-				MarkdownPasteboard.writeSource(replaced, ifTextMatches: edit.expected)
+				let clipboardExpected = body["clipboardExpected"] as? String
+					?? edit.expected
+				MarkdownPasteboard.writeSource(
+					replaced, ifTextMatches: clipboardExpected)
 			}
 			// A preventDefault'ed structural replacement can be a source no-op
 			// (select the complete `**é**` run and type the same `é`). The DOM was

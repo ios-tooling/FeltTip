@@ -763,15 +763,93 @@ extension MarkdownWebView {
 					}
 					return CharacterSet.whitespacesAndNewlines.contains(scalar)
 				}
+				func hiddenBlockPrefixEnd(from start: Int, to end: Int) -> Int? {
+					guard start >= 0, start < end, end <= source.length else { return nil }
+					func isHorizontalWhitespace(_ location: Int) -> Bool {
+						guard location < end else { return false }
+						let character = source.character(at: location)
+						return character == 0x20 || character == 0x09
+					}
+					func consumeHorizontalWhitespace(_ location: inout Int) {
+						while isHorizontalWhitespace(location) { location += 1 }
+					}
+					var cursor = start
+					var indentation = 0
+					while cursor < end, indentation < 3,
+					      source.character(at: cursor) == 0x20 {
+						cursor += 1
+						indentation += 1
+					}
+					var ownsPrefix = false
+					while cursor < end, source.character(at: cursor) == 0x3E {
+						ownsPrefix = true
+						cursor += 1
+						if cursor < end, source.character(at: cursor) == 0x20 { cursor += 1 }
+					}
+					if cursor < end {
+						let marker = source.character(at: cursor)
+						if marker == 0x23 {
+							let markerStart = cursor
+							while cursor < end, cursor - markerStart < 6,
+							      source.character(at: cursor) == 0x23 { cursor += 1 }
+							if cursor > markerStart, isHorizontalWhitespace(cursor) {
+								ownsPrefix = true
+								consumeHorizontalWhitespace(&cursor)
+							} else {
+								cursor = markerStart
+							}
+						} else if marker == 0x2D || marker == 0x2B || marker == 0x2A || marker == 0x3A {
+							if isHorizontalWhitespace(cursor + 1) {
+								ownsPrefix = true
+								cursor += 1
+								consumeHorizontalWhitespace(&cursor)
+							}
+						} else if marker >= 0x30, marker <= 0x39 {
+							let markerStart = cursor
+							while cursor < end, cursor - markerStart < 9 {
+								let digit = source.character(at: cursor)
+								guard digit >= 0x30, digit <= 0x39 else { break }
+								cursor += 1
+							}
+							if cursor > markerStart, cursor < end,
+							   source.character(at: cursor) == 0x2E || source.character(at: cursor) == 0x29,
+							   isHorizontalWhitespace(cursor + 1) {
+								ownsPrefix = true
+								cursor += 1
+								consumeHorizontalWhitespace(&cursor)
+							} else {
+								cursor = markerStart
+							}
+						}
+					}
+					if ownsPrefix, cursor + 3 <= end,
+					   source.character(at: cursor) == 0x5B,
+					   source.character(at: cursor + 2) == 0x5D {
+						let state = source.character(at: cursor + 1)
+						if state == 0x20 || state == 0x78 || state == 0x58,
+						   isHorizontalWhitespace(cursor + 3) {
+							cursor += 3
+							consumeHorizontalWhitespace(&cursor)
+						}
+					}
+					return ownsPrefix ? cursor : nil
+				}
 				// WebKit exposes a paragraph boundary as one visible selection
 				// character, while its source may be multiple newlines plus blank-line
 				// indentation. Preserve that exact whitespace for Shift-arrow Cut/Paste.
-				var previousBoundaryStart = visibleWrapperStart
+				let previousBoundaryContentStart: Int
+				if let prefixEnd = hiddenBlockPrefixEnd(from: lineStart, to: lineEnd),
+				   prefixEnd == visibleWrapperStart {
+					previousBoundaryContentStart = lineStart
+				} else {
+					previousBoundaryContentStart = visibleWrapperStart
+				}
+				var previousBoundaryStart = previousBoundaryContentStart
 				while previousBoundaryStart > 0,
 				      isBoundaryWhitespace(at: previousBoundaryStart - 1) {
 					previousBoundaryStart -= 1
 				}
-				if previousBoundaryStart < visibleWrapperStart {
+				if previousBoundaryStart < previousBoundaryContentStart {
 					let range = NSRange(
 						location: previousBoundaryStart,
 						length: visibleWrapperStart - previousBoundaryStart)
@@ -786,6 +864,18 @@ extension MarkdownWebView {
 				while nextBoundaryEnd < source.length,
 				      isBoundaryWhitespace(at: nextBoundaryEnd) {
 					nextBoundaryEnd += 1
+				}
+				if nextBoundaryEnd < source.length {
+					var nextLineEnd = nextBoundaryEnd
+					while nextLineEnd < source.length {
+						let character = source.character(at: nextLineEnd)
+						if character == 0x0A || character == 0x0D { break }
+						nextLineEnd += 1
+					}
+					if let prefixEnd = hiddenBlockPrefixEnd(
+						from: nextBoundaryEnd, to: nextLineEnd) {
+						nextBoundaryEnd = prefixEnd
+					}
 				}
 				if nextBoundaryEnd > visibleWrapperEnd {
 					let range = NSRange(
