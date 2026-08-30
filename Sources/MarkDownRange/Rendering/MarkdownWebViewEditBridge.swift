@@ -656,13 +656,16 @@ extension MarkdownWebView.Coordinator {
 		      selection.location >= start,
 		      selection.upperBound <= end else { return nil }
 		let visible = NSRange(location: start, length: end - start)
-		guard let expanded = MarkdownEditSplicer.syntaxExpandedRange(
+		guard let initialExpanded = MarkdownEditSplicer.syntaxExpandedRange(
 			visible,
 			syntaxStart: metadata["syntaxStart"] as? [String] ?? [],
 			syntaxEnd: metadata["syntaxEnd"] as? [String] ?? [],
 			in: source),
-		      expanded.location < visible.location,
-		      expanded.upperBound > visible.upperBound else { return nil }
+		      initialExpanded.location < visible.location,
+		      initialExpanded.upperBound > visible.upperBound else { return nil }
+		let expanded = enclosingInlineWrapperRange(
+			startingAt: initialExpanded,
+			in: source)
 		let opening = source.substring(with: NSRange(
 			location: expanded.location,
 			length: visible.location - expanded.location))
@@ -685,6 +688,72 @@ extension MarkdownWebView.Coordinator {
 			range: expanded,
 			replacement: replacement,
 			caret: caret)
+	}
+
+	private static func enclosingInlineWrapperRange(
+		startingAt initial: NSRange,
+		in source: NSString
+	) -> NSRange {
+		var range = initial
+		while true {
+			var enclosing: NSRange?
+			if range.location >= 3, range.upperBound + 4 <= source.length,
+			   source.substring(with: NSRange(
+				location: range.location - 3, length: 3))
+				.caseInsensitiveCompare("<u>") == .orderedSame,
+			   source.substring(with: NSRange(
+				location: range.upperBound, length: 4))
+				.caseInsensitiveCompare("</u>") == .orderedSame {
+				enclosing = NSRange(
+					location: range.location - 3,
+					length: range.length + 7)
+			}
+			if enclosing == nil, range.location > 0,
+			   source.character(at: range.location - 1) == 0x5B,
+			   range.upperBound + 2 <= source.length,
+			   source.substring(with: NSRange(
+				location: range.upperBound, length: 2)) == "](" {
+				var offset = range.upperBound + 2
+				var depth = 0
+				var escaped = false
+				while offset < source.length {
+					let character = source.character(at: offset)
+					if escaped {
+						escaped = false
+					} else if character == 0x5C {
+						escaped = true
+					} else if character == 0x28 {
+						depth += 1
+					} else if character == 0x29, depth > 0 {
+						depth -= 1
+					} else if character == 0x29 {
+						enclosing = NSRange(
+							location: range.location - 1,
+							length: offset + 1 - range.location + 1)
+						break
+					}
+					offset += 1
+				}
+			}
+			if enclosing == nil {
+				for marker in ["***", "___", "~~", "==", "**", "__", "*", "_", "^", "~"] {
+					let length = (marker as NSString).length
+					guard range.location >= length,
+					      range.upperBound + length <= source.length else { continue }
+					if source.substring(with: NSRange(
+						location: range.location - length, length: length)) == marker,
+					   source.substring(with: NSRange(
+						location: range.upperBound, length: length)) == marker {
+						enclosing = NSRange(
+							location: range.location - length,
+							length: range.length + length * 2)
+						break
+					}
+				}
+			}
+			guard let enclosing, enclosing != range else { return range }
+			range = enclosing
+		}
 	}
 
 	private static func emptyUnderlineClusterRange(

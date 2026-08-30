@@ -2001,6 +2001,11 @@ import Testing
 			(source: "_Alpha_ Tail", expected: "_X_ Tail", caret: 2),
 			(source: "[Alpha](https://example.com) Tail", expected: "[X](https://example.com) Tail", caret: 2),
 			(source: "[**Alpha**](https://example.com) Tail", expected: "[**X**](https://example.com) Tail", caret: 4),
+			(source: "***`Alpha`*** Tail", expected: "***`X`*** Tail", caret: 5),
+			(source: "***[Alpha](https://example.com)*** Tail",
+			 expected: "***[X](https://example.com)*** Tail", caret: 5),
+			(source: "***<u>Alpha</u>*** Tail", expected: "***<u>X</u>*** Tail", caret: 7),
+			(source: "***~~Alpha~~*** Tail", expected: "***~~X~~*** Tail", caret: 6),
 		]
 		for item in cases {
 			let alpha = (item.source as NSString).range(of: "Alpha")
@@ -2072,6 +2077,14 @@ import Testing
 			 expected: "[Al](https://example.com)One\n\nTwo[a](https://example.com) Tail"),
 			(source: "[**Alpha**](https://example.com) Tail", selected: "ph",
 			 expected: "[**Al**](https://example.com)One\n\nTwo[**a**](https://example.com) Tail"),
+			(source: "***`Alpha`*** Tail", selected: "ph",
+			 expected: "***`Al`***One\n\nTwo***`a`*** Tail"),
+			(source: "***[Alpha](https://example.com)*** Tail", selected: "ph",
+			 expected: "***[Al](https://example.com)***One\n\nTwo***[a](https://example.com)*** Tail"),
+			(source: "***<u>Alpha</u>*** Tail", selected: "ph",
+			 expected: "***<u>Al</u>***One\n\nTwo***<u>a</u>*** Tail"),
+			(source: "***~~Alpha~~*** Tail", selected: "ph",
+			 expected: "***~~Al~~***One\n\nTwo***~~a~~*** Tail"),
 		]
 		for (index, item) in cases.enumerated() {
 			let selected = (item.source as NSString).range(of: item.selected)
