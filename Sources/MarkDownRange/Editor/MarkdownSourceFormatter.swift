@@ -141,6 +141,24 @@ enum MarkdownSourceFormatter {
 
 	// MARK: Inline commands
 
+	private static func removingOuterWrapper(
+		in text: NSString,
+		opening: NSRange,
+		closing: NSRange,
+		selection: NSRange
+	) -> MarkdownSourceFormattingChange {
+		.init(
+			range: NSRange(
+				location: opening.location,
+				length: closing.upperBound - opening.location),
+			replacement: text.substring(with: NSRange(
+				location: opening.upperBound,
+				length: closing.location - opening.upperBound)),
+			selection: NSRange(
+				location: opening.location + selection.location - opening.upperBound,
+				length: selection.length))
+	}
+
 	private static func toggleDelimited(
 		in text: NSString,
 		selection: NSRange,
@@ -382,8 +400,12 @@ enum MarkdownSourceFormatter {
 							let suffix = text.substring(with: NSRange(
 								location: suffixStart,
 								length: contentEnd - suffixStart))
-							if !prefix.isEmpty || !suffix.isEmpty,
-							   let selectedCode = MarkdownInlineCodeToggle.change(
+							if prefix.isEmpty, suffix.isEmpty {
+								return removingOuterWrapper(
+									in: text, opening: opening, closing: closing,
+									selection: selection)
+							}
+							if let selectedCode = MarkdownInlineCodeToggle.change(
 								in: selected,
 								selection: NSRange(
 									location: 0, length: (selected as NSString).length)) {
@@ -498,7 +520,11 @@ enum MarkdownSourceFormatter {
 							let suffix = text.substring(with: NSRange(
 								location: suffixStart,
 								length: labelClose - suffixStart))
-							if !prefix.isEmpty || !suffix.isEmpty {
+							if prefix.isEmpty, suffix.isEmpty {
+								return removingOuterWrapper(
+									in: text, opening: opening, closing: closing,
+									selection: selection)
+							} else {
 								let destination = text.substring(with: NSRange(
 									location: labelClose,
 									length: destinationClose + 1 - labelClose))
@@ -563,7 +589,11 @@ enum MarkdownSourceFormatter {
 						length: suffixStart - selection.upperBound))
 					let suffix = text.substring(with: NSRange(
 						location: suffixStart, length: contentEnd - suffixStart))
-					guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+					if prefix.isEmpty, suffix.isEmpty {
+						return removingOuterWrapper(
+							in: text, opening: opening, closing: closing,
+							selection: selection)
+					}
 
 					let prefixWrapper = prefix.isEmpty ? "" :
 						candidate + inner.opening + prefix + inner.closing + candidate
@@ -1240,8 +1270,12 @@ enum MarkdownSourceFormatter {
 									let suffix = text.substring(with: NSRange(
 										location: suffixStart,
 										length: contentEnd - suffixStart))
-									if !prefix.isEmpty || !suffix.isEmpty,
-									   let selectedCode = MarkdownInlineCodeToggle.change(
+									if prefix.isEmpty, suffix.isEmpty {
+										return removingOuterWrapper(
+											in: text, opening: openingRange, closing: closingRange,
+											selection: selection)
+									}
+									if let selectedCode = MarkdownInlineCodeToggle.change(
 										in: selected,
 										selection: NSRange(
 											location: 0,
@@ -1352,7 +1386,11 @@ enum MarkdownSourceFormatter {
 									let suffix = text.substring(with: NSRange(
 										location: suffixStart,
 										length: labelClose - suffixStart))
-									if !prefix.isEmpty || !suffix.isEmpty {
+									if prefix.isEmpty, suffix.isEmpty {
+										return removingOuterWrapper(
+											in: text, opening: openingRange, closing: closingRange,
+											selection: selection)
+									} else {
 										let destination = text.substring(with: NSRange(
 											location: labelClose,
 											length: destinationClose + 1 - labelClose))
@@ -1417,7 +1455,11 @@ enum MarkdownSourceFormatter {
 							let suffix = text.substring(with: NSRange(
 								location: suffixStart,
 								length: contentEnd - suffixStart))
-							guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+							if prefix.isEmpty, suffix.isEmpty {
+								return removingOuterWrapper(
+									in: text, opening: openingRange, closing: closingRange,
+									selection: selection)
+							}
 
 							let prefixWrapper = prefix.isEmpty ? "" :
 								openingMarker + inner + prefix + inner + closingMarker

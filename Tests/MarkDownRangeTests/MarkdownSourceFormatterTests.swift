@@ -117,6 +117,15 @@ import AppKit
 		(command: MarkdownFormattingCommand.bold,
 		 source: "**`Alpha Bravo charlie`**", selected: "Bravo",
 		 expected: "**`Alpha`** `Bravo` **`charlie`**"),
+		(command: MarkdownFormattingCommand.bold, source: "**_Bravo_**",
+		 selected: "Bravo", expected: "_Bravo_"),
+		(command: MarkdownFormattingCommand.bold, source: "**<u>Bravo</u>**",
+		 selected: "Bravo", expected: "<u>Bravo</u>"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "**[Bravo](https://x)**", selected: "Bravo",
+		 expected: "[Bravo](https://x)"),
+		(command: MarkdownFormattingCommand.bold, source: "**`Bravo`**",
+		 selected: "Bravo", expected: "`Bravo`"),
 	])
 	func togglingAStyledRunFragmentSplitsTheRunCleanly(
 		command: MarkdownFormattingCommand,
@@ -163,6 +172,10 @@ import AppKit
 		 expected: "<u>[Alpha](https://x)</u> [Bravo](https://x) <u>[charlie](https://x)</u>"),
 		(source: "<u>`Alpha Bravo charlie`</u>", selected: "Bravo",
 		 expected: "<u>`Alpha`</u> `Bravo` <u>`charlie`</u>"),
+		(source: "<u>**Bravo**</u>", selected: "Bravo", expected: "**Bravo**"),
+		(source: "<u>[Bravo](https://x)</u>", selected: "Bravo",
+		 expected: "[Bravo](https://x)"),
+		(source: "<u>`Bravo`</u>", selected: "Bravo", expected: "`Bravo`"),
 	])
 	func togglingAnUnderlineFragmentSplitsTheRunCleanly(
 		source: String,
