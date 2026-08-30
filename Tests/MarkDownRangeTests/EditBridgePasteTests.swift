@@ -967,6 +967,66 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward",
+		 afterCut: "**Bol**<u></u><u></u><u></u>Tail",
+		 afterTyping: "**Bol**<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward",
+		 afterCut: "Head<u></u><u></u><u></u>*talic*",
+		 afterTyping: "Head<u></u><u>X</u><u></u>*talic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward",
+		 afterCut: "**Bol**<U></U><u></u>Tail",
+		 afterTyping: "**Bol**<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterCut: "Head<U></U><u></u>*talic*",
+		 afterTyping: "Head<U>X</U><u></u>*talic*"),
+	])
+	func typingAfterACharacterBoundaryCutStaysAtTheActiveClusterWrapper(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 944 + caret, in: harness)
+		try await harness.waitUntil("direct boundary Cut caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Head\n\n<u></u>Tail", caret: 9,
 		 key: "ArrowLeft", direction: "backward",
 		 expected: "Head\n\n<u>X</u>Tail"),
