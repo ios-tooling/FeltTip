@@ -726,6 +726,11 @@ extension MarkdownWebView {
 				!forceVisibleSyntaxSnap &&
 				source.substring(with: NSRange(location: offset - 7, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
+			let caretBeforeEmptyUnderline = offset + 7 <= source.length &&
+				!isEscaped(at: offset) &&
+				!forceVisibleSyntaxSnap &&
+				source.substring(with: NSRange(location: offset, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			var neutralPreviousOffset = "null"
 			var neutralPreviousCharacterJSON = "\"\""
 			var neutralNextOffset = "null"
@@ -735,8 +740,13 @@ extension MarkdownWebView {
 			var neutralPreviousBoundaryJSON = "\"\""
 			var neutralNextBoundaryOffset = "null"
 			var neutralNextBoundaryJSON = "\"\""
-			if sourceNeutralCaretHome || caretAfterEmptyUnderline {
-				let wrapperStart = sourceNeutralCaretHome ? offset - 3 : offset - 7
+			var boundaryPreviousCharacterOffset = "null"
+			var boundaryPreviousCharacterJSON = "\"\""
+			var boundaryNextCharacterOffset = "null"
+			var boundaryNextCharacterJSON = "\"\""
+			if sourceNeutralCaretHome || caretAfterEmptyUnderline || caretBeforeEmptyUnderline {
+				let wrapperStart = caretBeforeEmptyUnderline
+					? offset : sourceNeutralCaretHome ? offset - 3 : offset - 7
 				let wrapperEnd = wrapperStart + 7
 				if sourceNeutralCaretHome {
 					neutralWrapperJSON = (try? JSONEncoder().encode(
@@ -917,8 +927,37 @@ extension MarkdownWebView {
 					neutralNextCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
+				if neutralPreviousBoundaryOffset != "null", previousBoundaryStart > 0 {
+					let location = previousBoundaryStart - 1
+					let range: NSRange
+					if location > 0,
+					   isASCIIPunctuation(source.character(at: location)),
+					   isEscaped(at: location) {
+						range = NSRange(location: location - 1, length: 2)
+					} else {
+						range = source.rangeOfComposedCharacterSequence(at: location)
+					}
+					boundaryPreviousCharacterOffset = String(range.location)
+					boundaryPreviousCharacterJSON = (try? JSONEncoder().encode(
+						source.substring(with: range)))
+						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+				}
+				if neutralNextBoundaryOffset != "null", nextBoundaryEnd < source.length {
+					let range: NSRange
+					if nextBoundaryEnd + 1 < source.length,
+					   source.character(at: nextBoundaryEnd) == 0x5C,
+					   isASCIIPunctuation(source.character(at: nextBoundaryEnd + 1)) {
+						range = NSRange(location: nextBoundaryEnd, length: 2)
+					} else {
+						range = source.rangeOfComposedCharacterSequence(at: nextBoundaryEnd)
+					}
+					boundaryNextCharacterOffset = String(range.location)
+					boundaryNextCharacterJSON = (try? JSONEncoder().encode(
+						source.substring(with: range)))
+						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+				}
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(neutralPreviousBoundaryOffset), \(neutralPreviousBoundaryJSON), \(neutralNextBoundaryOffset), \(neutralNextBoundaryJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap)"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(neutralPreviousBoundaryOffset), \(neutralPreviousBoundaryJSON), \(neutralNextBoundaryOffset), \(neutralNextBoundaryJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap), \(caretBeforeEmptyUnderline), \(boundaryPreviousCharacterOffset), \(boundaryPreviousCharacterJSON), \(boundaryNextCharacterOffset), \(boundaryNextCharacterJSON)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {

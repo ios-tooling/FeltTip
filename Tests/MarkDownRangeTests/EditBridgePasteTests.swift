@@ -676,6 +676,27 @@ import Testing
 		(source: "Head<u></u>\n\nTail", caret: 7,
 		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
 		 publicCopy: "\nT", selectedSource: "\n\nT", afterCut: "Head<u></u>ail"),
+		(source: "He😀\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "😀\n", selectedSource: "😀\n\n", afterCut: "He<u></u>Tail"),
+		(source: "Head<u></u>\n\n👩‍💻Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\n👩‍💻", selectedSource: "\n\n👩‍💻", afterCut: "Head<u></u>Tail"),
+		(source: "Head\\*\n\n<u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 1, reversals: 0,
+		 publicCopy: "\n\n", selectedSource: "\n\n", afterCut: "Head\\*<u></u>Tail"),
+		(source: "Head\\*\n\n<u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "*\n", selectedSource: "\\*\n\n", afterCut: "Head<u></u>Tail"),
+		(source: "Head<u></u>\n\n\\*Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\n*", selectedSource: "\n\n\\*", afterCut: "Head<u></u>Tail"),
+		(source: "**Bold**\n\n<u></u>Tail", caret: 13,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "d\n", selectedSource: "d**\n\n", afterCut: "**Bol**<u></u>Tail"),
+		(source: "Head<u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\nI", selectedSource: "\n\n*I", afterCut: "Head<u></u>*talic*"),
 	])
 	func repeatedShiftArrowAcrossAWrapperBlockBoundaryRoundTripsVisibleAndHiddenSource(
 		source: String,
@@ -754,6 +775,59 @@ import Testing
 		try await harness.waitQuiescent()
 
 		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward",
+		 expected: "Head\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 expected: "Head<u>X</u>\n\nTail"),
+	])
+	func fullyContractingARepeatedBoundarySelectionReturnsToTheWrapperCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 882 + caret, in: harness)
+		try await harness.waitUntil("full boundary contraction caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		let reverseKey = key == "ArrowLeft" ? "ArrowRight" : "ArrowLeft"
+		let reverseDirection = direction == "backward" ? "forward" : "backward"
+		try await harness.run("""
+			for (var index = 0; index < 3; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			for (var index = 0; index < 3; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(reverseKey)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(reverseDirection)', 'character')
+			  }
+			}
+			""")
+		#expect(try await harness.evaluate("String(window.getSelection().isCollapsed)") == "true")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

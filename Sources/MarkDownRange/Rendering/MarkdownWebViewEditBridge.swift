@@ -241,7 +241,8 @@ extension MarkdownWebView.Coordinator {
 			      let wrapperRange = Self.emptyUnderlineClusterRange(
 					in: sourceText,
 					caret: inlineCaretOffset,
-					afterWrapper: body["inlineCaretAfterWrapper"] as? Bool == true),
+					afterWrapper: body["inlineCaretAfterWrapper"] as? Bool == true,
+					beforeWrapper: body["inlineCaretBeforeWrapper"] as? Bool == true),
 			      let expandedRange = MarkdownEditSplicer.syntaxExpandedRange(
 					NSRange(location: start, length: end - start),
 					syntaxStart: body["syntaxStart"] as? [String] ?? [],
@@ -333,6 +334,28 @@ extension MarkdownWebView.Coordinator {
 					}
 				}
 			}
+			if body["blockBoundary"] as? Bool == true,
+			   (operation == "cut" || operation == "deleteSelection"),
+			   body["selectionStartsAtHome"] as? Bool != true,
+			   !visibleSelection.isEmpty {
+				let selectedSource = sourceText.substring(with: NSRange(
+					location: adjustedStart, length: adjustedEnd - adjustedStart)) as NSString
+				let visibleRange = selectedSource.range(of: visibleSelection)
+				if visibleRange.location != NSNotFound {
+					var delimiterEnd = visibleRange.upperBound
+					while delimiterEnd < selectedSource.length,
+					      Self.isInlineDelimiterUnit(
+							selectedSource.character(at: delimiterEnd)) {
+						delimiterEnd += 1
+					}
+					if delimiterEnd > visibleRange.upperBound {
+						let preserved = selectedSource.substring(with: NSRange(
+							location: visibleRange.upperBound,
+							length: delimiterEnd - visibleRange.upperBound))
+						canonicalReplacementTransform = { _ in preserved }
+					}
+				}
+			}
 			payload["start"] = adjustedStart
 			payload["end"] = adjustedEnd
 			payload["expected"] = sourceText.substring(with: NSRange(
@@ -367,7 +390,8 @@ extension MarkdownWebView.Coordinator {
 			      let wrapperRange = Self.emptyUnderlineClusterRange(
 					in: source as NSString,
 					caret: caret,
-					afterWrapper: body["afterWrapper"] as? Bool == true),
+					afterWrapper: body["afterWrapper"] as? Bool == true,
+					beforeWrapper: body["beforeWrapper"] as? Bool == true),
 			      let deletion = Self.adjacentWordDeletion(
 					in: source,
 					boundary: body["backward"] as? Bool == true
@@ -398,6 +422,8 @@ extension MarkdownWebView.Coordinator {
 		// Everything after this — revision gate, context verification,
 		// structural re-render — is the ordinary edit path.
 		if body["op"] as? String == "paste" {
+			let isPrivateSourcePaste = body["matchStyle"] as? Bool != true &&
+				MarkdownPasteboard.source != nil
 			guard let pasted = Self.pasteboardText(
 				foldingNewlines: body["inCell"] as? Bool == true,
 				preferringSource: body["matchStyle"] as? Bool != true) else {
@@ -412,7 +438,24 @@ extension MarkdownWebView.Coordinator {
 				payload["text"] = transform(pasted)
 			}
 			var customCaret = canonicalCaretAfterInsertedText?(pasted)
-			if pasted.contains("\n"),
+			if isPrivateSourcePaste,
+			   let start = body["start"] as? Int,
+			   let structural = Self.privateBoundaryPaste(
+				in: source as NSString, caret: start, pasted: pasted) {
+				payload["start"] = structural.range.location
+				payload["end"] = structural.range.upperBound
+				payload["text"] = structural.replacement
+				payload["expected"] = (source as NSString).substring(with: structural.range)
+				payload["before"] = ""
+				payload["after"] = ""
+				payload["crossRun"] = false
+				payload["selected"] = false
+				payload["endAtBlockStart"] = false
+				payload["syntaxStart"] = []
+				payload["syntaxEnd"] = []
+				payload["blockPrefixes"] = []
+				customCaret = structural.caret
+			} else if pasted.contains("\n"),
 			   let start = body["start"] as? Int,
 			   let end = body["end"] as? Int,
 			   end >= start,
@@ -769,14 +812,15 @@ extension MarkdownWebView.Coordinator {
 	private static func emptyUnderlineClusterRange(
 		in source: NSString,
 		caret: Int,
-		afterWrapper: Bool
+		afterWrapper: Bool,
+		beforeWrapper: Bool = false
 	) -> NSRange? {
 		func isEmptyUnderline(at location: Int) -> Bool {
 			guard location >= 0, location + 7 <= source.length else { return false }
 			return source.substring(with: NSRange(location: location, length: 7))
 				.caseInsensitiveCompare("<u></u>") == .orderedSame
 		}
-		var start = afterWrapper ? caret - 7 : caret - 3
+		var start = beforeWrapper ? caret : afterWrapper ? caret - 7 : caret - 3
 		guard isEmptyUnderline(at: start) else { return nil }
 		var end = start + 7
 		while isEmptyUnderline(at: start - 7) { start -= 7 }
@@ -879,6 +923,94 @@ extension MarkdownWebView.Coordinator {
 	private static func isInlineDelimiterUnit(_ character: unichar) -> Bool {
 		character == 0x2A || character == 0x5F || character == 0x7E ||
 		character == 0x3D || character == 0x5E || character == 0x60
+	}
+
+	private struct PrivateBoundaryPaste {
+		let range: NSRange
+		let replacement: String
+		let caret: Int
+	}
+
+	/// Reverses a styled block-boundary Cut at an external empty-wrapper home.
+	/// Cut preserves the adjacent inline delimiter so the remaining Markdown is
+	/// balanced; the private flavor still owns the original delimiter and must
+	/// therefore be split around the preserved copy rather than inserted raw.
+	private static func privateBoundaryPaste(
+		in source: NSString,
+		caret: Int,
+		pasted: String
+	) -> PrivateBoundaryPaste? {
+		guard caret >= 0, caret + 7 <= source.length,
+		      source.substring(with: NSRange(location: caret, length: 7))
+			.caseInsensitiveCompare("<u></u>") == .orderedSame else { return nil }
+		let pastedText = pasted as NSString
+		guard pastedText.length > 1 else { return nil }
+
+		var firstBreak = NSNotFound
+		for index in 0..<pastedText.length {
+			let character = pastedText.character(at: index)
+			if character == 0x0A || character == 0x0D {
+				firstBreak = index
+				break
+			}
+		}
+		guard firstBreak != NSNotFound else { return nil }
+
+		// Backward selection: visible suffix + closing delimiter + separator.
+		if firstBreak > 0 {
+			var delimiterStart = firstBreak
+			while delimiterStart > 0,
+			      isInlineDelimiterUnit(pastedText.character(at: delimiterStart - 1)) {
+				delimiterStart -= 1
+			}
+			if delimiterStart > 0, delimiterStart < firstBreak {
+				let delimiter = pastedText.substring(with: NSRange(
+					location: delimiterStart, length: firstBreak - delimiterStart))
+				let delimiterLength = (delimiter as NSString).length
+				if caret >= delimiterLength,
+				   source.substring(with: NSRange(
+					location: caret - delimiterLength, length: delimiterLength)) == delimiter {
+					let visible = pastedText.substring(to: delimiterStart)
+					let boundary = pastedText.substring(from: firstBreak)
+					let replacement = visible + delimiter + boundary
+					let start = caret - delimiterLength
+					return PrivateBoundaryPaste(
+						range: NSRange(location: start, length: delimiterLength),
+						replacement: replacement,
+						caret: start + (replacement as NSString).length + 3)
+				}
+			}
+		}
+
+		// Forward selection: separator + opening delimiter + visible prefix.
+		var contentStart = 0
+		while contentStart < pastedText.length {
+			let character = pastedText.character(at: contentStart)
+			guard character == 0x20 || character == 0x09 ||
+			      character == 0x0A || character == 0x0D else { break }
+			contentStart += 1
+		}
+		var delimiterEnd = contentStart
+		while delimiterEnd < pastedText.length,
+		      isInlineDelimiterUnit(pastedText.character(at: delimiterEnd)) {
+			delimiterEnd += 1
+		}
+		guard contentStart > 0, delimiterEnd > contentStart,
+		      delimiterEnd < pastedText.length else { return nil }
+		let delimiter = pastedText.substring(with: NSRange(
+			location: contentStart, length: delimiterEnd - contentStart))
+		let delimiterLength = (delimiter as NSString).length
+		let afterWrapper = caret + 7
+		guard afterWrapper + delimiterLength <= source.length,
+		      source.substring(with: NSRange(
+			location: afterWrapper, length: delimiterLength)) == delimiter else { return nil }
+		let boundary = pastedText.substring(to: contentStart)
+		let visible = pastedText.substring(from: delimiterEnd)
+		let wrapper = source.substring(with: NSRange(location: caret, length: 7))
+		return PrivateBoundaryPaste(
+			range: NSRange(location: caret, length: 7 + delimiterLength),
+			replacement: wrapper + boundary + delimiter + visible,
+			caret: caret + 3)
 	}
 
 	private static func hiddenInlineSuffixToPreserve(

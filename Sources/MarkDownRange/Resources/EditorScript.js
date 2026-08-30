@@ -511,7 +511,11 @@
         }
         selectRangeInDirection(
           selection, contractedCombinedRange, boundaryNavigation.boundaryDirection);
-        var contractedNavigation = liveInlineCaretEndpointSelection();
+        var contractedNavigation = liveInlineCaretEndpointSelection() ||
+          repeatedBoundaryEndpointSelection(
+            selection, contractedCombinedRange, boundaryRoot,
+            boundaryNavigation.boundaryDirection,
+            boundaryNavigation.boundaryExtensionCount - 1);
         if (contractedNavigation) {
           var contractedBoundaryText = boundaryRoot.boundaryClipboardText == null
             ? boundaryRoot.expected : boundaryRoot.boundaryClipboardText;
@@ -525,6 +529,7 @@
           contractedNavigation.boundaryDirection = boundaryNavigation.boundaryDirection;
           contractedNavigation.boundaryClipboardText = contractedBoundaryText;
           contractedNavigation.boundaryRoot = boundaryRoot;
+          contractedNavigation.home = boundaryRoot.home;
           contractedNavigation.boundaryExtensionCount =
             boundaryNavigation.boundaryExtensionCount - 1;
           inlineNavigationSelection = contractedNavigation;
@@ -535,6 +540,21 @@
         inlineNavigationSelection = null;
       }
       return;
+    }
+    if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
+        boundaryNavigation.boundaryDirection !== direction &&
+        !(boundaryNavigation.boundaryExtensionCount > 0) &&
+        selection && selection.rangeCount && !selection.isCollapsed) {
+      var contractionHome = boundaryNavigation.home;
+      if (contractionHome && contractionHome.firstChild) {
+        event.preventDefault();
+        selection.collapse(
+          contractionHome.firstChild,
+          contractionHome.firstChild.nodeType === 3
+            ? contractionHome.firstChild.nodeValue.length : 0);
+        inlineNavigationSelection = null;
+        return;
+      }
     }
     if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
         boundaryNavigation.boundaryDirection === direction &&
@@ -554,7 +574,11 @@
           combinedRange.setEnd(extendedRange.endContainer, extendedRange.endOffset);
         }
         selectRangeInDirection(selection, combinedRange, direction);
-        var extendedNavigation = liveInlineCaretEndpointSelection();
+        var extendedNavigation = liveInlineCaretEndpointSelection() ||
+          repeatedBoundaryEndpointSelection(
+            selection, combinedRange,
+            boundaryNavigation.boundaryRoot || boundaryNavigation,
+            direction, (boundaryNavigation.boundaryExtensionCount || 0) + 1);
         if (extendedNavigation) {
           var boundaryClipboardText = boundaryNavigation.boundaryClipboardText == null
             ? boundaryNavigation.expected : boundaryNavigation.boundaryClipboardText;
@@ -569,6 +593,8 @@
           extendedNavigation.boundaryClipboardText = boundaryClipboardText;
           extendedNavigation.boundaryRoot = boundaryNavigation.boundaryRoot ||
             boundaryNavigation;
+          extendedNavigation.home = boundaryNavigation.home ||
+            extendedNavigation.boundaryRoot.home;
           extendedNavigation.boundaryExtensionCount =
             (boundaryNavigation.boundaryExtensionCount || 0) + 1;
           inlineNavigationSelection = extendedNavigation;
@@ -583,7 +609,8 @@
     var home = activeInlineCaretHome();
     if (!home ||
         (!home.hasAttribute('data-md-inline-caret-source-neutral') &&
-         !home.hasAttribute('data-md-inline-caret-after-empty-wrapper'))) return;
+         !home.hasAttribute('data-md-inline-caret-after-empty-wrapper') &&
+         !home.hasAttribute('data-md-inline-caret-before-empty-wrapper'))) return;
     if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
     event.preventDefault();
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -885,11 +912,67 @@
         home.getAttribute('data-md-inline-caret-offset'), 10),
       inlineCaretAfterWrapper:
         home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
+      inlineCaretBeforeWrapper:
+        home.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
       selectionStartsAtHome: startsAtHome,
       blockBoundary: blockBoundary,
       boundaryDirection: boundaryDirection,
       syntaxStart: syntaxStart,
       syntaxEnd: syntaxEnd,
+      range: range.cloneRange()
+    };
+  }
+  // WebKit can normalize a selection completely off the synthetic caret home
+  // when repeated Shift-arrow reaches a run whose visible character has a
+  // different source spelling (for example `\\*`). Reattach the cached block
+  // boundary and recover the exact adjacent source edge from the home's
+  // metadata; the host will canonicalize the complete source interval.
+  function repeatedBoundaryEndpointSelection(selection, range, boundaryRoot,
+                                              direction, extensionCount) {
+    var home = boundaryRoot && boundaryRoot.home;
+    if (!selection || !range || !home || extensionCount < 1) return null;
+    var startPosition = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPosition = normalizePosition(range.endContainer, range.endOffset, false);
+    var start = sourceOffsetOf(startPosition.node, startPosition.offset);
+    var end = sourceOffsetOf(endPosition.node, endPosition.offset);
+    if (direction === 'backward') {
+      end = boundaryRoot.end;
+      if (extensionCount === 1 &&
+          Number.isFinite(home.__mdBoundaryPreviousCharacterOffset)) {
+        start = home.__mdBoundaryPreviousCharacterOffset;
+      }
+    } else {
+      start = boundaryRoot.start;
+      if (extensionCount === 1 &&
+          Number.isFinite(home.__mdBoundaryNextCharacterOffset)) {
+        end = home.__mdBoundaryNextCharacterOffset +
+          (home.__mdBoundaryNextCharacter || '').length;
+      }
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) {
+      return null;
+    }
+    var expected = plain(selection.toString()).replace(/\u200B/g, '');
+    expected = direction === 'backward'
+      ? expected.replace(/[\r\n]+$/, '')
+      : expected.replace(/^[\r\n]+/, '');
+    if (!expected) return null;
+    return {
+      start: start,
+      end: end,
+      expected: expected,
+      sourceExpected: expected,
+      canonicalSourceSelection: true,
+      inlineCaretOffset: parseInt(
+        home.getAttribute('data-md-inline-caret-offset'), 10),
+      inlineCaretAfterWrapper:
+        home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
+      inlineCaretBeforeWrapper:
+        home.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
+      selectionStartsAtHome: direction === 'forward',
+      syntaxStart: selectedSyntaxBoundaries(range, true),
+      syntaxEnd: selectedSyntaxBoundaries(range, false),
+      home: home,
       range: range.cloneRange()
     };
   }
@@ -918,6 +1001,10 @@
     post({ op: 'paste', matchStyle: matchStyle, inCell: !!cell,
            start: offset, end: offset, expected: '', crossRun: false,
            selected: false, endAtBlockStart: false,
+           inlineCaretBeforeWrapper:
+             inlineHome.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
+           inlineCaretAfterWrapper:
+             inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
            syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
            before: '', after: '', rev: stampRev, seq: seq++ });
     return true;
@@ -927,7 +1014,12 @@
                                 neutralNextOffset, neutralNextCharacter,
                                 neutralWrapperSource, afterSpan, afterEmptyWrapper,
                                 neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
-                                neutralNextBoundaryOffset, neutralNextBoundarySource) {
+                                neutralNextBoundaryOffset, neutralNextBoundarySource,
+                                beforeEmptyWrapper,
+                                boundaryPreviousCharacterOffset,
+                                boundaryPreviousCharacter,
+                                boundaryNextCharacterOffset,
+                                boundaryNextCharacter) {
     if (!span || !span.parentNode) return false;
     var inlineHolder = document.createElement('span');
     inlineHolder.setAttribute('data-s', String(offset - 1));
@@ -936,6 +1028,9 @@
     if (sourceNeutral) inlineHolder.setAttribute('data-md-inline-caret-source-neutral', '1');
     if (afterEmptyWrapper) {
       inlineHolder.setAttribute('data-md-inline-caret-after-empty-wrapper', '1');
+    }
+    if (beforeEmptyWrapper) {
+      inlineHolder.setAttribute('data-md-inline-caret-before-empty-wrapper', '1');
     }
     inlineHolder.__mdPreviousSourceCharacter = sourceNeutral
       ? '' : (previousSourceCharacter || '');
@@ -948,6 +1043,10 @@
     inlineHolder.__mdNeutralPreviousBoundarySource = neutralPreviousBoundarySource || '';
     inlineHolder.__mdNeutralNextBoundaryOffset = neutralNextBoundaryOffset;
     inlineHolder.__mdNeutralNextBoundarySource = neutralNextBoundarySource || '';
+    inlineHolder.__mdBoundaryPreviousCharacterOffset = boundaryPreviousCharacterOffset;
+    inlineHolder.__mdBoundaryPreviousCharacter = boundaryPreviousCharacter || '';
+    inlineHolder.__mdBoundaryNextCharacterOffset = boundaryNextCharacterOffset;
+    inlineHolder.__mdBoundaryNextCharacter = boundaryNextCharacter || '';
     var inlineCaretText = document.createTextNode('\u200B');
     inlineHolder.appendChild(inlineCaretText);
     var insertionReference = afterSpan ? span.nextSibling : span;
@@ -965,7 +1064,7 @@
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, neutralPreviousBoundaryOffset, neutralPreviousBoundarySource, neutralNextBoundaryOffset, neutralNextBoundarySource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, neutralPreviousBoundaryOffset, neutralPreviousBoundarySource, neutralNextBoundaryOffset, neutralNextBoundarySource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap, caretBeforeEmptyUnderline, boundaryPreviousCharacterOffset, boundaryPreviousCharacter, boundaryNextCharacterOffset, boundaryNextCharacter) {
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
@@ -978,9 +1077,11 @@
     // ordinary visible-character behavior.
     var mappedStart = spotFor(offset);
     var visibleWrapperText = false;
-    var visibleWrapperStart = caretAfterEmptyUnderline
+    var visibleWrapperStart = caretBeforeEmptyUnderline
+      ? offset : caretAfterEmptyUnderline
       ? offset - 7 : sourceNeutralCaretHome ? offset - 3 : null;
-    var visibleWrapperEnd = caretAfterEmptyUnderline
+    var visibleWrapperEnd = caretBeforeEmptyUnderline
+      ? offset + 7 : caretAfterEmptyUnderline
       ? offset : sourceNeutralCaretHome ? offset + 4 : null;
     if (Number.isFinite(visibleWrapperStart) && Number.isFinite(visibleWrapperEnd)) {
       var mappedSpans = document.querySelectorAll('[data-s]');
@@ -997,7 +1098,10 @@
       !visibleWrapperText;
     var useSourceNeutralCaretHome = sourceNeutralCaretHome &&
       !visibleWrapperText;
-    var start = useAfterEmptyUnderlineHome || useSourceNeutralCaretHome
+    var useBeforeEmptyUnderlineHome = caretBeforeEmptyUnderline &&
+      !visibleWrapperText;
+    var start = useAfterEmptyUnderlineHome || useSourceNeutralCaretHome ||
+      useBeforeEmptyUnderlineHome
       ? null : mappedStart;
     if (start && length) {
       var end = spotFor(offset + length) || start;
@@ -1035,13 +1139,38 @@
     for (var i = 0; i < spans.length; i++) {
       var base = parseInt(spans[i].getAttribute('data-s'), 10);
       var len = textLength(spans[i]);
-      if (base + len < offset) { prev = spans[i]; prevEnd = base + len; }
+      if (base + len < offset ||
+          (useBeforeEmptyUnderlineHome && base + len === offset)) {
+        prev = spans[i]; prevEnd = base + len;
+      }
       if ((base > offset || (useAfterEmptyUnderlineHome && base === offset)) && !next) {
         next = spans[i]; nextBase = base;
       }
     }
     var prevBlock = prev ? blockOf(prev) : null;
     var nextBlock = next ? blockOf(next) : null;
+    if (useBeforeEmptyUnderlineHome && sourceLineStart != null && sourceLineEnd != null) {
+      var beforeNextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
+      var beforePrevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
+      if (beforeNextOnLine && placeInlineCaretHome(
+            next, offset, '', false,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter,
+            '', false, false,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource, true,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
+      if (beforePrevOnLine && placeInlineCaretHome(
+            prev, offset, '', false,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter,
+            '', true, false,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource, true,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
+    }
     if (useAfterEmptyUnderlineHome && sourceLineStart != null && sourceLineEnd != null) {
       var afterNextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
       var afterPrevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
@@ -1051,14 +1180,18 @@
             neutralNextOffset, neutralNextCharacter,
             '', false, true,
             neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
-            neutralNextBoundaryOffset, neutralNextBoundarySource)) return;
+            neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
       if (afterPrevOnLine && placeInlineCaretHome(
             prev, offset, '', false,
             neutralPreviousOffset, neutralPreviousCharacter,
             neutralNextOffset, neutralNextCharacter,
             '', true, true,
             neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
-            neutralNextBoundaryOffset, neutralNextBoundarySource)) return;
+            neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
     }
     // A host-restored caret can address hidden Markdown syntax rather than a
     // rendered run (undoing a Cut at the start of `**paragraph**`, for
@@ -1081,14 +1214,18 @@
               neutralNextOffset, neutralNextCharacter,
               neutralWrapperSource, false, false,
               neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
-              neutralNextBoundaryOffset, neutralNextBoundarySource)) return;
+              neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+              boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+              boundaryNextCharacterOffset, boundaryNextCharacter)) return;
         if (prevOnLine && placeInlineCaretHome(
               prev, offset, '', true,
               neutralPreviousOffset, neutralPreviousCharacter,
               neutralNextOffset, neutralNextCharacter,
               neutralWrapperSource, true, false,
               neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
-              neutralNextBoundaryOffset, neutralNextBoundarySource)) return;
+              neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+              boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+              boundaryNextCharacterOffset, boundaryNextCharacter)) return;
       }
       // Any remaining hidden syntax snaps to the nearest visible run on its
       // source line. Actual empty underline constructs already took their
@@ -1742,6 +1879,8 @@
              inlineCaretOffset: formatNavigation.inlineCaretOffset,
              inlineCaretAfterWrapper:
                formatNavigation.inlineCaretAfterWrapper === true,
+             inlineCaretBeforeWrapper:
+               formatNavigation.inlineCaretBeforeWrapper === true,
              selectionStartsAtHome:
                formatNavigation.selectionStartsAtHome === true,
              crossRun: !!(formatNavigation.syntaxStart &&
@@ -1812,6 +1951,7 @@
              canonicalSelection: navigation.canonicalSourceSelection === true,
              inlineCaretOffset: navigation.inlineCaretOffset,
              inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
+             inlineCaretBeforeWrapper: navigation.inlineCaretBeforeWrapper === true,
              selectionStartsAtHome: navigation.selectionStartsAtHome === true,
              crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
                navigation.syntaxEnd && navigation.syntaxEnd.length),
@@ -1875,6 +2015,7 @@
                canonicalSelection: navigation.canonicalSourceSelection === true,
                inlineCaretOffset: navigation.inlineCaretOffset,
                inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
+               inlineCaretBeforeWrapper: navigation.inlineCaretBeforeWrapper === true,
                selectionStartsAtHome: navigation.selectionStartsAtHome === true,
                crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
                  navigation.syntaxEnd && navigation.syntaxEnd.length),
@@ -2018,6 +2159,8 @@
                inlineCaretOffset: deletionNavigation.inlineCaretOffset,
                inlineCaretAfterWrapper:
                  deletionNavigation.inlineCaretAfterWrapper === true,
+               inlineCaretBeforeWrapper:
+                 deletionNavigation.inlineCaretBeforeWrapper === true,
                selectionStartsAtHome:
                  deletionNavigation.selectionStartsAtHome === true,
                crossRun: !!(deletionNavigation.syntaxStart &&
@@ -2057,6 +2200,8 @@
                inlineCaretOffset: replacementNavigation.inlineCaretOffset,
                inlineCaretAfterWrapper:
                  replacementNavigation.inlineCaretAfterWrapper === true,
+               inlineCaretBeforeWrapper:
+                 replacementNavigation.inlineCaretBeforeWrapper === true,
                selectionStartsAtHome:
                  replacementNavigation.selectionStartsAtHome === true,
                crossRun: !!(replacementNavigation.syntaxStart &&
@@ -2077,7 +2222,9 @@
     // explicit source offset so the first restored keystroke cannot disappear
     // or be rejected as an attempt to replace text the source never contained.
     var inlineHome = activeInlineCaretHome();
-    if (inlineHome && inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper') &&
+    if (inlineHome &&
+        (inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper') ||
+         inlineHome.hasAttribute('data-md-inline-caret-before-empty-wrapper')) &&
         (e.inputType === 'deleteContentBackward' ||
          e.inputType === 'deleteContentForward' ||
          e.inputType === 'deleteWordBackward' ||
@@ -2085,6 +2232,8 @@
       e.preventDefault();
       var afterWrapperCaretOffset = parseInt(
         inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      var beforeEmptyWrapper = inlineHome.hasAttribute(
+        'data-md-inline-caret-before-empty-wrapper');
       var afterWrapperBackward = e.inputType === 'deleteContentBackward';
       var afterWrapperWordBackward = e.inputType === 'deleteWordBackward';
       var afterWrapperWordForward = e.inputType === 'deleteWordForward';
@@ -2093,6 +2242,7 @@
         freeze();
         post({ op: 'neutralWordDelete', start: afterWrapperCaretOffset,
                backward: afterWrapperWordBackward, afterWrapper: true,
+               beforeWrapper: beforeEmptyWrapper,
                rev: stampRev, seq: seq++ });
         return;
       }
