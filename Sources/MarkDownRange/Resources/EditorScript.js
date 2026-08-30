@@ -60,6 +60,7 @@
   // Ordinary rapid typing never sets this and follows the restored caret.
   var frozenRequestedSelection = null;
   var inlineNavigationSelection = null;
+  var inlineWordSelectionHome = null;
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -476,9 +477,44 @@
   }
   document.body.addEventListener('keydown', function (event) {
     if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
-        event.altKey || event.ctrlKey || event.metaKey) return;
+        event.ctrlKey || event.metaKey) return;
     var selection = window.getSelection();
     var direction = event.key === 'ArrowLeft' ? 'backward' : 'forward';
+    // WebKit cannot contract a one-word Option-Shift selection across a block
+    // edge back onto a zero-width synthetic home. It instead strands the
+    // focus beside hidden source syntax, where the next edit is dropped or
+    // damages a wrapper. Snap only the final one-word reversal; selections
+    // containing multiple visible words keep their native word contraction.
+    if (event.altKey && event.shiftKey && selection && selection.rangeCount) {
+      if (selection.isCollapsed) {
+        var startingWordHome = activeInlineCaretHome();
+        inlineWordSelectionHome = startingWordHome
+          ? { home: startingWordHome, direction: direction } : null;
+      } else {
+        var wordNavigation = liveInlineCaretEndpointSelection();
+        var wordHome = inlineWordSelectionHome && inlineWordSelectionHome.home ||
+          wordNavigation && wordNavigation.home;
+        var reversingWord = inlineWordSelectionHome
+          ? inlineWordSelectionHome.direction !== direction
+          : wordNavigation &&
+            ((wordNavigation.selectionStartsAtHome === true && direction === 'backward') ||
+             (wordNavigation.selectionStartsAtHome !== true && direction === 'forward'));
+        var selectedWord = plain(selection.toString()).replace(/\u200B/g, '').trim();
+        if (reversingWord && selectedWord && !/\s/.test(selectedWord) &&
+            wordHome && wordHome.firstChild) {
+          event.preventDefault();
+          selection.collapse(
+            wordHome.firstChild,
+            wordHome.firstChild.nodeType === 3
+              ? wordHome.firstChild.nodeValue.length : 0);
+          inlineNavigationSelection = null;
+          inlineWordSelectionHome = null;
+          return;
+        }
+      }
+    }
+    if (event.altKey) return;
+    inlineWordSelectionHome = null;
     var boundaryNavigation = event.shiftKey
       ? currentInlineNavigationSelection() : null;
     if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
@@ -914,6 +950,7 @@
         home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
       inlineCaretBeforeWrapper:
         home.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
+      home: home,
       selectionStartsAtHome: startsAtHome,
       blockBoundary: blockBoundary,
       boundaryDirection: boundaryDirection,

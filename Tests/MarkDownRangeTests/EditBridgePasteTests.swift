@@ -1148,6 +1148,12 @@ import Testing
 		(source: "alpha [Bravo charlie](https://x)<u></u> Delta", caret: 35,
 		 direction: "backward", copied: "charlie",
 		 expected: "alpha [Bravo P](https://x)<u></u> Delta"),
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", copied: "Bravo",
+		 expected: "Alpha P<u></u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", copied: "Bravo",
+		 expected: "Head<u></u>P Tail"),
 	])
 	func optionShiftSelectionFromAnEmptyUnderlineCaretCopiesAndReplacesTheVisibleWord(
 		source: String,
@@ -1450,6 +1456,12 @@ import Testing
 		(source: "alpha Bravo<u></u> charlie", caret: 14,
 		 direction: "backward", afterCut: "alpha <u></u> charlie",
 		 afterTyping: "alpha <u>X</u> charlie"),
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", afterCut: "Alpha <u></u>Tail",
+		 afterTyping: "Alpha <u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", afterCut: "Head<u></u> Tail",
+		 afterTyping: "Head<u>X</u> Tail"),
 	])
 	func typingAfterPlainWordCutReturnsToTheSyntheticCaret(
 		source: String,
@@ -1478,6 +1490,73 @@ import Testing
 		try await harness.waitForSourceEdits(2)
 		try await harness.waitQuiescent()
 		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", moves: 1,
+		 expected: "Alpha Bravo\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 expected: "Head<u>X</u>\n\nBravo Tail"),
+		(source: "Alpha Bravo Charlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", moves: 2,
+		 expected: "Alpha Bravo Charlie\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 expected: "Head<u>X</u>\n\nBravo Charlie Tail"),
+	])
+	func fullyReversingACrossBlockWordSelectionReturnsToTheStyledCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		moves: Int,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 724, in: harness)
+		try await harness.waitUntil("cross-block word reversal caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		#expect(try await harness.evaluate("""
+			(function () {
+			  var selection = window.getSelection()
+			  var node = selection && selection.anchorNode
+			  var element = node && node.nodeType === 1 ? node : node && node.parentElement
+			  return String(!!(element && element.closest('[data-md-inline-caret-home]')))
+			})()
+			""") == "true")
+		harness.rewireRoundTrip()
+		let reverse = direction == "backward" ? "forward" : "backward"
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		let reverseKey = direction == "backward" ? "ArrowRight" : "ArrowLeft"
+		try await harness.run("""
+			function optionShift(key, direction) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: key, altKey: true, shiftKey: true,
+			    bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', direction, 'word')
+			  }
+			}
+			for (var index = 0; index < \(moves); index++) {
+			  optionShift('\(key)', '\(direction)')
+			}
+			for (var index = 0; index < \(moves); index++) {
+			  optionShift('\(reverseKey)', '\(reverse)')
+			}
+			""")
+		#expect(try await harness.evaluate("String(window.getSelection().isCollapsed)") == "true")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
