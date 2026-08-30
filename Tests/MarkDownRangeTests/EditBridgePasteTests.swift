@@ -227,7 +227,6 @@ import Testing
 			  window.getSelection().modify('extend', '\(direction)', 'character')
 			}
 			""")
-
 		try await withClearedPasteboard {
 			try await performResponderCommand(.copy, in: harness)
 			try await harness.waitUntil("native Copy pasteboard delivery") {
@@ -629,6 +628,126 @@ import Testing
 
 			try await performResponderCommand(.paste, in: harness)
 			try await harness.waitUntil("block-separator Paste source result") {
+				harness.source == source
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "d\n",
+		 selectedSource: "d\n\n", afterCut: "Hea<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nT",
+		 selectedSource: "\n\nT", afterCut: "Head<u></u>ail"),
+		(source: "Head\n\n- <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "d\n",
+		 selectedSource: "d\n\n- ", afterCut: "Hea<u></u>Tail"),
+		(source: "Head<u></u>\n\n- Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nT",
+		 selectedSource: "\n\n- T", afterCut: "Head<u></u>ail"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 0, publicCopy: "ad\n",
+		 selectedSource: "ad\n\n", afterCut: "He<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 0, publicCopy: "\nTa",
+		 selectedSource: "\n\nTa", afterCut: "Head<u></u>il"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 1,
+		 publicCopy: "\n\n", selectedSource: "\n\n", afterCut: "Head<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 1,
+		 publicCopy: "\n\n", selectedSource: "\n\n", afterCut: "Head<u></u>Tail"),
+		(source: "Head\n\n- <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 1,
+		 publicCopy: "\n", selectedSource: "\n\n- ", afterCut: "Head<u></u>Tail"),
+		(source: "Head<u></u>\n\n- Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 1,
+		 publicCopy: "\n", selectedSource: "\n\n- ", afterCut: "Head<u></u>Tail"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
+		 publicCopy: "d\n", selectedSource: "d\n\n", afterCut: "Hea<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
+		 publicCopy: "\nT", selectedSource: "\n\nT", afterCut: "Head<u></u>ail"),
+	])
+	func repeatedShiftArrowAcrossAWrapperBlockBoundaryRoundTripsVisibleAndHiddenSource(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		extensions: Int,
+		reversals: Int,
+		publicCopy: String,
+		selectedSource: String,
+		afterCut: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 881 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("repeated Shift-arrow caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < \(extensions); index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			for (var reversal = 0; reversal < \(reversals); reversal++) {
+			  var reverseKey = '\(key)' === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft'
+			  var reverseDirection = '\(direction)' === 'backward' ? 'forward' : 'backward'
+			  var reverseArrow = new KeyboardEvent('keydown', {
+			    key: reverseKey, shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(reverseArrow)) {
+			    window.getSelection().modify('extend', reverseDirection, 'character')
+			  }
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("repeated Shift-arrow Copy delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("repeated Shift-arrow Cut source result") {
+				harness.source == afterCut
+			}
+			try await harness.waitQuiescent()
+			try await harness.waitUntil("repeated Shift-arrow private source flavor") {
+				TestPasteboard.source != nil
+			}
+			#expect(TestPasteboard.source == selectedSource, "direction=\(direction)")
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("repeated Shift-arrow Paste source result") {
 				harness.source == source
 			}
 		}

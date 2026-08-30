@@ -458,14 +458,132 @@
   // same visual caret stop—and appears not to move. Start from the adjacent
   // real text node so normalized/nested wrapper depth cannot change how many
   // native moves are needed, then consume exactly one visible character.
+  function selectRangeInDirection(selection, range, direction) {
+    selection.removeAllRanges();
+    if (selection.setBaseAndExtent) {
+      if (direction === 'backward') {
+        selection.setBaseAndExtent(
+          range.endContainer, range.endOffset,
+          range.startContainer, range.startOffset);
+      } else {
+        selection.setBaseAndExtent(
+          range.startContainer, range.startOffset,
+          range.endContainer, range.endOffset);
+      }
+    } else {
+      selection.addRange(range);
+    }
+  }
   document.body.addEventListener('keydown', function (event) {
     if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
         event.altKey || event.ctrlKey || event.metaKey) return;
+    var selection = window.getSelection();
+    var direction = event.key === 'ArrowLeft' ? 'backward' : 'forward';
+    var boundaryNavigation = event.shiftKey
+      ? currentInlineNavigationSelection() : null;
+    if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
+        boundaryNavigation.boundaryDirection !== direction &&
+        boundaryNavigation.boundaryExtensionCount > 0 &&
+        selection && selection.rangeCount && !selection.isCollapsed) {
+      event.preventDefault();
+      var boundaryRoot = boundaryNavigation.boundaryRoot;
+      if (!boundaryRoot || boundaryNavigation.boundaryExtensionCount === 1) {
+        boundaryRoot = boundaryRoot || boundaryNavigation;
+        selectRangeInDirection(
+          selection, boundaryRoot.range, boundaryRoot.boundaryDirection);
+        inlineNavigationSelection = boundaryRoot;
+        return;
+      }
+      selection.modify('extend', direction, 'character');
+      var contractedRange = selection.getRangeAt(0).cloneRange();
+      var contractedCombinedRange = document.createRange();
+      try {
+        if (boundaryNavigation.boundaryDirection === 'backward') {
+          contractedCombinedRange.setStart(
+            contractedRange.startContainer, contractedRange.startOffset);
+          contractedCombinedRange.setEnd(
+            boundaryRoot.range.endContainer, boundaryRoot.range.endOffset);
+        } else {
+          contractedCombinedRange.setStart(
+            boundaryRoot.range.startContainer, boundaryRoot.range.startOffset);
+          contractedCombinedRange.setEnd(
+            contractedRange.endContainer, contractedRange.endOffset);
+        }
+        selectRangeInDirection(
+          selection, contractedCombinedRange, boundaryNavigation.boundaryDirection);
+        var contractedNavigation = liveInlineCaretEndpointSelection();
+        if (contractedNavigation) {
+          var contractedBoundaryText = boundaryRoot.boundaryClipboardText == null
+            ? boundaryRoot.expected : boundaryRoot.boundaryClipboardText;
+          var contractedVisible = boundaryNavigation.boundaryDirection === 'backward'
+            ? contractedNavigation.expected + contractedBoundaryText
+            : contractedBoundaryText + contractedNavigation.expected;
+          contractedNavigation.expected = contractedVisible;
+          contractedNavigation.sourceExpected = contractedVisible;
+          contractedNavigation.domExpected = plain(selection.toString()).replace(/\u200B/g, '');
+          contractedNavigation.blockBoundary = true;
+          contractedNavigation.boundaryDirection = boundaryNavigation.boundaryDirection;
+          contractedNavigation.boundaryClipboardText = contractedBoundaryText;
+          contractedNavigation.boundaryRoot = boundaryRoot;
+          contractedNavigation.boundaryExtensionCount =
+            boundaryNavigation.boundaryExtensionCount - 1;
+          inlineNavigationSelection = contractedNavigation;
+        } else {
+          inlineNavigationSelection = null;
+        }
+      } catch (_) {
+        inlineNavigationSelection = null;
+      }
+      return;
+    }
+    if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
+        boundaryNavigation.boundaryDirection === direction &&
+        selection && selection.rangeCount && !selection.isCollapsed) {
+      event.preventDefault();
+      selection.modify('extend', direction, 'character');
+      var extendedRange = selection.getRangeAt(0).cloneRange();
+      var combinedRange = document.createRange();
+      try {
+        if (direction === 'backward') {
+          combinedRange.setStart(extendedRange.startContainer, extendedRange.startOffset);
+          combinedRange.setEnd(
+            boundaryNavigation.range.endContainer, boundaryNavigation.range.endOffset);
+        } else {
+          combinedRange.setStart(
+            boundaryNavigation.range.startContainer, boundaryNavigation.range.startOffset);
+          combinedRange.setEnd(extendedRange.endContainer, extendedRange.endOffset);
+        }
+        selectRangeInDirection(selection, combinedRange, direction);
+        var extendedNavigation = liveInlineCaretEndpointSelection();
+        if (extendedNavigation) {
+          var boundaryClipboardText = boundaryNavigation.boundaryClipboardText == null
+            ? boundaryNavigation.expected : boundaryNavigation.boundaryClipboardText;
+          var combinedVisible = direction === 'backward'
+            ? extendedNavigation.expected + boundaryClipboardText
+            : boundaryClipboardText + extendedNavigation.expected;
+          extendedNavigation.expected = combinedVisible;
+          extendedNavigation.sourceExpected = combinedVisible;
+          extendedNavigation.domExpected = plain(selection.toString()).replace(/\u200B/g, '');
+          extendedNavigation.blockBoundary = true;
+          extendedNavigation.boundaryDirection = direction;
+          extendedNavigation.boundaryClipboardText = boundaryClipboardText;
+          extendedNavigation.boundaryRoot = boundaryNavigation.boundaryRoot ||
+            boundaryNavigation;
+          extendedNavigation.boundaryExtensionCount =
+            (boundaryNavigation.boundaryExtensionCount || 0) + 1;
+          inlineNavigationSelection = extendedNavigation;
+        } else {
+          inlineNavigationSelection = null;
+        }
+      } catch (_) {
+        inlineNavigationSelection = null;
+      }
+      return;
+    }
     var home = activeInlineCaretHome();
     if (!home ||
         (!home.hasAttribute('data-md-inline-caret-source-neutral') &&
          !home.hasAttribute('data-md-inline-caret-after-empty-wrapper'))) return;
-    var selection = window.getSelection();
     if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
     event.preventDefault();
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -556,6 +674,8 @@
             sourceExpected: boundarySource,
             canonicalSourceSelection: false,
             blockBoundary: true,
+            boundaryDirection: event.key === 'ArrowLeft' ? 'backward' : 'forward',
+            boundaryClipboardText: plain(selection.toString()).replace(/\u200B/g, ''),
             home: home,
             syntaxStart: [],
             syntaxEnd: [],
@@ -629,7 +749,9 @@
     var liveText = plain(selection.toString()).replace(/\u200B/g, '');
     var sameBoundaryHome = navigation.blockBoundary === true &&
       navigation.home === selectedInlineCaretHome();
-    return (sameRange || sameBoundaryHome) && liveText === navigation.expected
+    var expectedLiveText = navigation.domExpected == null
+      ? navigation.expected : navigation.domExpected;
+    return (sameRange || sameBoundaryHome) && liveText === expectedLiveText
       ? navigation : null;
   }
 
@@ -719,15 +841,30 @@
     if (!expected) return null;
     var start;
     var end;
+    var blockBoundary = false;
+    var boundaryDirection = null;
     if (startsAtHome) {
       start = home.__mdNeutralNextOffset;
+      if (!Number.isFinite(start)) {
+        start = home.__mdNeutralNextBoundaryOffset;
+        blockBoundary = Number.isFinite(start);
+        boundaryDirection = 'forward';
+      }
       end = mappedEnd;
     } else {
       start = mappedStart;
       var previousOffset = home.__mdNeutralPreviousOffset;
       var previousSource = home.__mdNeutralPreviousCharacter || '';
-      end = Number.isFinite(previousOffset)
-        ? previousOffset + previousSource.length : null;
+      if (Number.isFinite(previousOffset)) {
+        end = previousOffset + previousSource.length;
+      } else {
+        var previousBoundaryOffset = home.__mdNeutralPreviousBoundaryOffset;
+        var previousBoundarySource = home.__mdNeutralPreviousBoundarySource || '';
+        end = Number.isFinite(previousBoundaryOffset)
+          ? previousBoundaryOffset + previousBoundarySource.length : null;
+        blockBoundary = Number.isFinite(end);
+        boundaryDirection = 'backward';
+      }
     }
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return null;
     var syntaxStart = selectedSyntaxBoundaries(range, true);
@@ -749,6 +886,8 @@
       inlineCaretAfterWrapper:
         home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
       selectionStartsAtHome: startsAtHome,
+      blockBoundary: blockBoundary,
+      boundaryDirection: boundaryDirection,
       syntaxStart: syntaxStart,
       syntaxEnd: syntaxEnd,
       range: range.cloneRange()
@@ -1732,6 +1871,7 @@
                  ? navigation.start + navigation.sourceExpected.length : navigation.end,
                text: '', expected: navigation.sourceExpected,
                clipboardExpected: clipboardExpected,
+               blockBoundary: navigation.blockBoundary === true,
                canonicalSelection: navigation.canonicalSourceSelection === true,
                inlineCaretOffset: navigation.inlineCaretOffset,
                inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
