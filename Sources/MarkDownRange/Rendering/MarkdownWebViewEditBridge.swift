@@ -347,13 +347,18 @@ extension MarkdownWebView.Coordinator {
 						in: selectedSource, visibleEnd: visibleRange.upperBound) {
 						if operation == "replaceSelection" {
 							let preservedLength = (preserved as NSString).length
-							let trailingWhitespaceSplit: (String) -> (
-								content: String, whitespace: String
+							let syntaxBoundarySplit: (String) -> (
+								content: String, outside: String
 							)? = { inserted in
-								guard inserted.last?.unicodeScalars.allSatisfy(
-									CharacterSet.whitespacesAndNewlines.contains) == true
-								else { return nil }
-								var split = inserted.endIndex
+								let firstLineBreak = inserted.firstIndex {
+									$0 == "\n" || $0 == "\r"
+								}
+								if firstLineBreak == nil,
+								   inserted.last?.unicodeScalars.allSatisfy(
+									CharacterSet.whitespacesAndNewlines.contains) != true {
+									return nil
+								}
+								var split = firstLineBreak ?? inserted.endIndex
 								while split > inserted.startIndex {
 									let previous = inserted.index(before: split)
 									guard inserted[previous].unicodeScalars.allSatisfy(
@@ -366,14 +371,14 @@ extension MarkdownWebView.Coordinator {
 									String(inserted[split...]))
 							}
 							canonicalReplacementTransform = { inserted in
-								guard let parts = trailingWhitespaceSplit(inserted) else {
+								guard let parts = syntaxBoundarySplit(inserted) else {
 									return inserted + preserved
 								}
-								return parts.content + preserved + parts.whitespace
+								return parts.content + preserved + parts.outside
 							}
 							canonicalCaretAfterInsertedText = { inserted in
 								adjustedStart + (inserted as NSString).length +
-									(trailingWhitespaceSplit(inserted) == nil ? 0 : preservedLength)
+									(syntaxBoundarySplit(inserted) == nil ? 0 : preservedLength)
 							}
 						} else {
 							canonicalReplacementTransform = { _ in preserved }
