@@ -1017,21 +1017,25 @@ extension MarkdownWebView.Coordinator {
 			separator += 1
 		}
 		guard separator > visibleEnd, separator < selectedSource.length else { return nil }
-		let visibleBoundary = visibleWordBoundaryBeforeHiddenInlineSuffix(
-			in: selectedSource, boundary: separator)
-		if visibleBoundary == visibleEnd {
-			return selectedSource.substring(with: NSRange(
-				location: visibleEnd, length: separator - visibleEnd))
+		var hiddenStart = separator
+		while hiddenStart > visibleEnd {
+			let containerStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
+				in: selectedSource, boundary: hiddenStart)
+			if containerStart < hiddenStart {
+				hiddenStart = containerStart
+				continue
+			}
+			var delimiterStart = hiddenStart
+			while delimiterStart > visibleEnd,
+			      isInlineDelimiterUnit(selectedSource.character(at: delimiterStart - 1)) {
+				delimiterStart -= 1
+			}
+			guard delimiterStart < hiddenStart else { break }
+			hiddenStart = delimiterStart
 		}
-		var delimiterEnd = visibleEnd
-		while delimiterEnd < separator,
-		      isInlineDelimiterUnit(selectedSource.character(at: delimiterEnd)) {
-			delimiterEnd += 1
-		}
-		return delimiterEnd > visibleEnd
-			? selectedSource.substring(with: NSRange(
-				location: visibleEnd, length: delimiterEnd - visibleEnd))
-			: nil
+		guard hiddenStart == visibleEnd else { return nil }
+		return selectedSource.substring(with: NSRange(
+			location: visibleEnd, length: separator - visibleEnd))
 	}
 
 	private struct PrivateBoundaryPaste {
