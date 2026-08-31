@@ -1305,6 +1305,76 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: " ",
+		 afterReplacement: "**Bol** <u></u><u></u>Tail",
+		 afterTyping: "**Bol** X<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "\t",
+		 afterReplacement: "**Bol**\t<u></u><u></u>Tail",
+		 afterTyping: "**Bol**\tX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "\n",
+		 afterReplacement: "**Bol**\n<u></u><u></u>Tail",
+		 afterTyping: "**Bol**\nX<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 publicCopy: "k\n", replacement: " ",
+		 afterReplacement: "[Lin](https://x.test) <u></u><u></u>Tail",
+		 afterTyping: "[Lin](https://x.test) X<u></u><u></u>Tail"),
+		(source: "<u>Mark</u>\n\n<u></u><u></u>Tail", caret: 23,
+		 publicCopy: "k\n", replacement: " ",
+		 afterReplacement: "<u>Mar</u> <u></u><u></u>Tail",
+		 afterTyping: "<u>Mar</u> X<u></u><u></u>Tail"),
+	])
+	func whitespaceReplacementAfterCopyingABackwardBoundaryClosesSyntaxFirst(
+		source: String,
+		caret: Int,
+		publicCopy: String,
+		replacement: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1104 + caret, in: harness)
+		try await harness.waitUntil("Copy-then-whitespace boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'backward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-then-whitespace public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy)
+			#expect(TestPasteboard.source == nil)
+			try await harness.type(replacement)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement)
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Head\n\n<u></u>Tail", caret: 9,
 		 key: "ArrowLeft", direction: "backward",
 		 expected: "Head\n\n<u>X</u>Tail"),

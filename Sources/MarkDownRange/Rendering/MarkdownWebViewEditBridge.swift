@@ -345,9 +345,22 @@ extension MarkdownWebView.Coordinator {
 				if visibleRange.location != NSNotFound {
 					if let preserved = Self.blockBoundaryHiddenSuffix(
 						in: selectedSource, visibleEnd: visibleRange.upperBound) {
-						canonicalReplacementTransform = operation == "replaceSelection"
-							? { $0 + preserved }
-							: { _ in preserved }
+						if operation == "replaceSelection" {
+							let preservedLength = (preserved as NSString).length
+							let closesBeforeInserted: (String) -> Bool = {
+								$0.unicodeScalars.last.map(
+									CharacterSet.whitespacesAndNewlines.contains) == true
+							}
+							canonicalReplacementTransform = {
+								closesBeforeInserted($0) ? preserved + $0 : $0 + preserved
+							}
+							canonicalCaretAfterInsertedText = { inserted in
+								adjustedStart + (inserted as NSString).length +
+									(closesBeforeInserted(inserted) ? preservedLength : 0)
+							}
+						} else {
+							canonicalReplacementTransform = { _ in preserved }
+						}
 					}
 				}
 			}
