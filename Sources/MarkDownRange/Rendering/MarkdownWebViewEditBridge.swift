@@ -350,8 +350,10 @@ extension MarkdownWebView.Coordinator {
 							let syntaxBoundarySplit: (String) -> (
 								content: String, outside: String
 							)? = { inserted in
-								let firstLineBreak = inserted.firstIndex {
-									$0 == "\n" || $0 == "\r"
+								let firstLineBreak = inserted.firstIndex { character in
+									character.unicodeScalars.contains {
+										$0.value == 0x0A || $0.value == 0x0D
+									}
 								}
 								if firstLineBreak == nil,
 								   inserted.last?.unicodeScalars.allSatisfy(

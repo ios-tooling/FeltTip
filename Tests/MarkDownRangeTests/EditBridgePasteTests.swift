@@ -1333,6 +1333,18 @@ import Testing
 		 publicCopy: "d\n", replacement: "R \nS",
 		 afterReplacement: "**BolR** \nS<u></u><u></u>Tail",
 		 afterTyping: "**BolR** \nSX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\rS",
+		 afterReplacement: "**BolR**\rS<u></u><u></u>Tail",
+		 afterTyping: "**BolR**\rSX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\u{2003}",
+		 afterReplacement: "**BolR**\u{2003}<u></u><u></u>Tail",
+		 afterTyping: "**BolR**\u{2003}X<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\u{00A0}",
+		 afterReplacement: "**BolR** <u></u><u></u>Tail",
+		 afterTyping: "**BolR** X<u></u><u></u>Tail"),
 		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
 		 publicCopy: "k\n", replacement: " ",
 		 afterReplacement: "[Lin](https://x.test) <u></u><u></u>Tail",
@@ -1393,6 +1405,51 @@ import Testing
 		try await harness.waitForSourceEdits(2)
 		try await harness.waitQuiescent()
 		#expect(harness.source == afterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func CRLFReplacementTextClosesBackwardBoundarySyntaxBeforeTheBreak() async throws {
+		let source = "**Bold**\n\n<u></u><u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 20, token: 1136, in: harness)
+		try await harness.waitUntil("CRLF substitution boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'backward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("CRLF substitution public flavor") {
+				TestPasteboard.string == "d\n"
+			}
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertReplacementText', data: 'R\\r\\nS',
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "**BolR**\r\nS<u></u><u></u>Tail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "**BolR**\r\nSX<u></u><u></u>Tail")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
