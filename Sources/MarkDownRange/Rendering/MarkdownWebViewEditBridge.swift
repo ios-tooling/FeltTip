@@ -1012,6 +1012,59 @@ extension MarkdownWebView.Coordinator {
 		character == 0x3D || character == 0x5E || character == 0x60
 	}
 
+	private struct BlockBoundaryHiddenSuffixScan {
+		let start: Int
+		let preserved: String
+	}
+
+	private static func scanBlockBoundaryHiddenSuffix(
+		in selectedSource: NSString,
+		separator: Int,
+		minimumStart: Int
+	) -> BlockBoundaryHiddenSuffixScan? {
+		guard minimumStart >= 0, separator > minimumStart,
+		      separator <= selectedSource.length else { return nil }
+		var syntaxEnd = separator
+		while syntaxEnd > minimumStart {
+			let character = selectedSource.character(at: syntaxEnd - 1)
+			guard character == 0x20 || character == 0x09 else { break }
+			syntaxEnd -= 1
+		}
+		var hiddenStart = syntaxEnd
+		var preserved = ""
+		while hiddenStart > minimumStart {
+			let containerStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
+				in: selectedSource, boundary: hiddenStart)
+			if containerStart < hiddenStart {
+				preserved = selectedSource.substring(with: NSRange(
+					location: containerStart, length: hiddenStart - containerStart)) + preserved
+				hiddenStart = containerStart
+				continue
+			}
+			var delimiterStart = hiddenStart
+			while delimiterStart > minimumStart,
+			      isInlineDelimiterUnit(selectedSource.character(at: delimiterStart - 1)) {
+				delimiterStart -= 1
+			}
+			if delimiterStart < hiddenStart {
+				preserved = selectedSource.substring(with: NSRange(
+					location: delimiterStart, length: hiddenStart - delimiterStart)) + preserved
+				hiddenStart = delimiterStart
+				continue
+			}
+			var whitespaceStart = hiddenStart
+			while whitespaceStart > minimumStart {
+				let character = selectedSource.character(at: whitespaceStart - 1)
+				guard character == 0x20 || character == 0x09 else { break }
+				whitespaceStart -= 1
+			}
+			guard whitespaceStart < hiddenStart else { break }
+			hiddenStart = whitespaceStart
+		}
+		guard !preserved.isEmpty else { return nil }
+		return BlockBoundaryHiddenSuffixScan(start: hiddenStart, preserved: preserved)
+	}
+
 	/// Returns hidden closing syntax between a selected visible endpoint and
 	/// the following block separator. Besides symmetric delimiters this covers
 	/// link destinations and normalized wrapper closers such as `</u>`.
@@ -1027,45 +1080,10 @@ extension MarkdownWebView.Coordinator {
 			separator += 1
 		}
 		guard separator > visibleEnd, separator < selectedSource.length else { return nil }
-		var syntaxEnd = separator
-		while syntaxEnd > visibleEnd {
-			let character = selectedSource.character(at: syntaxEnd - 1)
-			guard character == 0x20 || character == 0x09 else { break }
-			syntaxEnd -= 1
-		}
-		var hiddenStart = syntaxEnd
-		var preserved = ""
-		while hiddenStart > visibleEnd {
-			let containerStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
-				in: selectedSource, boundary: hiddenStart)
-			if containerStart < hiddenStart {
-				preserved = selectedSource.substring(with: NSRange(
-					location: containerStart, length: hiddenStart - containerStart)) + preserved
-				hiddenStart = containerStart
-				continue
-			}
-			var delimiterStart = hiddenStart
-			while delimiterStart > visibleEnd,
-			      isInlineDelimiterUnit(selectedSource.character(at: delimiterStart - 1)) {
-				delimiterStart -= 1
-			}
-			if delimiterStart < hiddenStart {
-				preserved = selectedSource.substring(with: NSRange(
-					location: delimiterStart, length: hiddenStart - delimiterStart)) + preserved
-				hiddenStart = delimiterStart
-				continue
-			}
-			var whitespaceStart = hiddenStart
-			while whitespaceStart > visibleEnd {
-				let character = selectedSource.character(at: whitespaceStart - 1)
-				guard character == 0x20 || character == 0x09 else { break }
-				whitespaceStart -= 1
-			}
-			guard whitespaceStart < hiddenStart else { break }
-			hiddenStart = whitespaceStart
-		}
-		guard hiddenStart == visibleEnd, !preserved.isEmpty else { return nil }
-		return preserved
+		guard let scan = scanBlockBoundaryHiddenSuffix(
+			in: selectedSource, separator: separator, minimumStart: visibleEnd),
+		      scan.start == visibleEnd else { return nil }
+		return scan.preserved
 	}
 
 	private struct PrivateBoundaryPaste {
@@ -1160,6 +1178,27 @@ extension MarkdownWebView.Coordinator {
 
 		// Backward selection: visible suffix + closing delimiter + separator.
 		if boundaryStart > 0 {
+			var beforeWrapperCluster = wrapperStart
+			while beforeWrapperCluster >= 7,
+			      source.substring(with: NSRange(
+					location: beforeWrapperCluster - 7, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame {
+				beforeWrapperCluster -= 7
+			}
+			if let scan = scanBlockBoundaryHiddenSuffix(
+				in: pastedText, separator: boundaryStart, minimumStart: 0) {
+				let preservedLength = (scan.preserved as NSString).length
+				if beforeWrapperCluster >= preservedLength,
+				   source.substring(with: NSRange(
+					location: beforeWrapperCluster - preservedLength,
+					length: preservedLength)) == scan.preserved {
+					let start = beforeWrapperCluster - preservedLength
+					return PrivateBoundaryPaste(
+						range: NSRange(location: start, length: preservedLength),
+						replacement: pasted,
+						caret: wrapperStart + pastedText.length - preservedLength + 3)
+				}
+			}
 			var delimiterStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
 				in: pastedText, boundary: boundaryStart)
 			if delimiterStart == boundaryStart {
@@ -1172,13 +1211,6 @@ extension MarkdownWebView.Coordinator {
 				let delimiter = pastedText.substring(with: NSRange(
 					location: delimiterStart, length: boundaryStart - delimiterStart))
 				let delimiterLength = (delimiter as NSString).length
-				var beforeWrapperCluster = wrapperStart
-				while beforeWrapperCluster >= 7,
-				      source.substring(with: NSRange(
-						location: beforeWrapperCluster - 7, length: 7))
-						.caseInsensitiveCompare("<u></u>") == .orderedSame {
-					beforeWrapperCluster -= 7
-				}
 				if beforeWrapperCluster >= delimiterLength,
 				   source.substring(with: NSRange(
 					location: beforeWrapperCluster - delimiterLength,
