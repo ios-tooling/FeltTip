@@ -1237,6 +1237,74 @@ import Testing
 	}
 
 	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "ld\n",
+		 afterReplacement: "**BoX**<u></u><u></u>Tail",
+		 afterTyping: "**BoXY**<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "nk\n",
+		 afterReplacement: "[LiX](https://x.test)<u></u><u></u>Tail",
+		 afterTyping: "[LiXY](https://x.test)<u></u><u></u>Tail"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\nIt",
+		 afterReplacement: "Head<u></u><u></u>X*alic*",
+		 afterTyping: "Head<u></u><u></u>XY*alic*"),
+	])
+	func replacementTextAfterCopyingALargerBoundarySelectionKeepsSyntaxAndCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1072 + caret, in: harness)
+		try await harness.waitUntil("Copy-then-substitute boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 3; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-then-substitute public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+			#expect(TestPasteboard.source == nil, "direction=\(direction)")
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertReplacementText', data: 'X',
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement, "direction=\(direction)")
+
+		try await harness.type("Y")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
 		(source: "Head\n\n<u></u>Tail", caret: 9,
 		 key: "ArrowLeft", direction: "backward",
 		 expected: "Head\n\n<u>X</u>Tail"),
