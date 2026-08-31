@@ -619,6 +619,7 @@
             boundaryNavigation.boundaryRoot || boundaryNavigation,
             direction, (boundaryNavigation.boundaryExtensionCount || 0) + 1);
         if (extendedNavigation) {
+          var extendedWhitespaceOnly = /^\s+$/.test(extendedNavigation.expected);
           var boundaryClipboardText = boundaryNavigation.boundaryClipboardText == null
             ? boundaryNavigation.expected : boundaryNavigation.boundaryClipboardText;
           var combinedVisible = direction === 'backward'
@@ -636,6 +637,10 @@
             extendedNavigation.boundaryRoot.home;
           extendedNavigation.boundaryExtensionCount =
             (boundaryNavigation.boundaryExtensionCount || 0) + 1;
+          if (extendedWhitespaceOnly) {
+            extendedNavigation.syntaxStart = [];
+            extendedNavigation.syntaxEnd = [];
+          }
           inlineNavigationSelection = extendedNavigation;
         } else {
           inlineNavigationSelection = null;

@@ -1393,6 +1393,14 @@ import Testing
 		 publicCopy: "d\n", replacement: "R ",
 		 afterReplacement: "<u>**BolR**</u> <u></u><u></u>Tail",
 		 afterTyping: "<u>**BolR**</u> X<u></u><u></u>Tail"),
+		(source: "<u>**Bold** </u>\n\n<u></u><u></u>Tail", caret: 28,
+		 publicCopy: "d \n", replacement: "R ",
+		 afterReplacement: "<u>**BolR**</u> <u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u> X<u></u><u></u>Tail"),
+		(source: "<u>**Bold**\t</u>\t\n\n<u></u><u></u>Tail", caret: 29,
+		 publicCopy: "d\t\n", replacement: "R\n\nS",
+		 afterReplacement: "<u>**BolR**</u>\n\nS<u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u>\n\nSX<u></u><u></u>Tail"),
 	])
 	func whitespaceReplacementAfterCopyingABackwardBoundaryClosesSyntaxFirst(
 		source: String,
@@ -1437,6 +1445,53 @@ import Testing
 		try await harness.waitForSourceEdits(2)
 		try await harness.waitQuiescent()
 		#expect(harness.source == afterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func substitutionOverWhitespaceAtANestedLinkBoundaryPreservesBothClosers() async throws {
+		let source = "[***Bold*** ](https://x.test)  \n\n<u></u><u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 43, token: 1163, in: harness)
+		try await harness.waitUntil("Nested-link whitespace boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'backward', 'character')
+			  }
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Nested-link whitespace public flavor") {
+				TestPasteboard.string == " \n"
+			}
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertReplacementText', data: 'R ',
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.coordinator.bridgeIncidents == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "[***Bold***R](https://x.test) <u></u><u></u>Tail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "[***Bold***R](https://x.test) X<u></u><u></u>Tail")
 		#expect(try await harness.stampMismatches() == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)

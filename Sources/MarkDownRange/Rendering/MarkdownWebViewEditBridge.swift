@@ -337,14 +337,25 @@ extension MarkdownWebView.Coordinator {
 			if body["blockBoundary"] as? Bool == true,
 			   (operation == "cut" || operation == "deleteSelection" ||
 			    operation == "replaceSelection"),
-			   body["selectionStartsAtHome"] as? Bool != true,
-			   !visibleSelection.isEmpty {
+			   body["selectionStartsAtHome"] as? Bool != true {
 				let selectedSource = sourceText.substring(with: NSRange(
 					location: adjustedStart, length: adjustedEnd - adjustedStart)) as NSString
-				let visibleRange = selectedSource.range(of: visibleSelection)
-				if visibleRange.location != NSNotFound {
-					if let preserved = Self.blockBoundaryHiddenSuffix(
-						in: selectedSource, visibleEnd: visibleRange.upperBound) {
+				let visibleEnd: Int? = {
+					guard visibleSelection.isEmpty else {
+						let range = selectedSource.range(of: visibleSelection)
+						return range.location == NSNotFound ? nil : range.upperBound
+					}
+					var boundary = 0
+					while boundary < selectedSource.length {
+						let character = selectedSource.character(at: boundary)
+						guard character == 0x20 || character == 0x09 else { break }
+						boundary += 1
+					}
+					return boundary
+				}()
+				if let visibleEnd,
+				   let preserved = Self.blockBoundaryHiddenSuffix(
+					in: selectedSource, visibleEnd: visibleEnd) {
 						if operation == "replaceSelection" {
 							let preservedLength = (preserved as NSString).length
 							let syntaxBoundarySplit: (String) -> (
@@ -385,7 +396,6 @@ extension MarkdownWebView.Coordinator {
 						} else {
 							canonicalReplacementTransform = { _ in preserved }
 						}
-					}
 				}
 			}
 			payload["start"] = adjustedStart
@@ -1024,10 +1034,13 @@ extension MarkdownWebView.Coordinator {
 			syntaxEnd -= 1
 		}
 		var hiddenStart = syntaxEnd
+		var preserved = ""
 		while hiddenStart > visibleEnd {
 			let containerStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
 				in: selectedSource, boundary: hiddenStart)
 			if containerStart < hiddenStart {
+				preserved = selectedSource.substring(with: NSRange(
+					location: containerStart, length: hiddenStart - containerStart)) + preserved
 				hiddenStart = containerStart
 				continue
 			}
@@ -1036,12 +1049,23 @@ extension MarkdownWebView.Coordinator {
 			      isInlineDelimiterUnit(selectedSource.character(at: delimiterStart - 1)) {
 				delimiterStart -= 1
 			}
-			guard delimiterStart < hiddenStart else { break }
-			hiddenStart = delimiterStart
+			if delimiterStart < hiddenStart {
+				preserved = selectedSource.substring(with: NSRange(
+					location: delimiterStart, length: hiddenStart - delimiterStart)) + preserved
+				hiddenStart = delimiterStart
+				continue
+			}
+			var whitespaceStart = hiddenStart
+			while whitespaceStart > visibleEnd {
+				let character = selectedSource.character(at: whitespaceStart - 1)
+				guard character == 0x20 || character == 0x09 else { break }
+				whitespaceStart -= 1
+			}
+			guard whitespaceStart < hiddenStart else { break }
+			hiddenStart = whitespaceStart
 		}
-		guard hiddenStart == visibleEnd else { return nil }
-		return selectedSource.substring(with: NSRange(
-			location: visibleEnd, length: syntaxEnd - visibleEnd))
+		guard hiddenStart == visibleEnd, !preserved.isEmpty else { return nil }
+		return preserved
 	}
 
 	private struct PrivateBoundaryPaste {
