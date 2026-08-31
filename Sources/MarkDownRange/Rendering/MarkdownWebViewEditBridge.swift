@@ -347,16 +347,33 @@ extension MarkdownWebView.Coordinator {
 						in: selectedSource, visibleEnd: visibleRange.upperBound) {
 						if operation == "replaceSelection" {
 							let preservedLength = (preserved as NSString).length
-							let closesBeforeInserted: (String) -> Bool = {
-								$0.unicodeScalars.last.map(
+							let trailingWhitespaceSplit: (String) -> (
+								content: String, whitespace: String
+							)? = { inserted in
+								guard inserted.last?.unicodeScalars.allSatisfy(
 									CharacterSet.whitespacesAndNewlines.contains) == true
+								else { return nil }
+								var split = inserted.endIndex
+								while split > inserted.startIndex {
+									let previous = inserted.index(before: split)
+									guard inserted[previous].unicodeScalars.allSatisfy(
+										CharacterSet.whitespacesAndNewlines.contains)
+									else { break }
+									split = previous
+								}
+								return (
+									String(inserted[..<split]),
+									String(inserted[split...]))
 							}
-							canonicalReplacementTransform = {
-								closesBeforeInserted($0) ? preserved + $0 : $0 + preserved
+							canonicalReplacementTransform = { inserted in
+								guard let parts = trailingWhitespaceSplit(inserted) else {
+									return inserted + preserved
+								}
+								return parts.content + preserved + parts.whitespace
 							}
 							canonicalCaretAfterInsertedText = { inserted in
 								adjustedStart + (inserted as NSString).length +
-									(closesBeforeInserted(inserted) ? preservedLength : 0)
+									(trailingWhitespaceSplit(inserted) == nil ? 0 : preservedLength)
 							}
 						} else {
 							canonicalReplacementTransform = { _ in preserved }
