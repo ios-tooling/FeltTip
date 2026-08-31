@@ -335,7 +335,8 @@ extension MarkdownWebView.Coordinator {
 				}
 			}
 			if body["blockBoundary"] as? Bool == true,
-			   (operation == "cut" || operation == "deleteSelection"),
+			   (operation == "cut" || operation == "deleteSelection" ||
+			    operation == "replaceSelection"),
 			   body["selectionStartsAtHome"] as? Bool != true,
 			   !visibleSelection.isEmpty {
 				let selectedSource = sourceText.substring(with: NSRange(
@@ -344,7 +345,9 @@ extension MarkdownWebView.Coordinator {
 				if visibleRange.location != NSNotFound {
 					if let preserved = Self.blockBoundaryHiddenSuffix(
 						in: selectedSource, visibleEnd: visibleRange.upperBound) {
-						canonicalReplacementTransform = { _ in preserved }
+						canonicalReplacementTransform = operation == "replaceSelection"
+							? { $0 + preserved }
+							: { _ in preserved }
 					}
 				}
 			}

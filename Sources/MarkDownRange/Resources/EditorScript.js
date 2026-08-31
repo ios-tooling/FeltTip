@@ -2223,7 +2223,8 @@
     // Handle it before WebKit can drop the forward edit or consume the hidden
     // wrapper on a backward edit.
     if (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') {
-      var replacementNavigation = liveInlineCaretEndpointSelection();
+      var replacementNavigation = currentInlineNavigationSelection() ||
+        liveInlineCaretEndpointSelection();
       var navigationText = e.data;
       if (navigationText == null && e.dataTransfer) {
         navigationText = e.dataTransfer.getData('text/plain');
@@ -2248,6 +2249,7 @@
                  replacementNavigation.inlineCaretBeforeWrapper === true,
                selectionStartsAtHome:
                  replacementNavigation.selectionStartsAtHome === true,
+               blockBoundary: replacementNavigation.blockBoundary === true,
                crossRun: !!(replacementNavigation.syntaxStart &&
                  replacementNavigation.syntaxStart.length ||
                  replacementNavigation.syntaxEnd &&
