@@ -1017,7 +1017,13 @@ extension MarkdownWebView.Coordinator {
 			separator += 1
 		}
 		guard separator > visibleEnd, separator < selectedSource.length else { return nil }
-		var hiddenStart = separator
+		var syntaxEnd = separator
+		while syntaxEnd > visibleEnd {
+			let character = selectedSource.character(at: syntaxEnd - 1)
+			guard character == 0x20 || character == 0x09 else { break }
+			syntaxEnd -= 1
+		}
+		var hiddenStart = syntaxEnd
 		while hiddenStart > visibleEnd {
 			let containerStart = visibleWordBoundaryBeforeHiddenInlineSuffix(
 				in: selectedSource, boundary: hiddenStart)
@@ -1035,7 +1041,7 @@ extension MarkdownWebView.Coordinator {
 		}
 		guard hiddenStart == visibleEnd else { return nil }
 		return selectedSource.substring(with: NSRange(
-			location: visibleEnd, length: separator - visibleEnd))
+			location: visibleEnd, length: syntaxEnd - visibleEnd))
 	}
 
 	private struct PrivateBoundaryPaste {
