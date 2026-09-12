@@ -1847,6 +1847,19 @@
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
+    // After extending a forward selection twice from an empty inline caret
+    // home, WebKit can put the range start back inside its DOM-only zero-width
+    // marker. The selected visible text starts after the source-neutral
+    // wrapper, not at the marker's stamp inside that hidden syntax.
+    var startHome = startPos.node.nodeType === 3 && startPos.node.parentElement &&
+      startPos.node.parentElement.closest('[data-md-inline-caret-source-neutral]');
+    var startFromNeutralHome = false;
+    if (!range.collapsed && startHome && startHome.contains(startPos.node) &&
+        !startHome.contains(endPos.node) &&
+        Number.isFinite(startHome.__mdNeutralNextOffset)) {
+      start = startHome.__mdNeutralNextOffset;
+      startFromNeutralHome = true;
+    }
     if (start == null || end == null || end < start) { e.preventDefault(); return; }
     var startCell = tableCellOf(startPos.node);
     var endCell = tableCellOf(endPos.node);
@@ -1892,7 +1905,7 @@
     // paragraph-end snapping; otherwise a block merge must keep its native
     // preceding/following affinity.
     var endAtBlockStart = selected && isVisualBlockStart(endPos.node, endPos.offset);
-    var before = contextBefore(startPos.node, startPos.offset);
+    var before = startFromNeutralHome ? '' : contextBefore(startPos.node, startPos.offset);
     var after = contextAfter(endPos.node, endPos.offset);
 
     // Fast path: in-place text edits within a single run. Let the browser

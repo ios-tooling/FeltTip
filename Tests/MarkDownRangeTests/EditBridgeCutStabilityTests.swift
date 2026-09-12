@@ -71,7 +71,10 @@ import Testing
 		try await harness.waitQuiescent()
 		#expect(harness.source == expected, sourceLocation: sourceLocation)
 		#expect(try await harness.stampMismatches() == [], sourceLocation: sourceLocation)
-		#expect(harness.coordinator.resyncCount == 0, sourceLocation: sourceLocation)
+		#expect(
+			harness.coordinator.resyncCount == 0,
+			"source: \(source); resync: \(harness.coordinator.lastResyncReason ?? "none")",
+			sourceLocation: sourceLocation)
 		#expect(harness.coordinator.hardRejections == 0, sourceLocation: sourceLocation)
 
 		let tail = (harness.source as NSString).range(of: "Tail")
