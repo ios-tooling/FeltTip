@@ -60,6 +60,29 @@
 		#expect(ruler.indexedLineCount == 20_001)
 	}
 
+	@Test func lineCountWidthChangeDoesNotRetileInsideTextStorageEdit() throws {
+		let source = (1...99).map { "line \($0)" }.joined(separator: "\n")
+		let (ruler, _) = makeRuler(text: source)
+		_ = try renderedColors(of: ruler)
+		let index = MarkdownLineIndex(text: source)
+		ruler.setLineIndex(index)
+		RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+		let initialThickness = ruler.ruleThickness
+
+		let inserted = "\nline 100"
+		let updated = (source + inserted) as NSString
+		index.applyEdit(in: updated, editedRange: NSRange(
+			location: (source as NSString).length,
+			length: (inserted as NSString).length), delta: (inserted as NSString).length)
+		ruler.noteLineIndexChanged()
+		#expect(ruler.indexedLineCount == 100)
+		#expect(ruler.ruleThickness == initialThickness,
+			"editing must not synchronously resize the text view")
+
+		RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+		#expect(ruler.ruleThickness > initialThickness)
+	}
+
 	@Test func largeDocumentTailRulerUsesVisibleTextCoordinates() throws {
 		// A large editor can rebase its bounds while the clip view keeps an
 		// earlier origin. The visible changed line must still mark the gutter.

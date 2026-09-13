@@ -34,6 +34,7 @@ final class LineNumberRulerView: NSRulerView {
 	/// documents.
 	private var localLineStarts: [Int] = []
 	private var sharedLineIndex: MarkdownLineIndex?
+	private var thicknessUpdateScheduled = false
 	private var lineStarts: [Int] {
 		sharedLineIndex?.starts ?? localLineStarts
 	}
@@ -72,11 +73,22 @@ final class LineNumberRulerView: NSRulerView {
 	/// The shared index mutated in place; refresh geometry only if its digit
 	/// width changed, then redraw without touching the document string.
 	func noteLineIndexChanged() {
-		let newThickness = thickness(for: lineStarts.count)
-		if ruleThickness != newThickness {
-			ruleThickness = newThickness
-		}
 		needsDisplay = true
+		// setRuleThickness immediately retiles the scroll view and can resize
+		// NSTextView. During NSTextStorage's didProcessEditing callback that
+		// re-enters layout before the replacement string has settled, and a
+		// large full-document undo can throw an NSString range exception.
+		// Coalesce geometry changes until the current edit finishes.
+		guard !thicknessUpdateScheduled else { return }
+		thicknessUpdateScheduled = true
+		RunLoop.main.perform { [weak self] in
+			guard let self else { return }
+			self.thicknessUpdateScheduled = false
+			let newThickness = self.thickness(for: self.lineStarts.count)
+			if self.ruleThickness != newThickness {
+				self.ruleThickness = newThickness
+			}
+		}
 	}
 
 	/// The view scrolled or layout shifted; just redraw. (Kept separate from
