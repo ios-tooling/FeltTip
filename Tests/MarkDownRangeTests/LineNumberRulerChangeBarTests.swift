@@ -60,6 +60,37 @@
 		#expect(ruler.indexedLineCount == 20_001)
 	}
 
+	@Test func largeDocumentTailRulerUsesVisibleTextCoordinates() throws {
+		// A large editor can rebase its bounds while the clip view keeps an
+		// earlier origin. The visible changed line must still mark the gutter.
+		let source = (1...8_808).map { "line \($0) lorem ipsum\n" }.joined()
+		let (ruler, window) = makeRuler(text: source)
+		let textView = try #require(ruler.clientView as? NSTextView)
+		let scrollView = try #require(ruler.scrollView)
+		textView.isVerticallyResizable = true
+		textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		textView.textContainer?.heightTracksTextView = false
+		textView.textContainer?.containerSize = NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude)
+		textView.sizeToFit()
+		textView.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: 0, length: (source as NSString).length))
+		textView.bounds.origin.y = 100_000
+		scrollView.contentView.scroll(to: NSPoint(x: 0, y: 13_000))
+		window.displayIfNeeded()
+		let visible = textView.visibleRect
+		let manager = try #require(textView.layoutManager)
+		let container = try #require(textView.textContainer)
+		let glyphs = manager.glyphRange(forBoundingRect: NSRect(
+			x: 0, y: visible.midY - textView.textContainerOrigin.y,
+			width: container.size.width, height: 1), in: container)
+		let position = manager.characterIndexForGlyph(at: glyphs.location)
+		let line = MarkdownLineIndex(text: source).position(at: position).line
+		#expect(line > 7_000)
+		ruler.lineChanges = MarkdownLineChanges(changedLines: [line - 1: .added], deletionsAfter: [], changedRanges: [], deletionOffsets: [])
+		let colors = try renderedColors(of: ruler)
+		let hasTailMarker = colors.contains(where: isGreenish)
+		#expect(hasTailMarker, "visible tail change marker is missing from the gutter")
+	}
+
 	// MARK: Plumbing
 
 	private func makeRuler(text: String) -> (LineNumberRulerView, NSWindow) {
