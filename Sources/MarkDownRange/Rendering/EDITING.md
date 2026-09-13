@@ -95,6 +95,7 @@ pre-restore source — typing the undo straight back out.
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
 | Format → inline styles / Link | structural | shared source formatter; inline cross-run selections are blocked |
+| macOS context menu → case Transformations | structural | saves the verified single-run selection before WebKit expands it to a paragraph; applies only the corresponding case-only slice, then re-renders; unequal-length/uncertain mappings are refused |
 | Format → headings / quote / lists / rule | structural | expands to source line boundaries and supports multi-block selections |
 | Format → List → Add List Item | structural | invokes the same verified list-continuation route as Enter for the focused styled list |
 | List add button / ⌘Return | structural | appends after the target list's final item and restores the caret in the new item; ⌘Return prefers the caret's list, then the first source-mapped list visible from the top |

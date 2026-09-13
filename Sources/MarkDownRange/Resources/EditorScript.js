@@ -33,6 +33,13 @@
   // edit, desyncing the source and getting the batch rejected.
   var pendingEdits = [];
   var pendingEditWatchdog = null;
+  // macOS WebKit's text Transformations context menu replaces an entire
+  // paragraph even when the user selected only a phrase. The replacement
+  // arrives as insertText with null data and a plain-text
+  // dataTransfer. Remember the verified selection before WebKit expands it.
+  var contextMenuSourceSelection = null;
+  var pendingContextCaseEdit = null;
+  var pendingContextCaseResync = false;
   // A structural edit or desync was posted; swallow input until the host's
   // re-render (which reinjects this script) so nothing maps from a source
   // that's about to change shape. Holds { token } while frozen; if the
@@ -1537,6 +1544,34 @@
     }
   }, true);
 
+  document.body.addEventListener('contextmenu', function () {
+    contextMenuSourceSelection = null;
+    if (frozen || pendingEdits.length) return;
+    var selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+    // An unmappable selection is still a context-menu selection. Remember it
+    // so an overbroad native case change is refused instead of reaching the
+    // ordinary insertText route with WebKit's expanded paragraph range.
+    contextMenuSourceSelection = { rev: stampRev, time: Date.now() };
+    if (selectionTouchesReadOnlyIsland()) return;
+    var range = selection.getRangeAt(0);
+    var startPos = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPos = normalizePosition(range.endContainer, range.endOffset, false);
+    var span = spanOf(startPos.node, startPos.offset);
+    if (!span || span !== spanOf(endPos.node, endPos.offset)) return;
+    var start = sourceOffsetOf(startPos.node, startPos.offset);
+    var end = sourceOffsetOf(endPos.node, endPos.offset);
+    var expected = plain(range.toString());
+    if (start == null || end == null || end <= start ||
+        end - start !== expected.length) return;
+    contextMenuSourceSelection = {
+      start: start, end: end, expected: expected, span: span,
+      before: contextBefore(startPos.node, startPos.offset),
+      after: contextAfter(endPos.node, endPos.offset),
+      rev: stampRev, time: Date.now()
+    };
+  }, true);
+
   document.body.addEventListener('beforeinput', function (e) {
     // Undo/redo are owned by the host (a unified, source-level stack reached
     // via the app's Undo menu command). Block WebKit's own DOM-level history
@@ -1594,6 +1629,62 @@
       e.preventDefault();
       return;
     }
+    if (e.inputType === 'insertText' && e.data == null &&
+        e.dataTransfer && contextMenuSourceSelection &&
+        Date.now() - contextMenuSourceSelection.time < 60000 &&
+        contextMenuSourceSelection.rev === stampRev && !pendingEdits.length) {
+      var menuSelection = window.getSelection();
+      var menuRange = menuSelection && menuSelection.rangeCount
+        ? menuSelection.getRangeAt(0) : null;
+      var original = menuRange ? plain(menuRange.toString()) : '';
+      var transformed = plain(e.dataTransfer.getData('text/plain'));
+      // A case-only change with equal UTF-16 length lets us slice WebKit's
+      // transformed paragraph at the user's original source offsets. If any
+      // boundary is uncertain, restore the source after WebKit's native input.
+      if (original && transformed !== original &&
+          transformed.length === original.length &&
+          transformed.toLocaleLowerCase() === original.toLocaleLowerCase()) {
+        var captured = contextMenuSourceSelection;
+        var menuStartPos = normalizePosition(
+          menuRange.startContainer, menuRange.startOffset, true);
+        var menuEndPos = normalizePosition(
+          menuRange.endContainer, menuRange.endOffset, false);
+        var menuStart = sourceOffsetOf(menuStartPos.node, menuStartPos.offset);
+        var menuEnd = sourceOffsetOf(menuEndPos.node, menuEndPos.offset);
+        var relativeStart = captured.start - menuStart;
+        var relativeEnd = captured.end - menuStart;
+        if (menuStart != null && menuEnd != null &&
+            menuEnd - menuStart === original.length &&
+            captured.span && captured.span.isConnected &&
+            captured.span === spanOf(menuStartPos.node, menuStartPos.offset) &&
+            captured.span === spanOf(menuEndPos.node, menuEndPos.offset) &&
+            relativeStart >= 0 && relativeEnd <= original.length &&
+            original.slice(relativeStart, relativeEnd) === captured.expected) {
+          var replacement = transformed.slice(relativeStart, relativeEnd);
+          var caseEdit = {
+            start: captured.start, end: captured.end,
+            text: replacement, expected: captured.expected,
+            crossRun: false, selected: true, endAtBlockStart: false,
+            before: captured.before, after: captured.after,
+            caret: captured.start + replacement.length,
+            rev: stampRev, seq: seq++
+          };
+          if (e.cancelable) {
+            e.preventDefault();
+            freeze();
+            post(caseEdit);
+          } else {
+            pendingContextCaseEdit = caseEdit;
+          }
+        } else {
+          if (e.cancelable) e.preventDefault();
+          else pendingContextCaseResync = true;
+        }
+        contextMenuSourceSelection = null;
+        return;  // Non-cancelable variants finish after WebKit's input event.
+      }
+    }
+    contextMenuSourceSelection = null;
     // WebKit reports the zero-width character inside an inline caret home as
     // the replacement target, even though it is a DOM-only anchor and the
     // source selection is collapsed. Route that one synthetic position by its
@@ -2149,6 +2240,15 @@
     }
   }
   document.body.addEventListener('input', function () {
+    if (pendingContextCaseEdit || pendingContextCaseResync) {
+      var caseEdit = pendingContextCaseEdit;
+      pendingContextCaseEdit = null;
+      pendingContextCaseResync = false;
+      freeze();
+      if (caseEdit) post(caseEdit);
+      else post({ type: 'desync' });
+      return;
+    }
     if (pendingEditWatchdog) {
       clearTimeout(pendingEditWatchdog);
       pendingEditWatchdog = null;
