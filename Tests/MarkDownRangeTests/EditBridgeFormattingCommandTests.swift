@@ -82,7 +82,7 @@ import Testing
 			.init(command: .bulletedList, source: plain, selection: alpha, expected: "- Alpha\n\nTail"),
 			.init(command: .numberedList, source: plain, selection: alpha, expected: "1. Alpha\n\nTail"),
 			.init(command: .taskList, source: plain, selection: alpha, expected: "- [ ] Alpha\n\nTail"),
-			.init(command: .horizontalRule, source: plain, selection: alpha, expected: "Alpha\n---\n\nTail"),
+			.init(command: .horizontalRule, source: plain, selection: alpha, expected: "Alpha\n\n---\n\nTail"),
 		]
 		#expect(cases.map(\.command) == MarkdownFormattingCommand.allCases)
 		for item in cases {

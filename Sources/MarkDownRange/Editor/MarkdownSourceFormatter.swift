@@ -380,13 +380,21 @@ enum MarkdownSourceFormatter {
 		selection: NSRange
 	) -> MarkdownSourceFormattingChange {
 		// A rule is a block, never split the word under a collapsed caret.
-		// Insert after the selected/current line and surround the rule with the
-		// blank line CommonMark requires when another block follows.
+		// Insert after the selected/current line. A single newline before `---`
+		// turns a preceding paragraph into a setext heading, so ensure a blank
+		// line on both sides when there is adjacent content.
 		let insertion = selectedLineRanges(in: text, selection: selection)
 			.last?.upperBound ?? selection.upperBound
-		let needsLeadingNewline = insertion > 0 && text.character(at: insertion - 1) != 0x0A
+		let leading: String
+		if insertion == 0 || (insertion >= 2 && text.character(at: insertion - 1) == 0x0A && text.character(at: insertion - 2) == 0x0A) {
+			leading = ""
+		} else if text.character(at: insertion - 1) == 0x0A {
+			leading = "\n"
+		} else {
+			leading = "\n\n"
+		}
 		let needsTrailingNewline = insertion < text.length && text.character(at: insertion) != 0x0A
-		let replacement = (needsLeadingNewline ? "\n" : "") + "---\n" + (needsTrailingNewline ? "\n" : "")
+		let replacement = leading + "---\n" + (needsTrailingNewline ? "\n" : "")
 		return .init(
 			range: NSRange(location: insertion, length: 0),
 			replacement: replacement,

@@ -199,8 +199,11 @@ import AppKit
 		let source = "Alpha\nBeta"
 		let selection = (source as NSString).range(of: "Alpha")
 		let (formatted, caret) = try apply(.horizontalRule, to: source, selection: selection)
-		#expect(formatted == "Alpha\n---\n\nBeta")
-		#expect(caret == NSRange(location: 11, length: 0))
+		#expect(formatted == "Alpha\n\n---\n\nBeta")
+		#expect(caret == NSRange(location: 12, length: 0))
+		let html = MarkdownHTMLRenderer.renderDocument(markdown: formatted)
+		#expect(html.contains("<hr"))
+		#expect(!html.contains("<h2>Alpha</h2>"))
 	}
 
 	@Test func horizontalRuleAtACollapsedCaretDoesNotSplitTheCurrentLine() throws {
@@ -208,8 +211,15 @@ import AppKit
 			.horizontalRule,
 			to: "Alpha Tail",
 			selection: NSRange(location: 5, length: 0))
-		#expect(formatted == "Alpha Tail\n---\n")
-		#expect(caret == NSRange(location: 15, length: 0))
+		#expect(formatted == "Alpha Tail\n\n---\n")
+		#expect(caret == NSRange(location: 16, length: 0))
+	}
+
+	@Test func horizontalRuleReusesExistingBlankLine() throws {
+		let source = "Alpha\n\nBeta"
+		let selection = (source as NSString).range(of: "Alpha")
+		let (formatted, _) = try apply(.horizontalRule, to: source, selection: selection)
+		#expect(formatted == "Alpha\n\n---\n\nBeta")
 	}
 
 	@Test func formattingNearTheEndOfALargeDocumentTouchesOnlyThePrefix() throws {
