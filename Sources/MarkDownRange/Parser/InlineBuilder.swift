@@ -103,6 +103,7 @@ struct InlineBuilder: MarkupWalker {
 				var str = AttributedString(fragment.text)
 				applyCurrentStyle(&str)
 				str.markdownSourceOffset = fragment.sourceOffset
+				str.markdownEscapedPipeSourceOffset = fragment.escapedPipeSourceOffset
 				result += str
 			}
 			charOffset += text.string.count

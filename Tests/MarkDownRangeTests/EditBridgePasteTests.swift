@@ -1481,6 +1481,42 @@ import Testing
 			in: #"a \| b | c"#, source: "", insertion: 0) == #"a \| b \| c"#)
 	}
 
+	@Test func replacingASelectionAcrossAnEscapedTablePipe() async throws {
+		let table = "| Item | Notes |\n| --- | --- |\n| Beta | \\|Z |\n"
+		let harness = try await CoordinatorBridgeHarness(source: table)
+		try await harness.run("""
+			var cell = document.querySelector('tbody td:last-child')
+			var range = document.createRange()
+			range.selectNodeContents(cell)
+			window.getSelection().removeAllRanges()
+			window.getSelection().addRange(range)
+			""")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "|Z")
+		try await withPasteboard("foo | bar\nbaz") {
+			try await harness.clipboardCommand(.paste)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Beta | foo \\| bar baz |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("document.querySelector('tbody td:last-child [data-md-escaped-pipe-s]').getAttribute('data-md-escaped-pipe-s')") ==
+			String((harness.source as NSString).range(of: "\\|").location))
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+
+		try await harness.run("""
+			var cell = document.querySelector('tbody td:last-child')
+			var range = document.createRange()
+			range.selectNodeContents(cell.querySelector('[data-md-escaped-pipe-s]'))
+			window.getSelection().removeAllRanges()
+			window.getSelection().addRange(range)
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Beta | foo X bar baz |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func pastingWithNothingPastableThawsThePage() async throws {
 		await TestPasteboard.acquireExclusiveAccess()
 		defer { TestPasteboard.releaseExclusiveAccess() }

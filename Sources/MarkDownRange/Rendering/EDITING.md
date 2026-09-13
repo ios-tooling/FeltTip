@@ -14,8 +14,11 @@ attribute holding its **UTF-16 source offset**:
 > **A stamped run's text equals the source at its own stamp.**
 
 Runs whose rendered form differs from their source (escapes, smart quotes,
-entity references, trailing-space hard breaks) get **no stamp**, so the caret
-there maps to nothing and the keystroke is vetoed rather than guessed at. Tests
+entity references, trailing-space hard breaks) get **no verbatim stamp**. A
+verified table `\|` is a narrow exception: its visible pipe carries a separate
+`data-md-escaped-pipe-s` source offset, and selections expand it back to both
+source characters before the host verifies the splice. Other transformed
+characters remain unmapped and their edits are vetoed. Tests
 assert the invariant directly via `CoordinatorBridgeHarness.stampMismatches()` —
 add that assertion to any new editing test; it catches drift that happens to
 leave the visible text correct.

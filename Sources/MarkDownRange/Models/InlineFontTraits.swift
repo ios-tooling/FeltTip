@@ -30,6 +30,7 @@ extension AttributeScopes {
 	public struct MarkDownRangeAttributes: AttributeScope {
 		public let inlineFontTraits: InlineFontTraitsAttribute
 		public let markdownSourceOffset: MarkdownSourceOffsetAttribute
+		public let markdownEscapedPipeSourceOffset: MarkdownEscapedPipeSourceOffsetAttribute
 	}
 
 	public var markDownRange: MarkDownRangeAttributes.Type { MarkDownRangeAttributes.self }

@@ -15,6 +15,13 @@ public enum MarkdownSourceOffsetAttribute: AttributedStringKey {
 	public static let name = "MarkDownRangeSourceOffset"
 }
 
+/// A rendered table pipe whose two-character source spelling is `\|`.
+/// Kept separate from verbatim stamps because its displayed text is shorter.
+public enum MarkdownEscapedPipeSourceOffsetAttribute: AttributedStringKey {
+	public typealias Value = Int
+	public static let name = "MarkDownRangeEscapedPipeSourceOffset"
+}
+
 /// Converts swift-markdown source locations (1-based line, 1-based **UTF-8**
 /// column) into UTF-16 offsets in the parsed string, so edits can be applied
 /// with NSString / NSRange semantics. Builds a byte→UTF-16 table once, then
@@ -23,6 +30,7 @@ struct SourceOffsetConverter {
 	struct VerbatimFragment {
 		let text: String
 		let sourceOffset: Int?
+		let escapedPipeSourceOffset: Int?
 	}
 	private let lineStartBytes: [Int]   // UTF-8 byte offset of each line's start
 	/// UTF-8 byte offset → UTF-16 offset. Nil when the source is ASCII, where
@@ -156,7 +164,7 @@ struct SourceOffsetConverter {
 			guard length == sourceEnd - sourceStart else { return false }
 			guard length > 0 else { return true }
 			guard let offset = verbatimSourceOffset(processedOffset: sourceStart, length: length) else { return false }
-			fragments.append(.init(text: string.substring(with: NSRange(location: visibleStart, length: length)), sourceOffset: offset))
+			fragments.append(.init(text: string.substring(with: NSRange(location: visibleStart, length: length)), sourceOffset: offset, escapedPipeSourceOffset: nil))
 			return true
 		}
 		while sourceIndex < maxUpper, visibleIndex < visible.count {
@@ -165,7 +173,8 @@ struct SourceOffsetConverter {
 			   processedUTF16[sourceIndex + 1] == 0x7C,
 			   visible[visibleIndex] == 0x7C {
 				guard appendVerbatim(until: sourceIndex, visibleEnd: visibleIndex) else { return nil }
-				fragments.append(.init(text: "|", sourceOffset: nil))
+				guard let escapeOffset = verbatimSourceOffset(processedOffset: sourceIndex, length: 2) else { return nil }
+				fragments.append(.init(text: "|", sourceOffset: nil, escapedPipeSourceOffset: escapeOffset))
 				foundEscape = true
 				sourceIndex += 2
 				visibleIndex += 1

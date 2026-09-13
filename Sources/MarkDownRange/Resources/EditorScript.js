@@ -233,7 +233,18 @@
   // Source offset for a DOM position, or null if it isn't inside a run.
   function sourceOffsetOf(node, offset) {
     var span = spanOf(node, offset);
-    if (!span) return null;
+    if (!span) {
+      var owner = node.nodeType === 3 ? node.parentElement : node;
+      var escaped = owner && owner.closest && owner.closest('[data-md-escaped-pipe-s]');
+      if (escaped && escaped.textContent === '|') {
+        var relative = textOffsetWithin(escaped, node, offset);
+        var source = parseInt(escaped.getAttribute('data-md-escaped-pipe-s'), 10);
+        if (Number.isFinite(source) && (relative === 0 || relative === 1)) {
+          return source + (relative ? 2 : 0);
+        }
+      }
+      return null;
+    }
     var base = parseInt(span.getAttribute('data-s'), 10);
     var chars = textOffsetWithin(span, node, offset);
     if (chars == null) return null;
@@ -1148,6 +1159,32 @@
       return live.toString();
     } catch (e) { return ''; }
   }
+  // A mapped escaped pipe consumes two source characters despite showing one.
+  // Clone only the selected DOM so a partial selection keeps its exact source
+  // spelling; the host still verifies the full replacement before splicing.
+  function sourceRangeText(r) {
+    if (r.collapsed) return '';
+    var visible = plain(rangeText(r));
+    if (!visible.includes('|')) return visible;
+    var startOwner = r.startContainer.nodeType === 3
+      ? r.startContainer.parentElement : r.startContainer;
+    var endOwner = r.endContainer.nodeType === 3
+      ? r.endContainer.parentElement : r.endContainer;
+    var startEscape = startOwner && startOwner.closest && startOwner.closest('[data-md-escaped-pipe-s]');
+    if (startEscape && startEscape ===
+        (endOwner && endOwner.closest && endOwner.closest('[data-md-escaped-pipe-s]')) &&
+        visible === '|') return '\\|';
+    var live = document.createRange();
+    live.setStart(r.startContainer, r.startOffset);
+    live.setEnd(r.endContainer, r.endOffset);
+    var fragment = live.cloneContents();
+    var escapes = fragment.querySelectorAll('[data-md-escaped-pipe-s]');
+    if (!escapes.length || plain(fragment.textContent) !== visible) return visible;
+    escapes.forEach(function (span) {
+      if (span.textContent === '|') span.textContent = '\\|';
+    });
+    return plain(fragment.textContent);
+  }
   // Hidden Markdown delimiters are outside stamped text runs. When a real
   // selection owns the whole visible contents of an inline element, report
   // which syntax boundaries were selected. Deletion consumes them; nonempty
@@ -1407,7 +1444,7 @@
       command: command,
       start: start,
       end: end,
-      expected: plain(range.toString()),
+      expected: sourceRangeText(range),
       crossRun: crossRun,
       selected: !sel.isCollapsed,
       endAtBlockStart: !range.collapsed && isVisualBlockStart(endPos.node, endPos.offset),
@@ -1778,6 +1815,7 @@
         return;
       }
     }
+    var escapedPipeInsertionTarget = false;
     if (e.inputType === 'insertText') {
       var inlineHomeData = e.data;
       if (inlineHome && inlineHomeData != null) {
@@ -1891,6 +1929,14 @@
           targetInsertionPos.node, targetInsertionPos.offset);
         var liveInsertionOffset = sourceOffsetOf(
           liveInsertionPos.node, liveInsertionPos.offset);
+        var targetOwner = targetInsertionPos.node.nodeType === 3
+          ? targetInsertionPos.node.parentElement : targetInsertionPos.node;
+        escapedPipeInsertionTarget = !!(targetOwner && targetOwner.closest &&
+          targetOwner.closest('[data-md-escaped-pipe-s]'));
+        if (escapedPipeInsertionTarget && liveInsertionOffset != null &&
+            liveInsertionOffset === targetInsertionOffset) {
+          range = liveInsertionRange;
+        }
         if (targetInsertionOffset != null && liveInsertionOffset != null &&
             targetInsertionOffset !== liveInsertionOffset &&
             spanOf(targetInsertionPos.node, targetInsertionPos.offset) ===
@@ -1973,7 +2019,7 @@
     var selectedCaretHome = selectedInlineCaretHome();
     var expected = plain(selectedCaretHome
       ? rangeTextWithoutInlineCaretHome(range, selectedCaretHome)
-      : rangeText(range));
+      : sourceRangeText(range));
     var startSpan = spanOf(startPos.node, startPos.offset);
     // A real selection means the user chose the range — hidden syntax
     // inside it may go. A collapsed caret (block merge) may only remove
@@ -2025,7 +2071,9 @@
       // leading whitespace is a separate live <p>, but adding text before that
       // whitespace makes it part of the following source paragraph. Re-render
       // this first insertion; subsequent characters use the normal fast path.
-      if ((startCell && data.includes('|')) || crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
+      if ((startCell && (data.includes('|') || escapedPipeInsertionTarget ||
+            (!range.collapsed && expected !== plain(rangeText(range))))) ||
+          crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
           needsStructuralWhitespaceInsertion(data, before, after) ||
           needsStructuralBlockPrefixRefresh(range, data, before, after) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
