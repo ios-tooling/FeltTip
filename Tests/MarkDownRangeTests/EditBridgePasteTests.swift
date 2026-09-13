@@ -1455,6 +1455,32 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func pastingAPipeIntoATableCellKeepsItInTheCell() async throws {
+		let table = "| Item | Notes |\n| --- | --- |\n| Alpha | café |\n"
+		let harness = try await CoordinatorBridgeHarness(source: table)
+		let selection = (table as NSString).range(of: "café")
+		try await select(harness, start: selection.location, length: selection.length)
+		try await withPasteboard("résumé | embedded") {
+			try await harness.clipboardCommand(.paste)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Alpha | résumé \\| embedded |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("String(document.querySelectorAll('tbody tr').length)") == "1")
+		#expect(try await harness.evaluate("document.querySelector('tbody td:last-child').textContent") == "résumé | embedded")
+		#expect(try await harness.stampMismatches() == [])
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Alpha | résumé \\| embeddedZ |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func tablePipeEscapingPreservesAlreadyEscapedPipes() {
+		#expect(MarkdownWebView.Coordinator.escapingTablePipes(
+			in: #"a \| b | c"#, source: "", insertion: 0) == #"a \| b \| c"#)
+	}
+
 	@Test func pastingWithNothingPastableThawsThePage() async throws {
 		await TestPasteboard.acquireExclusiveAccess()
 		defer { TestPasteboard.releaseExclusiveAccess() }

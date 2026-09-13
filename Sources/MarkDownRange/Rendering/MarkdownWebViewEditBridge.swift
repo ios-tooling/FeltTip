@@ -264,7 +264,9 @@ extension MarkdownWebView.Coordinator {
 				}
 				return
 			}
-			payload["text"] = pasted
+			payload["text"] = body["inCell"] as? Bool == true
+				? Self.escapingTablePipes(in: pasted, source: source, insertion: body["start"] as? Int)
+				: pasted
 			var customCaret: Int?
 			if pasted.contains("\n"),
 			   let start = body["start"] as? Int,
@@ -320,6 +322,22 @@ extension MarkdownWebView.Coordinator {
 				return
 			}
 			payload["caret"] = caret
+		}
+		// A typed pipe cannot use the in-place DOM path: the Markdown parser
+		// would turn it into a new column while the page still shows one cell.
+		// The page sends it structurally with the same in-cell provenance as
+		// paste; account for the added source escape in its caret target.
+		if body["op"] as? String != "paste",
+		   body["inCell"] as? Bool == true,
+		   let inserted = payload["text"] as? String,
+		   inserted.contains("|") {
+			let escaped = Self.escapingTablePipes(in: inserted, source: source, insertion: body["start"] as? Int)
+			payload["text"] = escaped
+			if let caret = payload["caret"] as? Int {
+				let delta = (escaped as NSString).length - (inserted as NSString).length
+				let (adjusted, overflow) = caret.addingReportingOverflow(delta)
+				if !overflow { payload["caret"] = adjusted }
+			}
 		}
 		guard let edit = MarkdownEditSplicer.Edit(body: payload) else { return }
 		let isClipboardCut = body["op"] as? String == "cut"
@@ -442,6 +460,35 @@ extension MarkdownWebView.Coordinator {
 		guard start >= 0 else { return nil }
 		let (caret, overflow) = start.addingReportingOverflow((text as NSString).length)
 		return overflow ? nil : caret
+	}
+
+	/// Markdown uses an unescaped pipe as a cell boundary. Preserve literal
+	/// pipes pasted into one cell while leaving already-escaped source pipes
+	/// alone. Include backslashes immediately before the insertion point so
+	/// a paste at a source boundary cannot accidentally complete a delimiter.
+	static func escapingTablePipes(in pasted: String, source: String, insertion: Int?) -> String {
+		let sourceText = source as NSString
+		var slashes = 0
+		if let insertion, insertion <= sourceText.length {
+			var index = insertion
+			while index > 0, sourceText.character(at: index - 1) == 0x5C {
+				slashes += 1
+				index -= 1
+			}
+		}
+		var result = ""
+		result.reserveCapacity(pasted.utf8.count)
+		for character in pasted {
+			if character == "|" {
+				if slashes.isMultiple(of: 2) { result.append("\\") }
+				result.append(character)
+				slashes = 0
+			} else {
+				result.append(character)
+				slashes = character == "\\" ? slashes + 1 : 0
+			}
+		}
+		return result
 	}
 
 	/// A collapsed format represents its pending style as an empty source

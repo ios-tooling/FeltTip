@@ -88,7 +88,7 @@ pre-restore source — typing the undo straight back out.
 
 | Input | Route | Notes |
 | --- | --- | --- |
-| Typing, delete, forward/word delete | in-place | cross-run and Markdown-syntax-sensitive variants go structural |
+| Typing, delete, forward/word delete | in-place | cross-run, Markdown-syntax-sensitive, and table-cell pipe insertions go structural; a literal pipe becomes `\|` |
 | Typing / Return in fenced code | in-place / structural | mapped only when the rendered code is one exact source slice; Return inserts one source newline and syntax highlighting is preserved after re-render |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
 | Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix and the caret move down with the text |
@@ -100,7 +100,7 @@ pre-restore source — typing the undo straight back out.
 | Format → List → Add List Item | structural | invokes the same verified list-continuation route as Enter for the focused styled list |
 | List add button / ⌘Return | structural | appends after the target list's final item and restores the caret in the new item; ⌘Return prefers the caret's list, then the first source-mapped list visible from the top |
 | ⇧Enter | structural | writes a `\` break, and swallows the next line's leading whitespace |
-| ⌘V | structural | host reads `NSPasteboard`; see below |
+| ⌘V | structural | host reads `NSPasteboard`; in a table cell, newlines fold to spaces and unescaped pipes become `\|` so the row keeps its columns |
 | IME / dead keys / predictive text | structural | whole run diffed at `compositionend`, then re-rendered |
 | Checkbox click | host callback | `onCheckboxToggle` |
 

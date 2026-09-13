@@ -2025,7 +2025,7 @@
       // leading whitespace is a separate live <p>, but adding text before that
       // whitespace makes it part of the following source paragraph. Re-render
       // this first insertion; subsequent characters use the normal fast path.
-      if (crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
+      if ((startCell && data.includes('|')) || crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
           needsStructuralWhitespaceInsertion(data, before, after) ||
           needsStructuralBlockPrefixRefresh(range, data, before, after) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
@@ -2034,6 +2034,7 @@
         e.preventDefault();
         freeze();
         post({ start: start, end: end, text: data, expected: expected,
+               inCell: !!startCell,
                crossRun: crossRun, selected: selected,
                endAtBlockStart: endAtBlockStart,
                syntaxStart: replacementSyntaxStart,
