@@ -102,6 +102,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.isIncrementalSearchingEnabled = true
 		textView.string = text
 		context.coordinator.lineIndex.rebuild(for: text)
+		// Assigning the string can report a selection before the line index is
+		// populated. Correct that initial report once SwiftUI has mounted the view.
+		RunLoop.main.perform { [weak textView, weak coordinator = context.coordinator] in
+			guard let textView, let coordinator else { return }
+			coordinator.reportCursorPosition(in: textView)
+		}
 		context.coordinator.scheduleIncrementalLayout(for: textView)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
@@ -226,6 +232,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			context.coordinator.scheduleHeadingIndex(for: text, debounce: false)
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
+			RunLoop.main.perform { [weak textView, weak coordinator = context.coordinator] in
+				guard let textView, let coordinator else { return }
+				coordinator.reportCursorPosition(in: textView)
+			}
 			context.coordinator.scheduleIncrementalLayout(for: textView)
 		}
 		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
@@ -768,7 +778,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
-		private func reportCursorPosition(in textView: NSTextView) {
+		func reportCursorPosition(in textView: NSTextView) {
 			guard parent.onCursorPositionChanged != nil else { return }
 			let range = textView.selectedRange()
 			let insertion = range.location
