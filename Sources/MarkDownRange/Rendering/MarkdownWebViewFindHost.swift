@@ -141,6 +141,13 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		updateMatchCount(for: "")
 	}
 
+	/// Host-driven source changes can replace the DOM without changing the
+	/// search field. Recount after the replacement actually lands on the page.
+	func refreshMatchCountIfVisible() {
+		guard barVisible else { return }
+		updateMatchCount(for: searchField.stringValue)
+	}
+
 	// MARK: Bar UI
 
 	private func buildBar() {

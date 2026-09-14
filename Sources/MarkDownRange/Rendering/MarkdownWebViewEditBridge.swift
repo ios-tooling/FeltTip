@@ -385,6 +385,9 @@ extension MarkdownWebView.Coordinator {
 				selfEdit = SelfEdit(rev: currentRev, text: newSource)
 				lastRenderedText = newSource
 				parent.onSourceEdit?(newSource, caretHint)
+				#if os(macOS)
+				(webView?.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+				#endif
 			}
 		case .rejected(let reason):
 			// Structural edits (those carrying a caret target) were

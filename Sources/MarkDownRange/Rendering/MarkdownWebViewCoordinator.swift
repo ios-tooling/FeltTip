@@ -421,6 +421,9 @@ extension MarkdownWebView {
 					self.lastFragments = fragments
 					self.exactFragmentText = text
 					self.applyLineChanges(to: webView, force: true)
+					#if os(macOS)
+					(webView.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+					#endif
 				}
 			}
 			guard let patch = rendered.patch,
@@ -464,6 +467,9 @@ extension MarkdownWebView {
 					self.lastFragments = fragments
 					self.exactFragmentText = tailSourceDelta == nil ? text : nil
 					self.applyLineChanges(to: webView, force: true)
+					#if os(macOS)
+					(webView.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+					#endif
 				} else {
 					self.log("patch refused by page — full swap fallback")
 					fullSwap()
@@ -992,6 +998,9 @@ extension MarkdownWebView {
 				parent.onInitialRenderReady?()
 			}
 			finishInitialRenderIfNeeded()
+			#if os(macOS)
+			(webView.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+			#endif
 		}
 
 		public func webView(
