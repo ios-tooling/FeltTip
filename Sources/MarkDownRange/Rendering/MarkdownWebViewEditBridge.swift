@@ -398,6 +398,38 @@ extension MarkdownWebView.Coordinator {
 						}
 				}
 			}
+			if body["blockBoundary"] as? Bool == true,
+			   (operation == "cut" || operation == "deleteSelection" ||
+			    operation == "replaceSelection"),
+			   body["selectionStartsAtHome"] as? Bool == true {
+				let selectedSource = sourceText.substring(with: NSRange(
+					location: adjustedStart, length: adjustedEnd - adjustedStart)) as NSString
+				let visibleStart: Int? = {
+					guard visibleSelection.isEmpty else {
+						let range = selectedSource.range(of: visibleSelection)
+						return range.location == NSNotFound ? nil : range.location
+					}
+					var boundary = selectedSource.length
+					while boundary > 0 {
+						let character = selectedSource.character(at: boundary - 1)
+						guard character == 0x20 || character == 0x09 else { break }
+						boundary -= 1
+					}
+					return boundary
+				}()
+				if let visibleStart,
+				   let preserved = Self.blockBoundaryHiddenPrefix(
+					in: selectedSource, visibleStart: visibleStart) {
+					if operation == "replaceSelection" {
+						canonicalReplacementTransform = { $0 + preserved }
+						canonicalCaretAfterInsertedText = {
+							adjustedStart + ($0 as NSString).length
+						}
+					} else {
+						canonicalReplacementTransform = { _ in preserved }
+					}
+				}
+			}
 			payload["start"] = adjustedStart
 			payload["end"] = adjustedEnd
 			payload["expected"] = sourceText.substring(with: NSRange(
@@ -1017,6 +1049,82 @@ extension MarkdownWebView.Coordinator {
 		let preserved: String
 	}
 
+	private struct BlockBoundaryHiddenPrefixScan {
+		let end: Int
+		let preserved: String
+	}
+
+	private static func scanBlockBoundaryHiddenPrefix(
+		in selectedSource: NSString,
+		separatorEnd: Int,
+		maximumEnd: Int
+	) -> BlockBoundaryHiddenPrefixScan? {
+		guard separatorEnd >= 0, maximumEnd > separatorEnd,
+		      maximumEnd <= selectedSource.length else { return nil }
+		var hiddenEnd = separatorEnd
+		var preserved = ""
+		while hiddenEnd < maximumEnd {
+			if hiddenEnd + 3 <= maximumEnd,
+			   selectedSource.substring(with: NSRange(location: hiddenEnd, length: 3))
+				.caseInsensitiveCompare("<u>") == .orderedSame {
+				preserved += selectedSource.substring(with: NSRange(
+					location: hiddenEnd, length: 3))
+				hiddenEnd += 3
+				continue
+			}
+			if hiddenEnd + 2 <= maximumEnd,
+			   selectedSource.substring(with: NSRange(location: hiddenEnd, length: 2)) == "![" {
+				preserved += "!["
+				hiddenEnd += 2
+				continue
+			}
+			if selectedSource.character(at: hiddenEnd) == 0x5B {
+				preserved += "["
+				hiddenEnd += 1
+				continue
+			}
+			var delimiterEnd = hiddenEnd
+			while delimiterEnd < maximumEnd,
+			      isInlineDelimiterUnit(selectedSource.character(at: delimiterEnd)) {
+				delimiterEnd += 1
+			}
+			if delimiterEnd > hiddenEnd {
+				preserved += selectedSource.substring(with: NSRange(
+					location: hiddenEnd, length: delimiterEnd - hiddenEnd))
+				hiddenEnd = delimiterEnd
+				continue
+			}
+			var whitespaceEnd = hiddenEnd
+			while whitespaceEnd < maximumEnd {
+				let character = selectedSource.character(at: whitespaceEnd)
+				guard character == 0x20 || character == 0x09 else { break }
+				whitespaceEnd += 1
+			}
+			guard whitespaceEnd > hiddenEnd else { break }
+			hiddenEnd = whitespaceEnd
+		}
+		guard !preserved.isEmpty else { return nil }
+		return BlockBoundaryHiddenPrefixScan(end: hiddenEnd, preserved: preserved)
+	}
+
+	private static func blockBoundaryHiddenPrefix(
+		in selectedSource: NSString,
+		visibleStart: Int
+	) -> String? {
+		guard visibleStart > 0, visibleStart <= selectedSource.length else { return nil }
+		var separatorEnd = 0
+		while separatorEnd < visibleStart {
+			let character = selectedSource.character(at: separatorEnd)
+			guard character == 0x20 || character == 0x09 ||
+			      character == 0x0A || character == 0x0D else { break }
+			separatorEnd += 1
+		}
+		guard let scan = scanBlockBoundaryHiddenPrefix(
+			in: selectedSource, separatorEnd: separatorEnd, maximumEnd: visibleStart),
+		      scan.end == visibleStart else { return nil }
+		return scan.preserved
+	}
+
 	private static func scanBlockBoundaryHiddenSuffix(
 		in selectedSource: NSString,
 		separator: Int,
@@ -1260,6 +1368,29 @@ extension MarkdownWebView.Coordinator {
 			      character == 0x0A || character == 0x0D else { break }
 			contentStart += 1
 		}
+		guard contentStart > 0 else { return nil }
+		var afterWrapperCluster = wrapperStart + 7
+		while afterWrapperCluster + 7 <= source.length,
+		      source.substring(with: NSRange(
+				location: afterWrapperCluster, length: 7))
+				.caseInsensitiveCompare("<u></u>") == .orderedSame {
+			afterWrapperCluster += 7
+		}
+		if let scan = scanBlockBoundaryHiddenPrefix(
+			in: pastedText, separatorEnd: contentStart,
+			maximumEnd: pastedText.length) {
+			let preservedLength = (scan.preserved as NSString).length
+			if afterWrapperCluster + preservedLength <= source.length,
+			   source.substring(with: NSRange(
+				location: afterWrapperCluster,
+				length: preservedLength)) == scan.preserved {
+				return PrivateBoundaryPaste(
+					range: NSRange(
+						location: afterWrapperCluster, length: preservedLength),
+					replacement: pasted,
+					caret: afterWrapperCluster + pastedText.length)
+			}
+		}
 		var delimiterEnd = contentStart
 		if contentStart + 3 <= pastedText.length,
 		   pastedText.substring(with: NSRange(location: contentStart, length: 3))
@@ -1271,7 +1402,6 @@ extension MarkdownWebView.Coordinator {
 				delimiterEnd += 1
 			}
 		}
-		guard contentStart > 0 else { return nil }
 		if delimiterEnd == contentStart {
 			let afterWrapper = wrapperStart + 7
 			guard (caret == afterWrapper || caret == wrapperStart + 3),
@@ -1292,13 +1422,6 @@ extension MarkdownWebView.Coordinator {
 		let delimiter = pastedText.substring(with: NSRange(
 			location: contentStart, length: delimiterEnd - contentStart))
 		let delimiterLength = (delimiter as NSString).length
-		var afterWrapperCluster = wrapperStart + 7
-		while afterWrapperCluster + 7 <= source.length,
-		      source.substring(with: NSRange(
-				location: afterWrapperCluster, length: 7))
-				.caseInsensitiveCompare("<u></u>") == .orderedSame {
-			afterWrapperCluster += 7
-		}
 		guard afterWrapperCluster + delimiterLength <= source.length,
 		      source.substring(with: NSRange(
 			location: afterWrapperCluster, length: delimiterLength)) == delimiter else { return nil }

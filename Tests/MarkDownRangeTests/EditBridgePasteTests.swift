@@ -849,6 +849,9 @@ import Testing
 		(source: "<u>**Bold** </u>\n\n<u></u><u></u>Tail", caret: 28,
 		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
 		 afterTyping: "<u>**Bold** </u>\n\n<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\n[ ***Bold***](https://x.test)", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 afterTyping: "Head<u></u><u></u>\n\n[ ***BXold***](https://x.test)"),
 		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
 		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
 		 afterTyping: "**Bold**\n\n<u></u><u>X</u><u></u>Tail"),
@@ -1499,6 +1502,65 @@ import Testing
 		try await harness.waitQuiescent()
 		#expect(harness.source == "[***Bold***R](https://x.test) X<u></u><u></u>Tail")
 		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(replacement: "R ",
+		 afterReplacement: "Head<u></u><u></u>R [***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u>R X[***old***](https://x.test)"),
+		(replacement: " R",
+		 afterReplacement: "Head<u></u><u></u> R[***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u> RX[***old***](https://x.test)"),
+		(replacement: "R\n\nS",
+		 afterReplacement: "Head<u></u><u></u>R\n\nS[***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u>R\n\nSX[***old***](https://x.test)"),
+		(replacement: "\t",
+		 afterReplacement: "Head<u></u><u></u>\t[***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u>\tX[***old***](https://x.test)"),
+	])
+	func replacementAcrossAForwardNestedBoundaryPreservesAllOpeners(
+		replacement: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let source = "Head<u></u><u></u>\n\n[ ***Bold***](https://x.test)"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 7, token: 1171 + (replacement as NSString).length, in: harness)
+		try await harness.waitUntil("Forward nested boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'forward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Forward nested boundary public flavor") {
+				TestPasteboard.string == "\n B"
+			}
+			try await harness.type(replacement)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement)
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.bridgeIncidents == [])
 		#expect(harness.coordinator.resyncCount == 0)
 		#expect(harness.coordinator.hardRejections == 0)
 	}
