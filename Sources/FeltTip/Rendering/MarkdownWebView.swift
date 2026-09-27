@@ -109,12 +109,24 @@ public struct MarkdownWebView: UXViewRepresentable {
 	/// Called only after the initial page and its edit bridge are live. Unlike
 	/// the terminal progress callback, this never fires for a failed navigation.
 	var onInitialRenderReady: (@MainActor @Sendable () -> Void)?
+	/// The host is keeping this view mounted (e.g. pre-warmed behind another
+	/// editor mode) but not showing it. An inactive page gives up keyboard focus
+	/// so keystrokes meant for the visible editor can't edit it unseen.
+	var isInactive = false
 
 	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat, baseURL: URL? = nil) {
 		self.text = text
 		self.theme = theme
 		self.fontSize = fontSize
 		self.baseURL = baseURL
+	}
+
+	/// Mark the page as mounted-but-hidden; see `isInactive`. Hosts should also
+	/// hide it and disable its hit testing.
+	public func inactive(_ flag: Bool) -> Self {
+		var copy = self
+		copy.isInactive = flag
+		return copy
 	}
 
 	/// Turn the page into a contentEditable surface that writes edits back to
@@ -383,6 +395,18 @@ public struct MarkdownWebView: UXViewRepresentable {
 		#endif
 		context.coordinator.currentLineChanges = context.environment.markdownLineChanges
 		context.coordinator.applyLineChanges(to: webView)
+		if isInactive { resignFocus(of: webView) }
+	}
+
+	private func resignFocus(of webView: WKWebView) {
+		#if os(macOS)
+			guard let window = webView.window,
+				  let responder = window.firstResponder as? NSView,
+				  responder === webView || responder.isDescendant(of: webView) else { return }
+			window.makeFirstResponder(nil)
+		#else
+			webView.endEditing(true)
+		#endif
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
