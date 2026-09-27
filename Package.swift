@@ -3,10 +3,10 @@
 import PackageDescription
 
 let package = Package(
-	name: "MarkDownRange",
+	name: "FeltTip",
 	platforms: [.macOS("26.0"), .iOS(.v18)],
 	products: [
-		.library(name: "MarkDownRange", targets: ["MarkDownRange"]),
+		.library(name: "FeltTip", targets: ["FeltTip"]),
 		.library(name: "MarkdownSyntaxHighlighting", targets: ["MarkdownSyntaxHighlighting"]),
 	],
 	dependencies: [
@@ -20,7 +20,7 @@ let package = Package(
 	targets: [
 		.target(name: "MarkdownSyntaxHighlighting"),
 		.target(
-			name: "MarkDownRange",
+			name: "FeltTip",
 			dependencies: [
 				"MarkdownSyntaxHighlighting",
 				.product(name: "Markdown", package: "swift-markdown"),
@@ -46,8 +46,8 @@ let package = Package(
 			]
 		),
 		.testTarget(
-			name: "MarkDownRangeTests",
-			dependencies: ["MarkDownRange"],
+			name: "FeltTipTests",
+			dependencies: ["FeltTip"],
 			// The large sample is accessed by `#filePath`, not bundled as a
 			// compiled test resource.
 			exclude: ["Fixtures/SuperDuper-0.6.0.md"]

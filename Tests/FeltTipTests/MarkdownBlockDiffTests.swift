@@ -1,0 +1,126 @@
+//
+//  MarkdownBlockDiffTests.swift
+//  FeltTipTests
+//
+
+import Testing
+@testable import FeltTip
+
+@Suite struct MarkdownBlockDiffTests {
+	private func fragments(_ markdown: String) -> [MarkdownBlockFragment] {
+		MarkdownHTMLRenderer.renderBlockFragments(markdown: markdown, includeSourceOffsets: true)
+	}
+
+	@Test func editInsideOneBlockReplacesJustThatBlock() {
+		let old = fragments("Alpha\n\nBeta\n\nGamma")
+		let new = fragments("Alpha\n\nBetaX\n\nGamma")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.start == 1)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.count == 1)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[2].firstStamp, "the tail anchors on Gamma's fresh stamp")
+		#expect(patch.expectedOldCount == old.count)
+	}
+
+	@Test func splittingABlockReplacesOneWithTwo() {
+		let old = fragments("Alpha\n\nBeta\n\nGamma")
+		let new = fragments("Alpha\n\nBe\n\nta\n\nGamma")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.start == 1)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.count == 2)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[3].firstStamp)
+	}
+
+	@Test func identicalDocumentsProduceNoPatch() {
+		let old = fragments("Alpha\n\nBeta")
+		#expect(MarkdownBlockDiff.patch(from: old, to: fragments("Alpha\n\nBeta")) == nil)
+	}
+
+	@Test func emptyBaselineForcesFullSwap() {
+		#expect(MarkdownBlockDiff.patch(from: [], to: fragments("Alpha")) == nil)
+	}
+
+	@Test func wholesaleRewriteForcesFullSwap() {
+		let old = fragments("Alpha\n\nBeta\n\nGamma\n\nDelta\n\nEpsilon")
+		let new = fragments("One\n\nTwo\n\nThree\n\nFour\n\nFive")
+		#expect(MarkdownBlockDiff.patch(from: old, to: new) == nil)
+	}
+
+	@Test func offsetShiftAloneMatchesBySignatureNotHTML() {
+		// Editing the first block shifts every later stamp; later blocks must
+		// still be recognized as unchanged (suffix), not replaced.
+		let old = fragments("Alpha\n\n- one\n- two\n\n**Gamma** tail")
+		let new = fragments("AlphaXYZ\n\n- one\n- two\n\n**Gamma** tail")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.start == 0)
+		#expect(patch.removeCount == 1)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[1].firstStamp)
+	}
+
+	@Test func insertingCollapsedBlankLinesStillRestampsTheSurvivingTail() {
+		let prefix = "Alpha paragraph"
+		let tail = "Beta paragraph **tail**"
+		let old = fragments(prefix + "\n\n" + tail)
+		let new = fragments(prefix + "\n\n\n\n" + tail)
+		let oldStamp = try! #require(old.last?.firstStamp)
+		let newStamp = try! #require(new.last?.firstStamp)
+		#expect(newStamp == oldStamp + 2)
+
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.removeCount == 0)
+		#expect(patch.html.isEmpty)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == newStamp)
+	}
+
+	@Test func appendingABlockPatchesAtTheEnd() {
+		let old = fragments("Alpha\n\nBeta")
+		let new = fragments("Alpha\n\nBeta\n\nGamma")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+		#expect(patch.start == 2)
+		#expect(patch.removeCount == 0)
+		#expect(patch.html.count == 1)
+		#expect(patch.tailAnchorOffset == -1, "an empty tail needs no anchor")
+	}
+
+	@Test func deletingTheFirstBlockAnchorsEverySurvivingStamp() {
+		let old = fragments("Discard\n\nAlpha\n\nBeta")
+		let new = fragments("Alpha\n\nBeta")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+
+		#expect(patch.start == 0)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.isEmpty)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[0].firstStamp)
+	}
+
+	@Test func deletingTheLastBlockNeedsNoTailAnchor() {
+		let old = fragments("Alpha\n\nBeta\n\nDiscard")
+		let new = fragments("Alpha\n\nBeta")
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+
+		#expect(patch.start == 2)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.isEmpty)
+		#expect(patch.tailAnchorOffset == -1)
+	}
+
+	@Test func unicodeEditBeforeRepeatedBlocksPatchesOnlyTheEditedBlock() {
+		let repeatedTail = "\n\nSame 😀 block\n\nSame 😀 block\n\nFinal"
+		let old = fragments("Prefix" + repeatedTail)
+		let new = fragments("Prefix 👩‍💻" + repeatedTail)
+		let patch = try! #require(MarkdownBlockDiff.patch(from: old, to: new))
+
+		#expect(patch.start == 0)
+		#expect(patch.removeCount == 1)
+		#expect(patch.html.count == 1)
+		#expect(patch.tailAnchorOffset == 0)
+		#expect(patch.tailAnchorStamp == new[1].firstStamp)
+		#expect(patch.expectedOldCount == old.count)
+	}
+}

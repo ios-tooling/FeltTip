@@ -1,11 +1,11 @@
 ---
 name: match-rendering
-description: Iterate MarkDownRange's SwiftUI rendering until it matches a ground-truth markdown render. Takes either raw markdown or a URL/path to a .md file, captures both a reference render (via GitHub's POST /markdown API) and our SwiftUI render (via the Marker snapshot test harness), then iterates on MarkDownRange source to close the visual gap. Use when the user says "match the rendering", "make our render look like GitHub", "iterate on this markdown rendering", or supplies a markdown file with a complaint about how it looks.
+description: Iterate FeltTip's SwiftUI rendering until it matches a ground-truth markdown render. Takes either raw markdown or a URL/path to a .md file, captures both a reference render (via GitHub's POST /markdown API) and our SwiftUI render (via the Marker snapshot test harness), then iterates on FeltTip source to close the visual gap. Use when the user says "match the rendering", "make our render look like GitHub", "iterate on this markdown rendering", or supplies a markdown file with a complaint about how it looks.
 ---
 
 # match-rendering
 
-Drives a render → diff → fix loop for MarkDownRange's SwiftUI rendering pipeline. The harness lives in the consuming Marker app at `~/Documents/ManagedProjects/MacDev/Marker/MarkerTests/Snapshots/`; this skill orchestrates it.
+Drives a render → diff → fix loop for FeltTip's SwiftUI rendering pipeline. The harness lives in the consuming Marker app at `~/Documents/ManagedProjects/MacDev/Marker/MarkerTests/Snapshots/`; this skill orchestrates it.
 
 ## Inputs
 
@@ -72,9 +72,9 @@ Use `Read` on both. Visually diff:
 - Link colors, code-block background, blockquote bar
 - Table layout, list indentation, alignment
 
-### 5. Fix in MarkDownRange
+### 5. Fix in FeltTip
 
-Source lives at `~/Documents/ManagedProjects/Frameworks/MarkDownRange/Sources/MarkDownRange/`. Common landing zones for visual fixes:
+Source lives at `Sources/FeltTip/` relative to the active FeltTip checkout (locate its root with `git rev-parse --show-toplevel`). Common landing zones for visual fixes:
 
 | Symptom | File |
 |---|---|
@@ -126,7 +126,7 @@ Read both:
 - `~/Library/Containers/com.standalone.Marker/Data/Library/Caches/MarkerSnapshots/vue-readme.png`
 - `~/Library/Containers/com.standalone.Marker/Data/Library/Caches/MarkerSnapshots/vue-readme.reference.png`
 
-Iterate on MarkDownRange source until they match. Each round: edit → run test → read both PNGs.
+Iterate on FeltTip source until they match. Each round: edit → run test → read both PNGs.
 
 ## Notes
 

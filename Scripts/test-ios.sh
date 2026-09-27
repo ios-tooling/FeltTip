@@ -3,7 +3,7 @@
 # Runs the framework's test suite against an iOS Simulator.
 #
 # `swift test` only ever runs on the host, so the iOS side needs xcodebuild and
-# the package's own -Package scheme (the plain MarkDownRange scheme has no test
+# the package's own -Package scheme (the plain FeltTip scheme has no test
 # action). Serial by choice: the WKWebView-backed suites are very sensitive to
 # machine load, and a parallel run on a busy machine produces page-load timeouts
 # that look exactly like real failures.
@@ -37,14 +37,14 @@ SKIPS=(
 
 ARGS=()
 for suite in "${SKIPS[@]}"; do
-	ARGS+=("-skip-testing:MarkDownRangeTests/$suite")
+	ARGS+=("-skip-testing:FeltTipTests/$suite")
 done
 
 echo "iOS destination: $DESTINATION"
 echo "skipping: ${SKIPS[*]}"
 
 xcodebuild test \
-	-scheme MarkDownRange-Package \
+	-scheme FeltTip-Package \
 	-destination "$DESTINATION" \
 	-parallel-testing-enabled NO \
 	CODE_SIGNING_ALLOWED=NO \
