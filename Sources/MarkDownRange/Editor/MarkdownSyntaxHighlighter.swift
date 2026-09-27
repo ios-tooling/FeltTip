@@ -48,42 +48,53 @@ enum MarkdownSyntaxHighlighter {
 		sink.resetColor(in: scope, base: UXColor(theme.textColor))
 
 		// Code fences must always be scanned over the whole document because a
-		// fence may begin outside `scope` but reach into it.
+		// fence may begin outside `scope` but reach into it. Only the fence
+		// lines themselves are colored; the code inside keeps the body color.
 		let codeFenceRanges = cachedFenceRanges ?? fenceRanges(in: string)
 		for fence in codeFenceRanges {
-			let inter = NSIntersectionRange(fence, scope)
-			if inter.length > 0 {
-				sink.setColor(UXColor(theme.codeForeground), in: inter)
+			for marker in fenceMarkerRanges(for: fence, in: nsString) {
+				let inter = NSIntersectionRange(marker, scope)
+				if inter.length > 0 {
+					sink.setColor(UXColor(markerColor(for: theme)), in: inter)
+				}
 			}
 		}
 
-		// Color and embolden the entire heading line so the source still
-		// reads like a heading in the raw pane. Monospaced bold shares
-		// metrics with monospaced regular, so line-wrap is unaffected.
+		// Embolden the entire heading line so the source still reads like a
+		// heading in the raw pane; only the `#` marker gets color. Monospaced
+		// bold shares metrics with monospaced regular, so line-wrap is unaffected.
 		let lineRegex = headingLinePattern(for: options)
 		let markerRegex = headingMarkerPattern(for: options)
 		for range in matches(for: lineRegex, in: string, in: scope) {
 			guard !intersects(range, codeFenceRanges) else { continue }
-			sink.setColor(UXColor(theme.headingColor), in: range)
 			textStorage.addAttribute(.font, value: headingFont, range: range)
 		}
 
-		let patterns: [(NSRegularExpression, Color)] = [
-			(markerRegex, theme.secondaryColor),
-			(boldPattern, theme.secondaryColor),
-			(italicPattern, theme.secondaryColor),
-			(inlineCodePattern, theme.codeForeground),
-			(linkBracketsPattern, theme.secondaryColor),
-			(linkURLPattern, theme.linkColor),
-			(blockquotePattern, theme.secondaryColor),
-			(listMarkerPattern, theme.secondaryColor),
-			(hrPattern, theme.secondaryColor),
+		// Color markup, not content: each pattern names the capture groups
+		// holding its markers (0 = the whole match), all in the faded marker
+		// color. Links are the exception —
+		// their text and URL take the link color.
+		let patterns: [(NSRegularExpression, [Int], Color)] = [
+			(markerRegex, [0], markerColor(for: theme)),
+			(boldPattern, [1, 3], markerColor(for: theme)),
+			(italicPattern, [1, 3], markerColor(for: theme)),
+			(inlineCodePattern, [1, 2], markerColor(for: theme)),
+			(linkPattern, [1, 3, 5], markerColor(for: theme)),
+			(linkPattern, [2, 4], theme.linkColor),
+			(blockquotePattern, [0], markerColor(for: theme)),
+			(listMarkerPattern, [0], markerColor(for: theme)),
+			(hrPattern, [0], markerColor(for: theme)),
 		]
 
-		for (pattern, color) in patterns {
-			for range in matches(for: pattern, in: string, in: scope) {
-				guard !intersects(range, codeFenceRanges) else { continue }
-				sink.setColor(UXColor(color), in: range)
+		for (pattern, groups, color) in patterns {
+			for match in pattern.matches(in: string, range: scope) {
+				guard !intersects(match.range, codeFenceRanges) else { continue }
+				for group in groups {
+					let range = match.range(at: group)
+					if range.location != NSNotFound, range.length > 0 {
+						sink.setColor(UXColor(color), in: range)
+					}
+				}
 			}
 		}
 
@@ -203,6 +214,19 @@ enum MarkdownSyntaxHighlighter {
 		return ranges
 	}
 
+	/// The opening fence line (including any info string) and, when the fence
+	/// is closed, the closing backticks — the parts of a fence that are markup.
+	static func fenceMarkerRanges(for fence: NSRange, in text: NSString) -> [NSRange] {
+		var opener = text.lineRange(for: NSRange(location: fence.location, length: 0))
+		while opener.length > 0, [0x0A, 0x0D].contains(text.character(at: NSMaxRange(opener) - 1)) { opener.length -= 1 }
+		var ranges = [opener]
+		let end = NSMaxRange(fence)
+		if end - 3 > NSMaxRange(opener), text.character(at: end - 4) == 0x0A, text.substring(with: NSRange(location: end - 3, length: 3)) == "```" {
+			ranges.append(NSRange(location: end - 3, length: 3))
+		}
+		return ranges
+	}
+
 	/// Range-scoped variant — only returns matches whose ranges sit entirely
 	/// inside `searchRange`. Used by the incremental path so a regex doesn't
 	/// have to scan the whole document for inline-only patterns.
@@ -214,12 +238,17 @@ enum MarkdownSyntaxHighlighter {
 		exclusions.contains { NSIntersectionRange($0, range).length > 0 }
 	}
 
+	/// Markup is drawn in a faded secondary color so it recedes behind the prose.
+	static func markerColor(for theme: MarkdownTheme) -> SwiftUI.Color {
+		theme.secondaryColor.opacity(0.45)
+	}
+
 	// MARK: - Patterns
 
 	private typealias Color = SwiftUI.Color
 
 	private static let inlineCodePattern = try! NSRegularExpression(
-		pattern: "`[^`\\n]+`")
+		pattern: "(`)[^`\\n]+(`)")
 
 	// Strict CommonMark: require a space after the final `#`.
 	private static let strictHeadingMarkerPattern = try! NSRegularExpression(
@@ -245,13 +274,12 @@ enum MarkdownSyntaxHighlighter {
 	private static let boldPattern = try! NSRegularExpression(
 		pattern: "(\\*\\*|__)(.*?)(\\1)")
 	private static let italicPattern = try! NSRegularExpression(
-		pattern: "(?<![*_])([*_])(?![*_])(.+?)(?<![*_])\\1(?![*_])")
-	private static let linkBracketsPattern = try! NSRegularExpression(
-		pattern: "\\[([^\\]]+)\\]\\(")
-	private static let linkURLPattern = try! NSRegularExpression(
-		pattern: "\\]\\(([^)]+)\\)")
+		pattern: "(?<![*_])([*_])(?![*_])(.+?)(?<![*_])(\\1)(?![*_])")
+	// Groups: 1 `[`, 2 text, 3 `](`, 4 URL, 5 `)`.
+	private static let linkPattern = try! NSRegularExpression(
+		pattern: "(\\[)([^\\]]+)(\\]\\()([^)]+)(\\))")
 	private static let blockquotePattern = try! NSRegularExpression(
-		pattern: "^>\\s?.*$", options: .anchorsMatchLines)
+		pattern: "^>\\s?", options: .anchorsMatchLines)
 	private static let listMarkerPattern = try! NSRegularExpression(
 		pattern: "^\\s*([-*+]|\\d+\\.)\\s", options: .anchorsMatchLines)
 	private static let hrPattern = try! NSRegularExpression(

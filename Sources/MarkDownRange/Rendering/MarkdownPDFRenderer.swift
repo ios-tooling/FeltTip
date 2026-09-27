@@ -45,9 +45,19 @@ public enum MarkdownPDFRenderer {
 			baseURL: nil)
 		do { try await loader.wait() } catch { return nil }
 
-		// Expand to full content height so createPDF captures the whole document.
+		// Measure from the document origin through the body's content. The
+		// documentElement's scrollHeight is at least the initial viewport height
+		// (creating a blank page for short documents), while body.scrollHeight
+		// omits the body's top offset from a collapsed first-child margin (which
+		// can clip the last content). Keep a point of rounding slack at the end.
 		var cssHeight = pageHeight
-		if let raw = try? await webView.evaluateJavaScript("document.documentElement.scrollHeight"),
+		if let raw = try? await webView.evaluateJavaScript("""
+			(() => {
+			  const body = document.body;
+			  const rect = body.getBoundingClientRect();
+			  return Math.ceil(Math.max(rect.bottom, rect.top + body.scrollHeight) + window.scrollY) + 1;
+			})()
+			"""),
 		   let h = (raw as? Double).map({ CGFloat($0) }), h > 0 {
 			cssHeight = h
 			webView.frame = CGRect(origin: webView.frame.origin,
