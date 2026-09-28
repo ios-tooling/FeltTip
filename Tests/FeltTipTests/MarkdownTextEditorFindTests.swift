@@ -12,6 +12,62 @@ import Testing
 @Suite(.serialized)
 struct MarkdownTextEditorFindTests {
 	@Test
+	func hostDrivenTextChangesRefreshAnOpenIncrementalFindBar() async throws {
+		let model = MarkdownTextEditorFindModel(text: "After palette switch")
+		let hostingView = NSHostingView(rootView: MarkdownTextEditorFindHost(model: model))
+		hostingView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hostingView.frame,
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		window.contentView = hostingView
+		window.orderFront(nil)
+
+		var textView: NSTextView?
+		for _ in 0..<160 where textView == nil {
+			textView = findTextView(in: hostingView)
+			if textView == nil {
+				try await Task.sleep(for: .milliseconds(25))
+			}
+		}
+		let rawEditor = try #require(textView)
+		window.makeFirstResponder(rawEditor)
+		perform(.showReplaceInterface, on: rawEditor)
+
+		let searchField = try await waitForSearchField(in: hostingView)
+		#expect(findReplaceField(in: hostingView) != nil)
+		let findPasteboard = NSPasteboard(name: .find)
+		let previousFindString = findPasteboard.string(forType: .string)
+		defer {
+			findPasteboard.clearContents()
+			if let previousFindString {
+				findPasteboard.setString(previousFindString, forType: .string)
+			}
+		}
+		findPasteboard.clearContents()
+		findPasteboard.setString("theme", forType: .string)
+		window.makeFirstResponder(rawEditor)
+		perform(.nextMatch, on: rawEditor)
+		try await waitUntil("find field receives the requested query") {
+			searchField.stringValue == "theme"
+		}
+		try await Task.sleep(for: .milliseconds(150))
+		#expect(rawEditor.selectedRange().length == 0)
+
+		model.text = "After theme switch"
+		try await waitUntil("host text reaches the raw editor") {
+			rawEditor.string == model.text
+		}
+		let match = (model.text as NSString).range(of: "theme")
+		try await waitUntil("open find bar selects the restored match") {
+			rawEditor.selectedRange() == match
+		}
+		#expect(findReplaceField(in: hostingView) != nil)
+	}
+
+	@Test
 	func rawEditorUsesTheIncrementalNativeFindBar() async throws {
 		let original = "First run: 83.632438016 seconds. Second run: 83.999 seconds."
 		var text = original
@@ -109,6 +165,15 @@ struct MarkdownTextEditorFindTests {
 		return view.subviews.lazy.compactMap(findSearchField(in:)).first
 	}
 
+	private func findReplaceField(in view: NSView) -> NSTextField? {
+		if let field = view as? NSTextField,
+		   !(field is NSSearchField),
+		   field.isEditable {
+			return field
+		}
+		return view.subviews.lazy.compactMap(findReplaceField(in:)).first
+	}
+
 	private func waitForSearchField(in view: NSView) async throws -> NSSearchField {
 		for _ in 0..<100 {
 			if let searchField = findSearchField(in: view) {
@@ -131,6 +196,27 @@ struct MarkdownTextEditorFindTests {
 			try await Task.sleep(for: .milliseconds(10))
 		}
 		Issue.record("Timed out waiting for \(description)")
+	}
+}
+
+@MainActor
+private final class MarkdownTextEditorFindModel: ObservableObject {
+	@Published var text: String
+
+	init(text: String) {
+		self.text = text
+	}
+}
+
+private struct MarkdownTextEditorFindHost: View {
+	@ObservedObject var model: MarkdownTextEditorFindModel
+	@State private var selectedHeadingID: String?
+
+	var body: some View {
+		MarkdownTextEditor(
+			text: $model.text,
+			selectedHeadingID: $selectedHeadingID
+		)
 	}
 }
 #endif
