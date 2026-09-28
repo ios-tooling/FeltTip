@@ -91,6 +91,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.isEditable = true
 		textView.isRichText = false
 		textView.allowsUndo = true
+		// Markdown source is code-like text. System substitutions silently
+		// corrupt authored syntax (for example, `---` table delimiters become
+		// em dashes), so keep the raw pane source-faithful regardless of the
+		// user's global typing preferences.
+		textView.isAutomaticDashSubstitutionEnabled = false
+		textView.isAutomaticQuoteSubstitutionEnabled = false
+		textView.isAutomaticTextReplacementEnabled = false
+		textView.isAutomaticSpellingCorrectionEnabled = false
 		textView.delegate = context.coordinator
 		textView.isVerticallyResizable = true
 		textView.isHorizontallyResizable = false
