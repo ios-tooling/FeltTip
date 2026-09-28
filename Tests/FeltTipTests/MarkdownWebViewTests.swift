@@ -169,4 +169,12 @@ import Testing
 		#expect(script.contains("window.addEventListener('resize', invalidateDimensions"))
 		#expect(script.components(separatedBy: "invalidateDimensions();").count >= 3)
 	}
+
+	@Test @MainActor func scrollScriptDebouncesVisibleSourceOffsetReports() {
+		let script = MarkdownWebView.Coordinator.scrollSyncScript
+		#expect(script.contains("function reportVisibleSourceOffset()"))
+		#expect(script.contains("document.querySelectorAll('[data-s]')"))
+		#expect(script.contains("window.setTimeout(reportVisibleSourceOffset, 140)"))
+		#expect(script.contains("type: 'visibleSourceOffset', offset: offset"))
+	}
 }

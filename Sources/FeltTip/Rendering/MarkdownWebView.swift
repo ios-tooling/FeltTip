@@ -73,6 +73,9 @@ public struct MarkdownWebView: UXViewRepresentable {
 	/// Reports the page's scroll position (top/visible/content fractions, matching
 	/// `MarkdownTextView`'s semantics) so a host can drive synced scrolling.
 	var onScrollFractionChanged: (@MainActor @Sendable (CGFloat, CGFloat, CGFloat) -> Void)?
+	/// Reports the source offset nearest the top of the rendered viewport after
+	/// scrolling settles. Hosts use it to keep outlines in sync with Show mode.
+	var onVisibleSourceOffsetChanged: (@MainActor @Sendable (Int) -> Void)?
 	/// Drive the page so `topFraction` sits at the viewport center; token-gated.
 	var scrollTarget: MarkdownScrollTarget?
 	/// Apply a relative pixel scroll from outside; token-gated.
@@ -209,6 +212,16 @@ public struct MarkdownWebView: UXViewRepresentable {
 	public func onScrollFractionChanged(_ callback: @escaping @MainActor @Sendable (CGFloat, CGFloat, CGFloat) -> Void) -> Self {
 		var copy = self
 		copy.onScrollFractionChanged = callback
+		return copy
+	}
+
+	/// Subscribe to the source offset nearest the top of the rendered viewport.
+	/// The page debounces this independently from high-frequency scroll sync.
+	public func onVisibleSourceOffsetChanged(
+		_ callback: @escaping @MainActor @Sendable (Int) -> Void
+	) -> Self {
+		var copy = self
+		copy.onVisibleSourceOffsetChanged = callback
 		return copy
 	}
 

@@ -29,6 +29,36 @@
   // consumed when the position settles at the target (or after a grace
   // period, if the user interrupted the drive).
   var driven = null;
+	var visibleSourceTimer = null;
+	var lastVisibleSourceOffset = null;
+	function reportVisibleSourceOffset() {
+		visibleSourceTimer = null;
+		var runs = document.querySelectorAll('[data-s]');
+		var viewportY = 12;
+		var best = null;
+		var bestDistance = Infinity;
+		for (var i = 0; i < runs.length; i++) {
+			var rect = runs[i].getBoundingClientRect();
+			if (rect.bottom <= 0 || rect.top >= window.innerHeight) { continue; }
+			var distance = rect.top <= viewportY && rect.bottom >= viewportY
+				? 0 : (rect.top > viewportY ? rect.top - viewportY : viewportY - rect.bottom);
+			if (distance < bestDistance) {
+				best = runs[i];
+				bestDistance = distance;
+			}
+		}
+		if (!best) { return; }
+		var offset = parseInt(best.getAttribute('data-s'), 10);
+		if (!isFinite(offset) || offset === lastVisibleSourceOffset) { return; }
+		lastVisibleSourceOffset = offset;
+		try {
+			window.webkit.messageHandlers.mdedit.postMessage({ type: 'visibleSourceOffset', offset: offset });
+		} catch (e) {}
+	}
+	function scheduleVisibleSourceReport() {
+		if (visibleSourceTimer != null) { window.clearTimeout(visibleSourceTimer); }
+		visibleSourceTimer = window.setTimeout(reportVisibleSourceOffset, 140);
+	}
   function report() {
     var dims = scrollDimensions();
     var h = dims.height;
@@ -59,10 +89,12 @@
   }
   var ticking = false;
   window.addEventListener('scroll', function () {
+		scheduleVisibleSourceReport();
     if (ticking) { return; }
     ticking = true;
     window.requestAnimationFrame(function () { ticking = false; report(); });
   }, { passive: true });
+	scheduleVisibleSourceReport();
   window.__mdScrollToFraction = function (f) {
     var maxY = scrollDimensions().maxY;
     // Top-anchored fraction of the scrollable range — the same units

@@ -41,6 +41,11 @@ extension MarkdownWebView.Coordinator {
 			}
 			return
 		}
+		if body["type"] as? String == "visibleSourceOffset" {
+			guard pendingReloadScrollY == nil, let offset = body["offset"] as? Int else { return }
+			parent.onVisibleSourceOffsetChanged?(offset)
+			return
+		}
 		if body["type"] as? String == "error" {
 			log("JS error: \(body["message"] as? String ?? "?")")
 			return
