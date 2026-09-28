@@ -1,0 +1,4799 @@
+//
+//  EditBridgePasteTests.swift
+//  FeltTipTests
+//
+//  Paste, driven through WebKit's own editing pipeline on macOS: a real paste:
+//  action off the general pasteboard, not a synthetic event. It takes the
+//  verified structural route — splice the source, re-render — so what lands in
+//  the DOM is always a render of text the source actually holds.
+//
+//  iOS drives the same contract from the page instead, because a library test
+//  bundle has no UIApplication to route a responder action through. See
+//  `CoordinatorBridgeHarness.clipboardCommand`.
+//
+
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
+import Testing
+@testable import FeltTip
+
+@Suite(.serialized) @MainActor struct EditBridgePasteTests {
+	/// Puts `text` on the pasteboard for the duration of `body`, restoring
+	/// whatever the user had there.
+	private func withPasteboard(_ text: String, _ body: () async throws -> Void) async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let saved = TestPasteboard.string
+		defer {
+			TestPasteboard.string = saved
+		}
+		TestPasteboard.string = text
+		try await body()
+	}
+
+	private func withClearedPasteboard(_ body: () async throws -> Void) async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let saved = TestPasteboard.string
+		defer {
+			TestPasteboard.string = saved
+		}
+		TestPasteboard.string = nil
+		try await body()
+	}
+
+	private func select(
+		_ harness: CoordinatorBridgeHarness,
+		start: Int,
+		length: Int,
+		backward: Bool = false
+	) async throws {
+		try await harness.run("""
+			window.__mdPlaceCaret(\(start), \(length))
+			\(backward ? """
+			var selectedRange = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().setBaseAndExtent(selectedRange.endContainer, selectedRange.endOffset, selectedRange.startContainer, selectedRange.startOffset)
+			""" : "")
+			""")
+	}
+
+	private func paste(into harness: CoordinatorBridgeHarness, at offset: Int) async throws {
+		try await harness.placeCaret(offset)
+		try await harness.clipboardCommand(.paste)
+	}
+
+	private func performResponderCommand(
+		_ command: ClipboardCommand,
+		in harness: CoordinatorBridgeHarness
+	) async throws {
+		try await harness.clipboardCommand(command)
+	}
+
+	private func restore(
+		_ text: String,
+		caret: Int,
+		token: Int,
+		in harness: CoordinatorBridgeHarness
+	) {
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: text, theme: .default, fontSize: 14)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: token))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(text)
+	}
+
+	private func deleteIndentedSoftLineCharacter(
+		in harness: CoordinatorBridgeHarness
+	) async throws {
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+	}
+
+	@Test func pasteAfterAnIndentedSoftLineDeletionUsesTheRestoredCaret() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Term\n  P: Definition\n\nTail")
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		let liveVisible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await harness.domVisibleText())
+		let freshVisible = EditBridgeFuzzTests.normalizedVisibleText(
+			try await fresh.domVisibleText())
+		#expect(liveVisible == freshVisible)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllCopyAfterAnIndentedSoftLineDeletionDoesNotExposeTheCaretHome() async throws {
+		let original = "Term\n  x: Definition\n\nTail"
+		let expectedSource = "Term\n  : Definition\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(source: original)
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate(
+			"String(document.querySelectorAll('[data-md-inline-caret-home]').length)"
+		) == "1")
+
+		try await harness.run("document.execCommand('selectAll')")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			let copied = try #require(TestPasteboard.string)
+			#expect(!copied.contains("\u{200B}"),
+				"clipboard exposed the DOM-only caret marker: \(copied.debugDescription)")
+		}
+
+		#expect(harness.source == expectedSource)
+		#expect(harness.sourceEditCount == 1)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(direction: "backward", copied: "a", expected: "Alph<u></u> Tail"),
+		(direction: "forward", copied: " ", expected: "Alpha<u></u>Tail"),
+	])
+	func extendingASelectionFromAnEmptyUnderlineCaretOwnsOneVisibleCharacter(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		let selectedBeforeTyping = try await harness.evaluate("window.getSelection().toString()")
+		#expect(selectedBeforeTyping == copied,
+			"selection collapsed after Copy for direction=\(direction)")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("native Cut pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "[***A😀<u></u>🧪B***](https://x)", direction: "backward", copied: "😀",
+		 expected: "[***AP<u></u>🧪B***](https://x)"),
+		(source: "[***A😀<u></u>🧪B***](https://x)", direction: "forward", copied: "🧪",
+		 expected: "[***A😀<u></u>PB***](https://x)"),
+		(source: "[***Ae\u{301}<u></u>👩‍💻B***](https://x)", direction: "backward",
+		 copied: "e\u{301}", expected: "[***AP<u></u>👩‍💻B***](https://x)"),
+		(source: "[***Ae\u{301}<u></u>👩‍💻B***](https://x)", direction: "forward",
+		 copied: "👩‍💻", expected: "[***Ae\u{301}<u></u>PB***](https://x)"),
+	])
+	func selectingAComposedCharacterFromADeepRestoredCaretCopiesAndPastesItWhole(
+		source: String,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 10, token: 727))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep composed-character caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "10"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"direction=\(direction)")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("composed-character Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await Task.sleep(for: .milliseconds(200))
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"Copy collapsed the composed-character selection for direction=\(direction)")
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("composed-character Paste source result") {
+				harness.source == expected
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [8, 12, 15, 19])
+	func selectingFromEveryCaretInADeepEmptyWrapperClusterPreservesBothWrappers(
+		caret: Int
+	) async throws {
+		let source = "[***A<u></u><u></u>B***](https://x)"
+		for (key, direction, copied, expected) in [
+			("ArrowLeft", "backward", "A", "[***P<u></u><u></u>B***](https://x)"),
+			("ArrowRight", "forward", "B", "[***A<u></u><u></u>P***](https://x)"),
+		] {
+			let harness = try await CoordinatorBridgeHarness(source: "Seed")
+			harness.focusWebView()
+			harness.coordinator.parent = MarkdownWebView(
+				text: source, theme: .default, fontSize: 15)
+				.editable(true)
+				.caretTarget(MarkdownCaretTarget(offset: caret, token: 733 + caret))
+				.onSourceEdit { [weak harness] newText, _ in
+					harness?.recordExternalEdit(newText)
+				}
+			harness.coordinator.applyCaretTarget()
+			harness.coordinator.load(into: harness.webView)
+			harness.adoptHostText(source)
+			try await harness.waitUntil("deep selectable wrapper-cluster caret") {
+				try await harness.evaluate("""
+					(function () {
+					  var home = document.querySelector('[data-md-inline-caret-home]')
+					  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+					})()
+					""") == String(caret)
+			}
+			harness.rewireRoundTrip()
+			try await harness.run("""
+				var arrow = new KeyboardEvent('keydown', {
+				  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+				})
+				if (document.body.dispatchEvent(arrow)) {
+				  window.getSelection().modify('extend', '\(direction)', 'character')
+				}
+				""")
+
+			#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+				"direction=\(direction), caret=\(caret)")
+			try await withClearedPasteboard {
+				try await performResponderCommand(.copy, in: harness)
+				try await harness.waitUntil("wrapper-cluster Copy pasteboard delivery") {
+					TestPasteboard.string != nil
+				}
+				#expect(TestPasteboard.string == copied,
+					"direction=\(direction), caret=\(caret)")
+			}
+			try await Task.sleep(for: .milliseconds(200))
+			#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+				"Copy collapsed the wrapper-cluster selection for direction=\(direction), caret=\(caret)")
+			try await withPasteboard("P") {
+				try await performResponderCommand(.paste, in: harness)
+				try await harness.waitUntil("wrapper-cluster Paste source result") {
+					harness.source == expected
+				}
+			}
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == expected, "direction=\(direction), caret=\(caret)")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test(arguments: [
+		(source: "[***A\t<u></u>B***](https://x)", caret: 9,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "\t",
+		 expected: "[***AP<u></u>B***](https://x)"),
+		(source: "[***A<u></u>\tB***](https://x)", caret: 8,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\t",
+		 expected: "[***A<u></u>PB***](https://x)"),
+		(source: "[***A\u{00A0}<u></u>B***](https://x)", caret: 9,
+		 key: "ArrowLeft", direction: "backward", publicCopy: " ",
+		 expected: "[***AP<u></u>B***](https://x)"),
+		(source: "[***A<u></u>\u{00A0}B***](https://x)", caret: 8,
+		 key: "ArrowRight", direction: "forward", publicCopy: " ",
+		 expected: "[***A<u></u>PB***](https://x)"),
+	])
+	func selectingInvisibleWhitespaceFromADeepRestoredCaretCopiesAndReplacesItsSource(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 801 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep invisible-whitespace caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("invisible-whitespace Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy,
+				"direction=\(direction), source=\(String(reflecting: source))")
+		}
+		try await Task.sleep(for: .milliseconds(200))
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("invisible-whitespace Paste source result") {
+				harness.source == expected
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected,
+			"direction=\(direction), source=\(String(reflecting: source))")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "[***A\t<u></u>B***](https://x)", caret: 9,
+		 key: "ArrowLeft", direction: "backward"),
+		(source: "[***A<u></u>\tB***](https://x)", caret: 8,
+		 key: "ArrowRight", direction: "forward"),
+	])
+	func cuttingAndPastingATabFromADeepRestoredCaretRoundTripsExactSource(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String
+	) async throws {
+		let afterCut = "[***A<u></u>B***](https://x)"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 821 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("deep tab Cut caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("deep tab Cut source result") {
+				harness.source == afterCut
+			}
+			try await harness.waitQuiescent()
+			try await harness.waitUntil("deep tab private source flavor") {
+				TestPasteboard.source != nil
+			}
+			#expect(TestPasteboard.source == "\t", "direction=\(direction)")
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("deep tab Paste source result") {
+				harness.source == source
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n", publicCopy: "\n\n"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n", publicCopy: "\n\n"),
+		(source: "Head  \n \t\n<u></u>Tail", caret: 13,
+		 key: "ArrowLeft", direction: "backward", boundary: "  \n \t\n", publicCopy: "  \n \t\n"),
+		(source: "Head<u></u>  \n \t\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "  \n \t\n", publicCopy: "  \n \t\n"),
+		(source: "Head\n\n- <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n- ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n- Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n- ", publicCopy: "\n"),
+		(source: "Head\n\n> <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n> ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n> Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n> ", publicCopy: "\n"),
+		(source: "Head\n\n1. <u></u>Tail", caret: 12,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n1. ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n1. Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n1. ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n- [ ] Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n- [ ] ", publicCopy: "\n"),
+		(source: "Head\n\n# <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n# ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n# Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n# ", publicCopy: "\n"),
+		(source: "Head\n\n> - <u></u>Tail", caret: 13,
+		 key: "ArrowLeft", direction: "backward", boundary: "\n\n> - ", publicCopy: "\n"),
+		(source: "Head<u></u>\n\n> - Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", boundary: "\n\n> - ", publicCopy: "\n"),
+	])
+	func shiftArrowCopyCutPasteAcrossAWrapperBlockBoundaryRoundTripsTheSeparator(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		boundary: String,
+		publicCopy: String
+	) async throws {
+		let afterCut = "Head<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 861 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("block-separator Shift-arrow caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("block-separator Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+			#expect(try await harness.evaluate(
+				"window.getSelection().toString().replace(/\\u200B/g, '')"
+			) == "\n", "Copy collapsed the separator selection")
+
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("block-separator Cut source result") {
+				harness.source == afterCut
+			}
+			try await harness.waitQuiescent()
+			try await harness.waitUntil("block-separator private source flavor") {
+				TestPasteboard.source != nil
+			}
+			#expect(TestPasteboard.source == boundary, "direction=\(direction)")
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("block-separator Paste source result") {
+				harness.source == source
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Head\n\n<u></u><u></u>Tail", caret: 16,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "d\n",
+		 selectedSource: "d\n\n", afterCut: "Hea<u></u><u></u>Tail"),
+		(source: "Head<u></u><u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nT",
+		 selectedSource: "\n\nT", afterCut: "Head<u></u><u></u>ail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "d\n",
+		 selectedSource: "d**\n\n", afterCut: "**Bol**<u></u><u></u>Tail"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nI",
+		 selectedSource: "\n\n*I", afterCut: "Head<u></u><u></u>*talic*"),
+		(source: "Head<u></u><u></u>\n\n***Both***", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nB",
+		 selectedSource: "\n\n***B", afterCut: "Head<u></u><u></u>***oth***"),
+		(source: "Head<u></u><u></u>\n\n[Link](https://x.test)", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nL",
+		 selectedSource: "\n\n[L", afterCut: "Head<u></u><u></u>[ink](https://x.test)"),
+		(source: "Head<u></u><u></u>\n\n<u>Mark</u>", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nM",
+		 selectedSource: "\n\n<u>M", afterCut: "Head<u></u><u></u><u>ark</u>"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "k\n",
+		 selectedSource: "k](https://x.test)\n\n",
+		 afterCut: "[Lin](https://x.test)<u></u><u></u>Tail"),
+		(source: "<u>Mark</u>\n\n<u></u><u></u>Tail", caret: 23,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "k\n",
+		 selectedSource: "k</u>\n\n", afterCut: "<u>Mar</u><u></u><u></u>Tail"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "d\n",
+		 selectedSource: "d\n\n", afterCut: "Hea<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nT",
+		 selectedSource: "\n\nT", afterCut: "Head<u></u>ail"),
+		(source: "Head\n\n- <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0, publicCopy: "d\n",
+		 selectedSource: "d\n\n- ", afterCut: "Hea<u></u>Tail"),
+		(source: "Head<u></u>\n\n- Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0, publicCopy: "\nT",
+		 selectedSource: "\n\n- T", afterCut: "Head<u></u>ail"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 0, publicCopy: "ad\n",
+		 selectedSource: "ad\n\n", afterCut: "He<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 0, publicCopy: "\nTa",
+		 selectedSource: "\n\nTa", afterCut: "Head<u></u>il"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 1,
+		 publicCopy: "\n\n", selectedSource: "\n\n", afterCut: "Head<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 1,
+		 publicCopy: "\n\n", selectedSource: "\n\n", afterCut: "Head<u></u>Tail"),
+		(source: "Head\n\n- <u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 1,
+		 publicCopy: "\n", selectedSource: "\n\n- ", afterCut: "Head<u></u>Tail"),
+		(source: "Head<u></u>\n\n- Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 1,
+		 publicCopy: "\n", selectedSource: "\n\n- ", afterCut: "Head<u></u>Tail"),
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
+		 publicCopy: "d\n", selectedSource: "d\n\n", afterCut: "Hea<u></u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
+		 publicCopy: "\nT", selectedSource: "\n\nT", afterCut: "Head<u></u>ail"),
+		(source: "He😀\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "😀\n", selectedSource: "😀\n\n", afterCut: "He<u></u>Tail"),
+		(source: "Head<u></u>\n\n👩‍💻Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\n👩‍💻", selectedSource: "\n\n👩‍💻", afterCut: "Head<u></u>Tail"),
+		(source: "Head\\*\n\n<u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 1, reversals: 0,
+		 publicCopy: "\n\n", selectedSource: "\n\n", afterCut: "Head\\*<u></u>Tail"),
+		(source: "Head\\*\n\n<u></u>Tail", caret: 11,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "*\n", selectedSource: "\\*\n\n", afterCut: "Head<u></u>Tail"),
+		(source: "Head<u></u>\n\n\\*Tail", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\n*", selectedSource: "\n\n\\*", afterCut: "Head<u></u>Tail"),
+		(source: "**Bold**\n\n<u></u>Tail", caret: 13,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "d\n", selectedSource: "d**\n\n", afterCut: "**Bol**<u></u>Tail"),
+		(source: "Head<u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\nI", selectedSource: "\n\n*I", afterCut: "Head<u></u>*talic*"),
+		(source: "***Bold***\n\n<u></u>Tail", caret: 15,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "d\n", selectedSource: "d***\n\n", afterCut: "***Bol***<u></u>Tail"),
+		(source: "Head<u></u>\n\n***Both***", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\nB", selectedSource: "\n\n***B", afterCut: "Head<u></u>***oth***"),
+		(source: "Head<u></u>\n\n[Link](https://x.test)", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\nL", selectedSource: "\n\n[L",
+		 afterCut: "Head<u></u>[ink](https://x.test)"),
+		(source: "[Link](https://x.test)\n\n<u></u>Tail", caret: 27,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "k\n", selectedSource: "k](https://x.test)\n\n",
+		 afterCut: "[Lin](https://x.test)<u></u>Tail"),
+		(source: "Head<u></u>\n\n<u>Mark</u>", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 publicCopy: "\nM", selectedSource: "\n\n<u>M",
+		 afterCut: "Head<u></u><u>ark</u>"),
+		(source: "<u>Mark</u>\n\n<u></u>Tail", caret: 16,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 publicCopy: "k\n", selectedSource: "k</u>\n\n",
+		 afterCut: "<u>Mar</u><u></u>Tail"),
+	])
+	func repeatedShiftArrowAcrossAWrapperBlockBoundaryRoundTripsVisibleAndHiddenSource(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		extensions: Int,
+		reversals: Int,
+		publicCopy: String,
+		selectedSource: String,
+		afterCut: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 881 + caret))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("repeated Shift-arrow caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < \(extensions); index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			for (var reversal = 0; reversal < \(reversals); reversal++) {
+			  var reverseKey = '\(key)' === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft'
+			  var reverseDirection = '\(direction)' === 'backward' ? 'forward' : 'backward'
+			  var reverseArrow = new KeyboardEvent('keydown', {
+			    key: reverseKey, shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(reverseArrow)) {
+			    window.getSelection().modify('extend', reverseDirection, 'character')
+			  }
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("repeated Shift-arrow Copy delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitUntil("repeated Shift-arrow Cut source result") {
+				harness.source == afterCut
+			}
+			try await harness.waitQuiescent()
+			try await harness.waitUntil("repeated Shift-arrow private source flavor") {
+				TestPasteboard.source != nil
+			}
+			#expect(TestPasteboard.source == selectedSource, "direction=\(direction)")
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitUntil("repeated Shift-arrow Paste source result") {
+				harness.source == source
+			}
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 afterTyping: "**Bold**\n\n<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 afterTyping: "Head<u></u><u></u><u></u>\n\n*IXtalic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 afterTyping: "**Bold**\n\n<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 afterTyping: "Head<U></U><u></u>\n\n*IXtalic*"),
+		(source: "[***Bold*** ](https://x.test)  \n\n<u></u><u></u>Tail", caret: 43,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 afterTyping: "[***Bold*** ](https://x.test)  \n\n<u></u><u>X</u>Tail"),
+		(source: "<u>**Bold** </u>\n\n<u></u><u></u>Tail", caret: 28,
+		 key: "ArrowLeft", direction: "backward", extensions: 2, reversals: 0,
+		 afterTyping: "<u>**Bold** </u>\n\n<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\n[ ***Bold***](https://x.test)", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
+		 afterTyping: "Head<u></u><u></u>\n\n[ ***BXold***](https://x.test)"),
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
+		 afterTyping: "**Bold**\n\n<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
+		 afterTyping: "Head<u></u><u></u><u></u>\n\n*IXtalic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
+		 afterTyping: "**Bold**\n\n<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", extensions: 3, reversals: 1,
+		 afterTyping: "Head<U></U><u></u>\n\n*IXtalic*"),
+	])
+	func characterCutPasteAcrossAWrapperClusterRestoresTheDirectionalCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		extensions: Int,
+		reversals: Int,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 884 + caret, in: harness)
+		try await harness.waitUntil("cluster character caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < \(extensions); index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			for (var index = 0; index < \(reversals); index++) {
+			  var reverseKey = '\(key)' === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft'
+			  var reverseDirection = '\(direction)' === 'backward' ? 'forward' : 'backward'
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: reverseKey, shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', reverseDirection, 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == source, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward",
+		 afterSecondPaste: "**Bold**\n\n<u></u><u></u>Taild**\n\n"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterSecondPaste: "Head<u></u><u></u>\n\n*Italic*\n\n*I"),
+	])
+	func reusedBoundaryCutClipboardPastesOrdinarilyAfterItsOriginIsConsumed(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		afterSecondPaste: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 912 + caret, in: harness)
+		try await harness.waitUntil("reused boundary clipboard caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == source, "direction=\(direction)")
+
+			try await harness.run("window.__mdPlaceCaret(\((source as NSString).length));")
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(3)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == afterSecondPaste, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", operation: "cut",
+		 afterCut: "**Bol**<u></u><u></u><u></u>Tail",
+		 afterTyping: "**Bol**<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward", operation: "cut",
+		 afterCut: "Head<u></u><u></u><u></u>*talic*",
+		 afterTyping: "Head<u></u><u>X</u><u></u>*talic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", operation: "cut",
+		 afterCut: "**Bol**<U></U><u></u>Tail",
+		 afterTyping: "**Bol**<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", operation: "cut",
+		 afterCut: "Head<U></U><u></u>*talic*",
+		 afterTyping: "Head<U>X</U><u></u>*talic*"),
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", operation: "delete",
+		 afterCut: "**Bol**<u></u><u></u><u></u>Tail",
+		 afterTyping: "**Bol**<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward", operation: "delete",
+		 afterCut: "Head<u></u><u></u><u></u>*talic*",
+		 afterTyping: "Head<u></u><u>X</u><u></u>*talic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", operation: "delete",
+		 afterCut: "**Bol**<U></U><u></u>Tail",
+		 afterTyping: "**Bol**<U></U><u>X</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", operation: "delete",
+		 afterCut: "Head<U></U><u></u>*talic*",
+		 afterTyping: "Head<U>X</U><u></u>*talic*"),
+	])
+	func typingAfterACharacterBoundaryRemovalStaysAtTheActiveClusterWrapper(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		operation: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 944 + caret, in: harness)
+		try await harness.waitUntil("direct boundary Cut caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		if operation == "cut" {
+			try await withClearedPasteboard {
+				try await performResponderCommand(.cut, in: harness)
+				try await harness.waitForSourceEdits(1)
+			}
+		} else {
+			try await harness.run("document.execCommand('delete')")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward",
+		 afterPaste: "**Bol**<u></u><u>NEW</u><u></u>Tail",
+		 afterTyping: "**Bol**<u></u><u>NEWX</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\n*Italic*", caret: 14,
+		 key: "ArrowRight", direction: "forward",
+		 afterPaste: "Head<u></u><u>NEW</u><u></u>*talic*",
+		 afterTyping: "Head<u></u><u>NEWX</u><u></u>*talic*"),
+		(source: "**Bold**\n\n<U></U><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward",
+		 afterPaste: "**Bol**<U></U><u>NEW</u>Tail",
+		 afterTyping: "**Bol**<U></U><u>NEWX</u>Tail"),
+		(source: "Head<U></U><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterPaste: "Head<U>NEW</U><u></u>*talic*",
+		 afterTyping: "Head<U>NEWX</U><u></u>*talic*"),
+	])
+	func replacingTheClipboardAfterBoundaryCutUsesTheNewPlainTextAtTheActiveWrapper(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		afterPaste: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 976 + caret, in: harness)
+		try await harness.waitUntil("replacement clipboard Cut caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			TestPasteboard.string = "NEW"
+			#expect(TestPasteboard.source == nil)
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterPaste, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "d\n",
+		 selectedSource: "d**\n\n"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\nI",
+		 selectedSource: "\n\n*I"),
+	])
+	func copyOnlyPartialBoundarySelectionPastesCleanPublicTextAtADistantCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		selectedSource: String
+	) async throws {
+		#expect(selectedSource != publicCopy)
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1008 + caret, in: harness)
+		try await harness.waitUntil("Copy-only boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-only public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+			#expect(TestPasteboard.source == nil, "direction=\(direction)")
+			#expect(harness.source == source, "direction=\(direction)")
+
+			try await harness.run("window.__mdPlaceCaret(\((source as NSString).length));")
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == source + publicCopy, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "d\n",
+		 afterReplacement: "**BolX**<u></u><u></u>Tail",
+		 afterTyping: "**BolXY**<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "k\n",
+		 afterReplacement: "[LinX](https://x.test)<u></u><u></u>Tail",
+		 afterTyping: "[LinXY](https://x.test)<u></u><u></u>Tail"),
+		(source: "<u>Mark</u>\n\n<u></u><u></u>Tail", caret: 23,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "k\n",
+		 afterReplacement: "<u>MarX</u><u></u><u></u>Tail",
+		 afterTyping: "<u>MarXY</u><u></u><u></u>Tail"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\nI",
+		 afterReplacement: "Head<u></u><u></u>X*talic*",
+		 afterTyping: "Head<u></u><u></u>XY*talic*"),
+	])
+	func typingAfterCopyingAPartialBoundarySelectionKeepsItsCanonicalReplacement(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1040 + caret, in: harness)
+		try await harness.waitUntil("Copy-then-replace boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-then-replace public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+			#expect(TestPasteboard.source == nil, "direction=\(direction)")
+			try await harness.type("X")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement, "direction=\(direction)")
+
+		try await harness.type("Y")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "ld\n",
+		 afterReplacement: "**BoX**<u></u><u></u>Tail",
+		 afterTyping: "**BoXY**<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 key: "ArrowLeft", direction: "backward", publicCopy: "nk\n",
+		 afterReplacement: "[LiX](https://x.test)<u></u><u></u>Tail",
+		 afterTyping: "[LiXY](https://x.test)<u></u><u></u>Tail"),
+		(source: "Head<u></u><u></u>\n\n*Italic*", caret: 7,
+		 key: "ArrowRight", direction: "forward", publicCopy: "\nIt",
+		 afterReplacement: "Head<u></u><u></u>X*alic*",
+		 afterTyping: "Head<u></u><u></u>XY*alic*"),
+	])
+	func replacementTextAfterCopyingALargerBoundarySelectionKeepsSyntaxAndCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		publicCopy: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1072 + caret, in: harness)
+		try await harness.waitUntil("Copy-then-substitute boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 3; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-then-substitute public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
+			#expect(TestPasteboard.source == nil, "direction=\(direction)")
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertReplacementText', data: 'X',
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement, "direction=\(direction)")
+
+		try await harness.type("Y")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: " ",
+		 afterReplacement: "**Bol** <u></u><u></u>Tail",
+		 afterTyping: "**Bol** X<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "\t",
+		 afterReplacement: "**Bol**\t<u></u><u></u>Tail",
+		 afterTyping: "**Bol**\tX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "\n",
+		 afterReplacement: "**Bol**\n<u></u><u></u>Tail",
+		 afterTyping: "**Bol**\nX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R ",
+		 afterReplacement: "**BolR** <u></u><u></u>Tail",
+		 afterTyping: "**BolR** X<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: " R\t",
+		 afterReplacement: "**Bol R**\t<u></u><u></u>Tail",
+		 afterTyping: "**Bol R**\tX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\n\nS",
+		 afterReplacement: "**BolR**\n\nS<u></u><u></u>Tail",
+		 afterTyping: "**BolR**\n\nSX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R \nS",
+		 afterReplacement: "**BolR** \nS<u></u><u></u>Tail",
+		 afterTyping: "**BolR** \nSX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\rS",
+		 afterReplacement: "**BolR**\rS<u></u><u></u>Tail",
+		 afterTyping: "**BolR**\rSX<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\u{2003}",
+		 afterReplacement: "**BolR**\u{2003}<u></u><u></u>Tail",
+		 afterTyping: "**BolR**\u{2003}X<u></u><u></u>Tail"),
+		(source: "**Bold**\n\n<u></u><u></u>Tail", caret: 20,
+		 publicCopy: "d\n", replacement: "R\u{00A0}",
+		 afterReplacement: "**BolR** <u></u><u></u>Tail",
+		 afterTyping: "**BolR** X<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 publicCopy: "k\n", replacement: " ",
+		 afterReplacement: "[Lin](https://x.test) <u></u><u></u>Tail",
+		 afterTyping: "[Lin](https://x.test) X<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 publicCopy: "k\n", replacement: "R ",
+		 afterReplacement: "[LinR](https://x.test) <u></u><u></u>Tail",
+		 afterTyping: "[LinR](https://x.test) X<u></u><u></u>Tail"),
+		(source: "[Link](https://x.test)\n\n<u></u><u></u>Tail", caret: 34,
+		 publicCopy: "k\n", replacement: "R\n\nS",
+		 afterReplacement: "[LinR](https://x.test)\n\nS<u></u><u></u>Tail",
+		 afterTyping: "[LinR](https://x.test)\n\nSX<u></u><u></u>Tail"),
+		(source: "[***Bold***](https://x.test)\n\n<u></u><u></u>Tail", caret: 40,
+		 publicCopy: "d\n", replacement: "R ",
+		 afterReplacement: "[***BolR***](https://x.test) <u></u><u></u>Tail",
+		 afterTyping: "[***BolR***](https://x.test) X<u></u><u></u>Tail"),
+		(source: "[***Bold***](https://x.test)\n\n<u></u><u></u>Tail", caret: 40,
+		 publicCopy: "d\n", replacement: "R\n\nS",
+		 afterReplacement: "[***BolR***](https://x.test)\n\nS<u></u><u></u>Tail",
+		 afterTyping: "[***BolR***](https://x.test)\n\nSX<u></u><u></u>Tail"),
+		(source: "[***Bold***](https://x.test)  \n\n<u></u><u></u>Tail", caret: 42,
+		 publicCopy: "d\n", replacement: "R ",
+		 afterReplacement: "[***BolR***](https://x.test) <u></u><u></u>Tail",
+		 afterTyping: "[***BolR***](https://x.test) X<u></u><u></u>Tail"),
+		(source: "[***Bold***](https://x.test)  \n\n<u></u><u></u>Tail", caret: 42,
+		 publicCopy: "d\n", replacement: "R\n\nS",
+		 afterReplacement: "[***BolR***](https://x.test)\n\nS<u></u><u></u>Tail",
+		 afterTyping: "[***BolR***](https://x.test)\n\nSX<u></u><u></u>Tail"),
+		(source: "[***Bold***](https://x.test)\t\n\n<u></u><u></u>Tail", caret: 41,
+		 publicCopy: "d\n", replacement: "R\t",
+		 afterReplacement: "[***BolR***](https://x.test)\t<u></u><u></u>Tail",
+		 afterTyping: "[***BolR***](https://x.test)\tX<u></u><u></u>Tail"),
+		(source: "<u>Mark</u>\n\n<u></u><u></u>Tail", caret: 23,
+		 publicCopy: "k\n", replacement: " ",
+		 afterReplacement: "<u>Mar</u> <u></u><u></u>Tail",
+		 afterTyping: "<u>Mar</u> X<u></u><u></u>Tail"),
+		(source: "<u>**Bold**</u>\n\n<u></u><u></u>Tail", caret: 27,
+		 publicCopy: "d\n", replacement: "R ",
+		 afterReplacement: "<u>**BolR**</u> <u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u> X<u></u><u></u>Tail"),
+		(source: "<u>**Bold**</u>\n\n<u></u><u></u>Tail", caret: 27,
+		 publicCopy: "d\n", replacement: "R\n\nS",
+		 afterReplacement: "<u>**BolR**</u>\n\nS<u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u>\n\nSX<u></u><u></u>Tail"),
+		(source: "<u>**Bold**</u>  \n\n<u></u><u></u>Tail", caret: 29,
+		 publicCopy: "d\n", replacement: "R ",
+		 afterReplacement: "<u>**BolR**</u> <u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u> X<u></u><u></u>Tail"),
+		(source: "<u>**Bold** </u>\n\n<u></u><u></u>Tail", caret: 28,
+		 publicCopy: "d \n", replacement: "R ",
+		 afterReplacement: "<u>**BolR**</u> <u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u> X<u></u><u></u>Tail"),
+		(source: "<u>**Bold**\t</u>\t\n\n<u></u><u></u>Tail", caret: 29,
+		 publicCopy: "d\t\n", replacement: "R\n\nS",
+		 afterReplacement: "<u>**BolR**</u>\n\nS<u></u><u></u>Tail",
+		 afterTyping: "<u>**BolR**</u>\n\nSX<u></u><u></u>Tail"),
+	])
+	func whitespaceReplacementAfterCopyingABackwardBoundaryClosesSyntaxFirst(
+		source: String,
+		caret: Int,
+		publicCopy: String,
+		replacement: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 1104 + caret, in: harness)
+		try await harness.waitUntil("Copy-then-whitespace boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'backward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Copy-then-whitespace public flavor") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == publicCopy)
+			#expect(TestPasteboard.source == nil)
+			try await harness.type(replacement)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement)
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func substitutionOverWhitespaceAtANestedLinkBoundaryPreservesBothClosers() async throws {
+		let source = "[***Bold*** ](https://x.test)  \n\n<u></u><u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 43, token: 1163, in: harness)
+		try await harness.waitUntil("Nested-link whitespace boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'backward', 'character')
+			  }
+			}
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Nested-link whitespace public flavor") {
+				TestPasteboard.string == " \n"
+			}
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertReplacementText', data: 'R ',
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.coordinator.bridgeIncidents == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "[***Bold***R](https://x.test) <u></u><u></u>Tail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "[***Bold***R](https://x.test) X<u></u><u></u>Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(replacement: "R ",
+		 afterReplacement: "Head<u></u><u></u>R [***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u>R X[***old***](https://x.test)"),
+		(replacement: " R",
+		 afterReplacement: "Head<u></u><u></u> R[***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u> RX[***old***](https://x.test)"),
+		(replacement: "R\n\nS",
+		 afterReplacement: "Head<u></u><u></u>R\n\nS[***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u>R\n\nSX[***old***](https://x.test)"),
+		(replacement: "\t",
+		 afterReplacement: "Head<u></u><u></u>\t[***old***](https://x.test)",
+		 afterTyping: "Head<u></u><u></u>\tX[***old***](https://x.test)"),
+	])
+	func replacementAcrossAForwardNestedBoundaryPreservesAllOpeners(
+		replacement: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let source = "Head<u></u><u></u>\n\n[ ***Bold***](https://x.test)"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 7, token: 1171 + (replacement as NSString).length, in: harness)
+		try await harness.waitUntil("Forward nested boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'forward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("Forward nested boundary public flavor") {
+				TestPasteboard.string == "\n B"
+			}
+			try await harness.type(replacement)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement)
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.bridgeIncidents == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func CRLFReplacementTextClosesBackwardBoundarySyntaxBeforeTheBreak() async throws {
+		let source = "**Bold**\n\n<u></u><u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 20, token: 1136, in: harness)
+		try await harness.waitUntil("CRLF substitution boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'backward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("CRLF substitution public flavor") {
+				TestPasteboard.string == "d\n"
+			}
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertReplacementText', data: 'R\\r\\nS',
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "**BolR**\r\nS<u></u><u></u>Tail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "**BolR**\r\nSX<u></u><u></u>Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Head\n\n<u></u>Tail", caret: 9,
+		 key: "ArrowLeft", direction: "backward",
+		 expected: "Head\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nTail", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 expected: "Head<u>X</u>\n\nTail"),
+	])
+	func fullyContractingARepeatedBoundarySelectionReturnsToTheWrapperCaret(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 882 + caret, in: harness)
+		try await harness.waitUntil("full boundary contraction caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		let reverseKey = key == "ArrowLeft" ? "ArrowRight" : "ArrowLeft"
+		let reverseDirection = direction == "backward" ? "forward" : "backward"
+		try await harness.run("""
+			for (var index = 0; index < 3; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			for (var index = 0; index < 3; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(reverseKey)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(reverseDirection)', 'character')
+			  }
+			}
+			""")
+		#expect(try await harness.evaluate("String(window.getSelection().isCollapsed)") == "true")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "[Link](https://x.test)\n\n<u></u>Tail", caret: 27,
+		 key: "ArrowLeft", direction: "backward",
+		 afterDelete: "[Lin](https://x.test)<u></u>Tail",
+		 afterTyping: "[Lin](https://x.test)<u>X</u>Tail"),
+		(source: "Head<u></u>\n\n[Link](https://x.test)", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterDelete: "Head<u></u>[ink](https://x.test)",
+		 afterTyping: "Head<u>X</u>[ink](https://x.test)"),
+		(source: "<u>Mark</u>\n\n<u></u>Tail", caret: 16,
+		 key: "ArrowLeft", direction: "backward",
+		 afterDelete: "<u>Mar</u><u></u>Tail",
+		 afterTyping: "<u>Mar</u><u>X</u>Tail"),
+		(source: "Head<u></u>\n\n<u>Mark</u>", caret: 7,
+		 key: "ArrowRight", direction: "forward",
+		 afterDelete: "Head<u></u><u>ark</u>",
+		 afterTyping: "Head<u>X</u><u>ark</u>"),
+	])
+	func deletingAnAsymmetricStyledBoundaryKeepsSyntaxBalancedAndCaretTypable(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		afterDelete: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 883 + caret, in: harness)
+		try await harness.waitUntil("asymmetric selected-deletion caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			document.execCommand('delete')
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterDelete, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func copyingAPartialLinkBoundaryPastesCleanPublicTextElsewhere() async throws {
+		let source = "Start here\n\nHead<u></u>\n\n[Link](https://x.test)"
+		let caret = (source as NSString).range(of: "<u></u>").location + 3
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 910, in: harness)
+		try await harness.waitUntil("partial-link Copy boundary caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < 2; index++) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', 'forward', 'character')
+			  }
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("partial-link Copy delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == "\nL")
+			#expect(MarkdownPasteboard.source == nil)
+			#expect(harness.source == source)
+
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		let afterPaste = "Start\nL here\n\nHead<u></u>\n\n[Link](https://x.test)"
+		#expect(harness.source == afterPaste)
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Start\nLQ here\n\nHead<u></u>\n\n[Link](https://x.test)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(direction: "backward", expected: "AlphP<u></u> Tail"),
+		(direction: "forward", expected: "Alpha<u></u>PTail"),
+	])
+	func pasteOverASelectionExtendedFromAnEmptyUnderlineCaretReplacesVisibleText(
+		direction: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(direction: "backward", copied: "ha", expected: "AlpP<u></u> Bravo"),
+		(direction: "forward", copied: " B", expected: "Alpha<u></u>Pravo"),
+	])
+	func pasteOverTwoCharactersExtendedFromAnEmptyUnderlineCaret(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Bravo")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			for (var index = 0; index < 2; index += 1) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', '\(direction)', 'character')
+			  }
+			}
+			""")
+
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"direction=\(direction)")
+		try await withPasteboard("P") {
+			try await harness.run("""
+				document.body.dispatchEvent(new InputEvent('beforeinput', {
+				  inputType: 'insertFromPaste', bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(direction: "backward", copied: "a", expected: "AlphP<u></u> Tail"),
+		(direction: "forward", copied: " ", expected: "Alpha<u></u>PTail"),
+	])
+	func pasteOverASelectionFromAHostRestoredPostWrapperCaretReplacesVisibleText(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 705))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied)
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha P<u></u> charlie"),
+		(source: "alpha **Bravo**<u></u> charlie", caret: 18,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha P<u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo** charlie", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P charlie"),
+		(source: "alpha ***Bravo***<u></u> charlie", caret: 20,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha P<u></u> charlie"),
+		(source: "Alpha<u></u>  Bravo charlie", caret: 12,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 18,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha P<u></u> charlie"),
+		(source: "alpha **Bravo**<u></u> charlie", caret: 22,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha P<u></u> charlie"),
+		(source: "A<u></u><u></u>  Bravo charlie", caret: 15,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "A<u></u><u></u>P charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha **Bravo P**<u></u> Delta"),
+		(source: "Alpha<u></u>  <u>Bravo charlie</u> Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P <u>charlie</u> Delta"),
+		(source: "alpha <u>Bravo charlie</u><u></u> Delta", caret: 29,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha <u>Bravo P</u><u></u> Delta"),
+		(source: "Alpha<u></u>  [Bravo charlie](https://x) Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u>P [charlie](https://x) Delta"),
+		(source: "alpha [Bravo charlie](https://x)<u></u> Delta", caret: 35,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha [Bravo P](https://x)<u></u> Delta"),
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", copied: "Bravo",
+		 expected: "Alpha P<u></u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", copied: "Bravo",
+		 expected: "Head<u></u>P Tail"),
+	])
+	func optionShiftSelectionFromAnEmptyUnderlineCaretCopiesAndReplacesTheVisibleWord(
+		source: String,
+		caret: Int,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 715, in: harness)
+		try await harness.waitUntil("empty-wrapper word-selection caret") {
+			try await harness.evaluate("""
+				String(!!document.querySelector('[data-md-inline-caret-home]'))
+				""") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("word selection Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha <u></u> charlie"),
+		(source: "alpha **Bravo**<u></u> charlie", caret: 18,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha <u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo** charlie", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> charlie"),
+		(source: "alpha ***Bravo***<u></u> charlie", caret: 20,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha <u></u> charlie"),
+		(source: "Alpha<u></u>  Bravo charlie", caret: 12,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 18,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha <u></u> charlie"),
+		(source: "alpha **Bravo**<u></u> charlie", caret: 22,
+		 direction: "backward", copied: "Bravo",
+		 expected: "alpha <u></u> charlie"),
+		(source: "A<u></u><u></u>  Bravo charlie", caret: 15,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "A<u></u><u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha **Bravo** <u></u> Delta"),
+		(source: "Alpha<u></u>  <u>Bravo charlie</u> Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> <u>charlie</u> Delta"),
+		(source: "alpha <u>Bravo charlie</u><u></u> Delta", caret: 29,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha <u>Bravo</u> <u></u> Delta"),
+		(source: "Alpha<u></u>  [Bravo charlie](https://x) Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> [charlie](https://x) Delta"),
+		(source: "alpha [Bravo charlie](https://x)<u></u> Delta", caret: 35,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha [Bravo](https://x) <u></u> Delta"),
+		(source: "Alpha<u></u>  ***[Bravo charlie](https://x)*** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> ***[charlie](https://x)*** Delta"),
+		(source: "alpha ***[Bravo charlie](https://x)***<u></u> Delta", caret: 41,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha ***[Bravo](https://x)*** <u></u> Delta"),
+		(source: "Alpha<u></u>  ***<u>Bravo charlie</u>*** Delta", caret: 8,
+		 direction: "forward", copied: "  Bravo",
+		 expected: "Alpha<u></u> ***<u>charlie</u>*** Delta"),
+		(source: "alpha ***<u>Bravo charlie</u>***<u></u> Delta", caret: 35,
+		 direction: "backward", copied: "charlie",
+		 expected: "alpha ***<u>Bravo</u>*** <u></u> Delta"),
+	])
+	func optionShiftCutFromAnEmptyUnderlineCaretDeletesOnlyTheVisibleWord(
+		source: String,
+		caret: Int,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 716, in: harness)
+		try await harness.waitUntil("empty-wrapper word-cut caret") {
+			try await harness.evaluate("""
+				String(!!document.querySelector('[data-md-inline-caret-home]'))
+				""") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == copied, "direction=\(direction)")
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>One\n\nTwo **charlie** Delta",
+		 afterTyping: "Alpha<u></u>One\n\nTwoX **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", expected: "alpha **Bravo** One\n\nTwo<u></u> Delta",
+		 afterTyping: "alpha **Bravo** One\n\nTwoX<u></u> Delta"),
+	])
+	func multilinePasteOverAPartialStyledWordSelectionKeepsTheRemainderBalanced(
+		source: String,
+		caret: Int,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 717, in: harness)
+		try await harness.waitUntil("partial styled multiline selection caret") {
+			try await harness.evaluate("""
+				String(!!document.querySelector('[data-md-inline-caret-home]'))
+				""") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P **charlie** Delta",
+		 afterTyping: "Alpha<u></u>PX **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", expected: "alpha **Bravo P**<u></u> Delta",
+		 afterTyping: "alpha **Bravo PX**<u></u> Delta"),
+		(source: "Alpha<u></u>  ***[Bravo charlie](https://x)*** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P ***[charlie](https://x)*** Delta",
+		 afterTyping: "Alpha<u></u>PX ***[charlie](https://x)*** Delta"),
+		(source: "alpha ***[Bravo charlie](https://x)***<u></u> Delta", caret: 41,
+		 direction: "backward", expected: "alpha ***[Bravo P](https://x)***<u></u> Delta",
+		 afterTyping: "alpha ***[Bravo PX](https://x)***<u></u> Delta"),
+		(source: "Alpha<u></u>  ***<u>Bravo charlie</u>*** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P ***<u>charlie</u>*** Delta",
+		 afterTyping: "Alpha<u></u>PX ***<u>charlie</u>*** Delta"),
+		(source: "alpha ***<u>Bravo charlie</u>***<u></u> Delta", caret: 35,
+		 direction: "backward", expected: "alpha ***<u>Bravo P</u>***<u></u> Delta",
+		 afterTyping: "alpha ***<u>Bravo PX</u>***<u></u> Delta"),
+		(source: "Alpha<u></u>  [***`Bravo charlie`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 expected: "Alpha<u></u>P [***`charlie`***](https://x) Delta",
+		 afterTyping: "Alpha<u></u>PX [***`charlie`***](https://x) Delta"),
+		(source: "alpha [***`Bravo charlie`***](https://x)<u></u> Delta", caret: 43,
+		 direction: "backward",
+		 expected: "alpha [***`Bravo P`***](https://x)<u></u> Delta",
+		 afterTyping: "alpha [***`Bravo PX`***](https://x)<u></u> Delta"),
+		(source: "Alpha<u></u>\t\t[***`Bravo\tcharlie`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 expected: "Alpha<u></u>P\t[***`charlie`***](https://x) Delta",
+		 afterTyping: "Alpha<u></u>PX\t[***`charlie`***](https://x) Delta"),
+		(source: "alpha [***`Bravo\tcharlie`***](https://x)<u></u> Delta", caret: 43,
+		 direction: "backward",
+		 expected: "alpha [***`Bravo\tP`***](https://x)<u></u> Delta",
+		 afterTyping: "alpha [***`Bravo\tPX`***](https://x)<u></u> Delta"),
+	])
+	func typingAfterPartialStyledWordPasteUsesTheVisibleReplacementCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 718, in: harness)
+		try await harness.waitUntil("partial styled paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0,
+			"resync=\(harness.coordinator.lastResyncReason ?? "none"), incidents=\(harness.coordinator.bridgeIncidents)")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", afterCut: "Alpha<u></u> **charlie** Delta",
+		 afterTyping: "Alpha<u>X</u> **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", afterCut: "alpha **Bravo** <u></u> Delta",
+		 afterTyping: "alpha **Bravo** <u>X</u> Delta"),
+		(source: "[***Alpha<u></u> Bravo charlie***](https://x) Delta", caret: 12,
+		 direction: "forward",
+		 afterCut: "[***Alpha<u></u> charlie***](https://x) Delta",
+		 afterTyping: "[***Alpha<u>X</u> charlie***](https://x) Delta"),
+		(source: "[***Alpha Bravo<u></u> charlie***](https://x) Delta", caret: 18,
+		 direction: "backward",
+		 afterCut: "[***Alpha <u></u> charlie***](https://x) Delta",
+		 afterTyping: "[***Alpha <u>X</u> charlie***](https://x) Delta"),
+		(source: "Alpha<u></u>  [***`Bravo charlie`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 afterCut: "Alpha<u></u> [***`charlie`***](https://x) Delta",
+		 afterTyping: "Alpha<u>X</u> [***`charlie`***](https://x) Delta"),
+		(source: "alpha [***`Bravo charlie`***](https://x)<u></u> Delta", caret: 43,
+		 direction: "backward",
+		 afterCut: "alpha [***`Bravo`***](https://x) <u></u> Delta",
+		 afterTyping: "alpha [***`Bravo`***](https://x) <u>X</u> Delta"),
+	])
+	func typingAfterPartialStyledWordCutReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 719, in: harness)
+		try await harness.waitUntil("partial styled Cut caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", afterCut: "Alpha<u></u> charlie",
+		 afterTyping: "Alpha<u>X</u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", afterCut: "alpha <u></u> charlie",
+		 afterTyping: "alpha <u>X</u> charlie"),
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", afterCut: "Alpha <u></u>Tail",
+		 afterTyping: "Alpha <u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", afterCut: "Head<u></u> Tail",
+		 afterTyping: "Head<u>X</u> Tail"),
+	])
+	func typingAfterPlainWordCutReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 722, in: harness)
+		try await harness.waitUntil("plain word Cut caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', '\(direction)', 'word')")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", moves: 1,
+		 expected: "Alpha Bravo\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 expected: "Head<u>X</u>\n\nBravo Tail"),
+		(source: "Alpha Bravo Charlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", moves: 2,
+		 expected: "Alpha Bravo Charlie\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 expected: "Head<u>X</u>\n\nBravo Charlie Tail"),
+		(source: "Alpha café\n\n<u></u>Tail", caret: 15,
+		 direction: "backward", moves: 1,
+		 expected: "Alpha café\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\n👩‍💻 Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 expected: "Head<u>X</u>\n\n👩‍💻 Tail"),
+		(source: "Alpha Bravo\n\n<u></u><u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 expected: "Alpha Bravo\n\n<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 expected: "Head<u>X</u><u></u>\n\nBravo Tail"),
+	])
+	func fullyReversingACrossBlockWordSelectionReturnsToTheStyledCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		moves: Int,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 724, in: harness)
+		try await harness.waitUntil("cross-block word reversal caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		#expect(try await harness.evaluate("""
+			(function () {
+			  var selection = window.getSelection()
+			  var node = selection && selection.anchorNode
+			  var element = node && node.nodeType === 1 ? node : node && node.parentElement
+			  return String(!!(element && element.closest('[data-md-inline-caret-home]')))
+			})()
+			""") == "true")
+		harness.rewireRoundTrip()
+		let reverse = direction == "backward" ? "forward" : "backward"
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		let reverseKey = direction == "backward" ? "ArrowRight" : "ArrowLeft"
+		try await harness.run("""
+			function optionShift(key, direction) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: key, altKey: true, shiftKey: true,
+			    bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', direction, 'word')
+			  }
+			}
+			for (var index = 0; index < \(moves); index++) {
+			  optionShift('\(key)', '\(direction)')
+			}
+			for (var index = 0; index < \(moves); index++) {
+			  optionShift('\(reverseKey)', '\(reverse)')
+			}
+			""")
+		#expect(try await harness.evaluate("String(window.getSelection().isCollapsed)") == "true")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha Bravo Charlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", afterDelete: "Alpha Bravo<u></u>Tail",
+		 afterTyping: "Alpha Bravo<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", afterDelete: "Head<u></u>Charlie Tail",
+		 afterTyping: "Head<u>X</u>Charlie Tail"),
+		(source: "Alpha Bravo Charlie\n\n<u></u><u></u>Tail", caret: 31,
+		 direction: "backward", afterDelete: "Alpha Bravo<u></u><u></u>Tail",
+		 afterTyping: "Alpha Bravo<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", afterDelete: "Head<u></u><u></u>Charlie Tail",
+		 afterTyping: "Head<u>X</u><u></u>Charlie Tail"),
+	])
+	func deletingAfterAPartialCrossBlockWordContractionKeepsTheStyledCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterDelete: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 725, in: harness)
+		try await harness.waitUntil("partial cross-block word contraction caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		let reverse = direction == "backward" ? "forward" : "backward"
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		let reverseKey = direction == "backward" ? "ArrowRight" : "ArrowLeft"
+		try await harness.run("""
+			function optionShift(key, direction) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: key, altKey: true, shiftKey: true,
+			    bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', direction, 'word')
+			  }
+			}
+			optionShift('\(key)', '\(direction)')
+			optionShift('\(key)', '\(direction)')
+			optionShift('\(reverseKey)', '\(reverse)')
+			document.execCommand('delete')
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterDelete, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [true, false])
+	func replacingTheSelectionClearsThePreviousStyledWordNavigationHome(
+		mouseDriven: Bool
+	) async throws {
+		let source = "Alpha Beta\n\nHead<u></u>\n\nBravo Tail"
+		let caret = (source as NSString).range(of: "<u></u>").location + 3
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 726, in: harness)
+		try await harness.waitUntil("stale word-navigation caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			function optionShift(key, direction) {
+			  var arrow = new KeyboardEvent('keydown', {
+			    key: key, altKey: true, shiftKey: true,
+			    bubbles: true, cancelable: true
+			  })
+			  if (document.body.dispatchEvent(arrow)) {
+			    window.getSelection().modify('extend', direction, 'word')
+			  }
+			}
+			optionShift('ArrowRight', 'forward')
+			\(mouseDriven ? """
+			document.body.dispatchEvent(new MouseEvent('mousedown', {
+			  bubbles: true, cancelable: true
+			}))
+			""" : "")
+			window.__mdPlaceCaret(0, 5)
+			optionShift('ArrowLeft', 'backward')
+			""")
+		#expect(try await harness.evaluate("String(window.getSelection().isCollapsed)") == "false")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "Alpha")
+
+		try await harness.type("P")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "P Beta\n\nHead<u></u>\n\nBravo Tail",
+			"mouseDriven=\(mouseDriven)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha Bravo\n\n<u></u>Tail", caret: 16,
+		 direction: "backward", moves: 1,
+		 afterTyping: "Alpha Bravo\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 afterTyping: "Head<u></u>\n\nBravoX Tail"),
+		(source: "Alpha Bravo\n\n<u></u><u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 afterTyping: "Alpha Bravo\n\n<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\nBravo Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 afterTyping: "Head<u></u><u></u>\n\nBravoX Tail"),
+		(source: "Alpha **Bravo**\n\n<u></u><u></u>Tail", caret: 27,
+		 direction: "backward", moves: 1,
+		 afterTyping: "Alpha **Bravo**\n\n<u></u><u>X</u>Tail"),
+		(source: "Head<u></u><u></u>\n\n**Bravo** Tail", caret: 7,
+		 direction: "forward", moves: 1,
+		 afterTyping: "Head<u></u><u></u>\n\n**BravoX** Tail"),
+		(source: "Alpha Bravo\n\n<u></u><u></u><u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 afterTyping: "Alpha Bravo\n\n<u></u><u>X</u><u></u>Tail"),
+		(source: "Head<u></u><u></u><u></u>\n\nBravo Tail", caret: 14,
+		 direction: "forward", moves: 1,
+		 afterTyping: "Head<u></u><u></u><u></u>\n\nBravoX Tail"),
+		(source: "Alpha Bravo\n\n<U></U><u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 afterTyping: "Alpha Bravo\n\n<U></U><u>X</u>Tail"),
+		(source: "Alpha Bravo Charlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo Charlie\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo Charlie Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\nBravo CharlieX Tail"),
+		(source: "Alpha Bravo\tCharlie\n\n<u></u>Tail", caret: 24,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo\tCharlie\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo\tCharlie Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\nBravo\tCharlieX Tail"),
+		(source: "Alpha Bravo  \ncontinuation\n\n<u></u>Tail", caret: 31,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo  \ncontinuation\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\nBravo  \ncontinuation Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\nBravo  \ncontinuationX Tail"),
+		(source: "Alpha **Bravo  \ncontinuation**\n\n<u></u>Tail", caret: 35,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha **Bravo  \ncontinuation**\n\n<u>X</u>Tail"),
+		(source: "Head<u></u>\n\n**Bravo  \ncontinuation** Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n\n**Bravo  \ncontinuationX** Tail"),
+		(source: "Alpha Bravo  \ncontinuation\n  \n<u></u>Tail", caret: 33,
+		 direction: "backward", moves: 2,
+		 afterTyping: "Alpha Bravo  \ncontinuation\n  \n<u>X</u>Tail"),
+		(source: "Head<u></u>\n  \nBravo  \ncontinuation Tail", caret: 7,
+		 direction: "forward", moves: 2,
+		 afterTyping: "Head<u></u>\n  \nBravo  \ncontinuationX Tail"),
+		(source: "- Alpha Bravo\n\n- <u></u>Tail", caret: 20,
+		 direction: "backward", moves: 1,
+		 afterTyping: "- Alpha Bravo\n\n- <u>X</u>Tail"),
+		(source: "- Head<u></u>\n\n- Bravo Tail", caret: 9,
+		 direction: "forward", moves: 1,
+		 afterTyping: "- Head<u></u>\n\n- BravoX Tail"),
+		(source: "- [ ] Alpha Bravo\n\n> - <u></u>Tail", caret: 26,
+		 direction: "backward", moves: 1,
+		 afterTyping: "- [ ] Alpha Bravo\n\n> - <u>X</u>Tail"),
+		(source: "> - Head<u></u>\n\n- [ ] Bravo Tail", caret: 11,
+		 direction: "forward", moves: 1,
+		 afterTyping: "> - Head<u></u>\n\n- [ ] BravoX Tail"),
+		(source: "12) Alpha Bravo\n\n12) <u></u>Tail", caret: 24,
+		 direction: "backward", moves: 1,
+		 afterTyping: "12) Alpha Bravo\n\n12) <u>X</u>Tail"),
+		(source: "## Head<u></u>\n\n12) Bravo Tail", caret: 10,
+		 direction: "forward", moves: 1,
+		 afterTyping: "## Head<u></u>\n\n12) BravoX Tail"),
+		(source: "## Alpha Bravo\n\n### <u></u>Tail", caret: 23,
+		 direction: "backward", moves: 1,
+		 afterTyping: "## Alpha Bravo\n\n### <u>X</u>Tail"),
+		(source: "- [x] Head<u></u>\n\n## Bravo Tail", caret: 13,
+		 direction: "forward", moves: 1,
+		 afterTyping: "- [x] Head<u></u>\n\n## BravoX Tail"),
+	])
+	func immediateCutPasteAfterACrossBlockWordSelectionRestoresTheDirectionalCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		moves: Int,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 727, in: harness)
+		try await harness.waitUntil("cross-block word Cut/Paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < \(moves); index++) {
+			  window.getSelection().modify('extend', '\(direction)', 'word')
+			}
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == source, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func privateMultilinePasteEndingInAListPrefixDoesNotImitateABoundaryCut() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let savedText = MarkdownPasteboard.substitute
+		let savedSource = MarkdownPasteboard.sourceSubstitute
+		defer {
+			MarkdownPasteboard.substitute = savedText
+			MarkdownPasteboard.sourceSubstitute = savedSource
+		}
+		let pasted = "Alpha\n123. "
+		MarkdownPasteboard.substitute = { pasted }
+		MarkdownPasteboard.sourceSubstitute = { pasted }
+
+		let source = "Head<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 7, token: 728, in: harness)
+		try await harness.waitUntil("independent private multiline paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+
+		try await performResponderCommand(.paste, in: harness)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "HeadAlpha\n123. Tail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "HeadAlpha\n123. XTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func movingABoundaryCutToAnotherEmptyWrapperUsesOrdinaryPasteSemantics() async throws {
+		let source = "Alpha Bravo\n\n<u></u>Tail\n\nHead<u></u>End"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 16, token: 729, in: harness)
+		try await harness.waitUntil("boundary move source caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', 'backward', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			#expect(harness.source == "Alpha <u></u>Tail\n\nHead<u></u>End")
+
+			let destination = (harness.source as NSString).range(
+				of: "<u></u>", options: .backwards).location + 3
+			try await harness.placeCaret(destination)
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha <u></u>Tail\n\nHeadBravo\n\nEnd")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha <u></u>Tail\n\nHeadBravo\n\nXEnd")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func repeatingABoundaryPasteConsumesTheSameSiteInverseOnlyOnce() async throws {
+		let source = "Alpha Bravo\n\n<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 16, token: 730, in: harness)
+		try await harness.waitUntil("repeated boundary paste source caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', 'backward', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == source)
+
+			try await harness.placeCaret(16)
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(3)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Bravo\n\nBravo\n\nTail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(4)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Bravo\n\nBravo\n\nXTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func hostUpdateABADoesNotResurrectABoundaryCutOrigin() async throws {
+		let source = "Alpha Bravo\n\n<u></u>Tail"
+		let afterCut = "Alpha <u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: 16, token: 731, in: harness)
+		try await harness.waitUntil("boundary ABA source caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run(
+			"window.getSelection().modify('extend', 'backward', 'word')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			#expect(harness.source == afterCut)
+
+			let external = "External\n\n<u></u>Tail"
+			try await harness.replaceExternally(external)
+			try await harness.waitUntil("boundary ABA external source") {
+				harness.coordinator.currentSource == external
+			}
+			try await harness.waitQuiescent()
+			try await harness.replaceExternally(afterCut)
+			try await harness.waitUntil("boundary ABA restored source") {
+				harness.coordinator.currentSource == afterCut
+			}
+			try await harness.waitQuiescent()
+
+			try await harness.placeCaret(9)
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Bravo\n\nTail")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Bravo\n\nXTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func identicalCutInAnotherDocumentInvalidatesTheFirstBoundaryOrigin() async throws {
+		let source = "Alpha Bravo\n\n<u></u>Tail"
+		let first = try await CoordinatorBridgeHarness(source: "First")
+		let second = try await CoordinatorBridgeHarness(source: "Second")
+		restore(source, caret: 16, token: 732, in: first)
+		restore(source, caret: 16, token: 733, in: second)
+		for harness in [first, second] {
+			try await harness.waitUntil("cross-document boundary source caret") {
+				try await harness.evaluate(
+					"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+			}
+			harness.rewireRoundTrip()
+			try await harness.run(
+				"window.getSelection().modify('extend', 'backward', 'word')")
+		}
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: first)
+			try await first.waitForSourceEdits(1)
+			try await first.waitQuiescent()
+			try await performResponderCommand(.cut, in: second)
+			try await second.waitForSourceEdits(1)
+			try await second.waitQuiescent()
+			#expect(first.source == second.source)
+
+			try await first.placeCaret(9)
+			try await performResponderCommand(.paste, in: first)
+			try await first.waitForSourceEdits(2)
+		}
+		try await first.waitQuiescent()
+		#expect(first.source == "Alpha Bravo\n\nTail")
+
+		try await first.type("X")
+		try await first.waitForSourceEdits(3)
+		try await first.waitQuiescent()
+		#expect(first.source == "Alpha Bravo\n\nXTail")
+		#expect(try await first.stampMismatches() == [])
+		#expect(first.coordinator.resyncCount == 0)
+		#expect(first.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8,
+		 direction: "forward", afterDelete: "Alpha<u></u> charlie",
+		 afterTyping: "Alpha<u>X</u> charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14,
+		 direction: "backward", afterDelete: "alpha <u></u> charlie",
+		 afterTyping: "alpha <u>X</u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8,
+		 direction: "forward", afterDelete: "Alpha<u></u> **charlie** Delta",
+		 afterTyping: "Alpha<u>X</u> **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26,
+		 direction: "backward", afterDelete: "alpha **Bravo** <u></u> Delta",
+		 afterTyping: "alpha **Bravo** <u>X</u> Delta"),
+	])
+	func typingAfterDeletingASelectedWordReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterDelete: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 723, in: harness)
+		try await harness.waitUntil("selected word deletion caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			document.execCommand('delete');
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterDelete, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8, expansions: 1,
+		 direction: "forward", afterReplacement: "Alpha<u></u>X charlie",
+		 afterTyping: "Alpha<u></u>XY charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14, expansions: 1,
+		 direction: "backward", afterReplacement: "alpha X<u></u> charlie",
+		 afterTyping: "alpha XY<u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8, expansions: 1,
+		 direction: "forward", afterReplacement: "Alpha<u></u>X **charlie** Delta",
+		 afterTyping: "Alpha<u></u>XY **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26, expansions: 1,
+		 direction: "backward", afterReplacement: "alpha **Bravo X**<u></u> Delta",
+		 afterTyping: "alpha **Bravo XY**<u></u> Delta"),
+		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8, expansions: 2,
+		 direction: "forward", afterReplacement: "Alpha<u></u>X **echo** Delta",
+		 afterTyping: "Alpha<u></u>XY **echo** Delta"),
+		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31, expansions: 2,
+		 direction: "backward", afterReplacement: "alpha **Bravo X**<u></u> Delta",
+		 afterTyping: "alpha **Bravo XY**<u></u> Delta"),
+	])
+	func typingOverASelectedWordKeepsTheReplacementCaretVisible(
+		source: String,
+		caret: Int,
+		expansions: Int,
+		direction: String,
+		afterReplacement: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 724, in: harness)
+		try await harness.waitUntil("selected word replacement caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			for (var index = 0; index < \(expansions); index++) {
+			  window.getSelection().modify('extend', '\(direction)', 'word');
+			}
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterReplacement, "direction=\(direction)")
+
+		try await harness.type("Y")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8, command: "bold",
+		 direction: "forward", expected: "Alpha<u></u>  **Bravo** charlie",
+		 afterTyping: "Alpha<u></u>  **X** charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14, command: "bold",
+		 direction: "backward", expected: "alpha **Bravo**<u></u> charlie",
+		 afterTyping: "alpha **X**<u></u> charlie"),
+		(source: "Alpha<u></u>  Bravo charlie", caret: 8, command: "italic",
+		 direction: "forward", expected: "Alpha<u></u>  _Bravo_ charlie",
+		 afterTyping: "Alpha<u></u>  _X_ charlie"),
+		(source: "alpha Bravo<u></u> charlie", caret: 14, command: "italic",
+		 direction: "backward", expected: "alpha _Bravo_<u></u> charlie",
+		 afterTyping: "alpha _X_<u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo** charlie", caret: 8, command: "bold",
+		 direction: "forward", expected: "Alpha<u></u>  Bravo charlie",
+		 afterTyping: "Alpha<u></u>  X charlie"),
+		(source: "alpha **Bravo**<u></u> charlie", caret: 18, command: "bold",
+		 direction: "backward", expected: "alpha Bravo<u></u> charlie",
+		 afterTyping: "alpha X<u></u> charlie"),
+		(source: "Alpha<u></u>  **Bravo charlie** Delta", caret: 8, command: "bold",
+		 direction: "forward", expected: "Alpha<u></u>  Bravo **charlie** Delta",
+		 afterTyping: "Alpha<u></u>  X **charlie** Delta"),
+		(source: "alpha **Bravo charlie**<u></u> Delta", caret: 26, command: "bold",
+		 direction: "backward", expected: "alpha **Bravo** charlie<u></u> Delta",
+		 afterTyping: "alpha **Bravo** X<u></u> Delta"),
+		(source: "Alpha<u></u>  <u>Bravo charlie</u> Delta", caret: 8,
+		 command: "underline", direction: "forward",
+		 expected: "Alpha<u></u>  Bravo <u>charlie</u> Delta",
+		 afterTyping: "Alpha<u></u>  X <u>charlie</u> Delta"),
+		(source: "alpha <u>Bravo charlie</u><u></u> Delta", caret: 29,
+		 command: "underline", direction: "backward",
+		 expected: "alpha <u>Bravo</u> charlie<u></u> Delta",
+		 afterTyping: "alpha <u>Bravo</u> X<u></u> Delta"),
+		(source: "Alpha<u></u>  [Bravo charlie](https://x) Delta", caret: 8,
+		 command: "link", direction: "forward",
+		 expected: "Alpha<u></u>  Bravo [charlie](https://x) Delta",
+		 afterTyping: "Alpha<u></u>  X [charlie](https://x) Delta"),
+		(source: "alpha [Bravo charlie](https://x)<u></u> Delta", caret: 35,
+		 command: "link", direction: "backward",
+		 expected: "alpha [Bravo](https://x) charlie<u></u> Delta",
+		 afterTyping: "alpha [Bravo](https://x) X<u></u> Delta"),
+		(source: "[Alpha<u></u> Bravo charlie](https://x) Delta", caret: 9,
+		 command: "link", direction: "forward",
+		 expected: "[Alpha<u></u>](https://x) Bravo [charlie](https://x) Delta",
+		 afterTyping: "[Alpha<u></u>](https://x) X [charlie](https://x) Delta"),
+		(source: "**Alpha<u></u> Bravo charlie** Delta", caret: 10,
+		 command: "bold", direction: "forward",
+		 expected: "**Alpha<u></u>** Bravo **charlie** Delta",
+		 afterTyping: "**Alpha<u></u>** X **charlie** Delta"),
+		(source: "<u>Alpha<u></u> Bravo charlie</u> Delta", caret: 11,
+		 command: "underline", direction: "forward",
+		 expected: "<u>Alpha<u></u></u> Bravo <u>charlie</u> Delta",
+		 afterTyping: "<u>Alpha<u></u></u> X <u>charlie</u> Delta"),
+		(source: "Alpha<u></u>  `Bravo charlie` Delta", caret: 8,
+		 command: "inlineCode", direction: "forward",
+		 expected: "Alpha<u></u>  Bravo `charlie` Delta",
+		 afterTyping: "Alpha<u></u>  X `charlie` Delta"),
+		(source: "[Alpha](https://a)<u></u> Bravo [charlie](https://c)", caret: 21,
+		 command: "link", direction: "forward",
+		 expected: "[Alpha](https://a)<u></u> [Bravo]() [charlie](https://c)",
+		 afterTyping: "[Alpha](https://a)<u></u> [X]() [charlie](https://c)"),
+		(source: "***Alpha<u></u> Bravo charlie*** Delta", caret: 11,
+		 command: "bold", direction: "forward",
+		 expected: "***Alpha<u></u>*** *Bravo* ***charlie*** Delta",
+		 afterTyping: "***Alpha<u></u>*** *X* ***charlie*** Delta"),
+		(source: "**_Alpha<u></u> Bravo charlie_** Delta", caret: 11,
+		 command: "bold", direction: "forward",
+		 expected: "**_Alpha<u></u>_** _Bravo_ **_charlie_** Delta",
+		 afterTyping: "**_Alpha<u></u>_** _X_ **_charlie_** Delta"),
+		(source: "<u>**Alpha<u></u> Bravo charlie**</u> Delta", caret: 13,
+		 command: "underline", direction: "forward",
+		 expected: "<u>**Alpha<u></u>**</u> **Bravo** <u>**charlie**</u> Delta",
+		 afterTyping: "<u>**Alpha<u></u>**</u> **X** <u>**charlie**</u> Delta"),
+		(source: "**<u>Alpha<u></u> Bravo charlie</u>** Delta", caret: 13,
+		 command: "bold", direction: "forward",
+		 expected: "**<u>Alpha<u></u></u>** <u>Bravo</u> **<u>charlie</u>** Delta",
+		 afterTyping: "**<u>Alpha<u></u></u>** <u>X</u> **<u>charlie</u>** Delta"),
+		(source: "**[Alpha<u></u> Bravo charlie](https://x)** Delta", caret: 11,
+		 command: "bold", direction: "forward",
+		 expected: "**[Alpha<u></u>](https://x)** [Bravo](https://x) **[charlie](https://x)** Delta",
+		 afterTyping: "**[Alpha<u></u>](https://x)** [X](https://x) **[charlie](https://x)** Delta"),
+		(source: "<u>[Alpha<u></u> Bravo charlie](https://x)</u> Delta", caret: 12,
+		 command: "underline", direction: "forward",
+		 expected: "<u>[Alpha<u></u>](https://x)</u> [Bravo](https://x) <u>[charlie](https://x)</u> Delta",
+		 afterTyping: "<u>[Alpha<u></u>](https://x)</u> [X](https://x) <u>[charlie](https://x)</u> Delta"),
+		(source: "Alpha<u></u> **`Bravo charlie`** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> `Bravo` **`charlie`** Delta",
+		 afterTyping: "Alpha<u></u> `X` **`charlie`** Delta"),
+		(source: "Alpha<u></u> <u>`Bravo charlie`</u> Delta", caret: 8,
+		 command: "underline", direction: "forward",
+		 expected: "Alpha<u></u> `Bravo` <u>`charlie`</u> Delta",
+		 afterTyping: "Alpha<u></u> `X` <u>`charlie`</u> Delta"),
+		(source: "Alpha<u></u> **`Bravo`** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> `Bravo` Delta",
+		 afterTyping: "Alpha<u></u> `X` Delta"),
+		(source: "Alpha<u></u> <u>[Bravo](https://x)</u> Delta", caret: 8,
+		 command: "underline", direction: "forward",
+		 expected: "Alpha<u></u> [Bravo](https://x) Delta",
+		 afterTyping: "Alpha<u></u> [X](https://x) Delta"),
+		(source: "Alpha<u></u> ***`Bravo`*** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> *`Bravo`* Delta",
+		 afterTyping: "Alpha<u></u> *`X`* Delta"),
+		(source: "Alpha<u></u> ***`Bravo charlie`*** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> *`Bravo`* ***`charlie`*** Delta",
+		 afterTyping: "Alpha<u></u> *`X`* ***`charlie`*** Delta"),
+		(source: "Alpha<u></u> ***[Bravo charlie](https://x)*** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> *[Bravo](https://x)* ***[charlie](https://x)*** Delta",
+		 afterTyping: "Alpha<u></u> *[X](https://x)* ***[charlie](https://x)*** Delta"),
+		(source: "Alpha<u></u> ***<u>Bravo charlie</u>*** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> *<u>Bravo</u>* ***<u>charlie</u>*** Delta",
+		 afterTyping: "Alpha<u></u> *<u>X</u>* ***<u>charlie</u>*** Delta"),
+		(source: "Alpha<u></u> ***~~Bravo charlie~~*** Delta", caret: 8,
+		 command: "bold", direction: "forward",
+		 expected: "Alpha<u></u> *~~Bravo~~* ***~~charlie~~*** Delta",
+		 afterTyping: "Alpha<u></u> *~~X~~* ***~~charlie~~*** Delta"),
+		(source: "alpha ***[Bravo charlie](https://x)***<u></u> Delta", caret: 41,
+		 command: "bold", direction: "backward",
+		 expected: "alpha ***[Bravo](https://x)*** *[charlie](https://x)*<u></u> Delta",
+		 afterTyping: "alpha ***[Bravo](https://x)*** *[X](https://x)*<u></u> Delta"),
+		(source: "alpha ***`Bravo charlie`***<u></u> Delta", caret: 30,
+		 command: "bold", direction: "backward",
+		 expected: "alpha ***`Bravo`*** *`charlie`*<u></u> Delta",
+		 afterTyping: "alpha ***`Bravo`*** *`X`*<u></u> Delta"),
+		(source: "alpha ***<u>Bravo charlie</u>***<u></u> Delta", caret: 35,
+		 command: "bold", direction: "backward",
+		 expected: "alpha ***<u>Bravo</u>*** *<u>charlie</u>*<u></u> Delta",
+		 afterTyping: "alpha ***<u>Bravo</u>*** *<u>X</u>*<u></u> Delta"),
+	])
+	func formattingAWordSelectionFromTheSyntheticCaretPreservesItsWrapper(
+		source: String,
+		caret: Int,
+		command: String,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 725, in: harness)
+		try await harness.waitUntil("selected word formatting caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			window.__mdApplyFormat('\(command)');
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping,
+			"command=\(command), direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
+		 direction: "forward", afterCut: "Alpha<u></u> **echo** Delta",
+		 afterTyping: "Alpha<u>X</u> **echo** Delta"),
+		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31,
+		 direction: "backward", afterCut: "alpha **Bravo** <u></u> Delta",
+		 afterTyping: "alpha **Bravo** <u>X</u> Delta"),
+		(source: "Alpha<u></u>  [***`Bravo charlie echo`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 afterCut: "Alpha<u></u> [***`echo`***](https://x) Delta",
+		 afterTyping: "Alpha<u>X</u> [***`echo`***](https://x) Delta"),
+		(source: "alpha [***`Bravo charlie echo`***](https://x)<u></u> Delta", caret: 48,
+		 direction: "backward",
+		 afterCut: "alpha [***`Bravo`***](https://x) <u></u> Delta",
+		 afterTyping: "alpha [***`Bravo`***](https://x) <u>X</u> Delta"),
+	])
+	func typingAfterRepeatedWordExpansionAndCutReturnsToTheSyntheticCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		afterCut: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 720, in: harness)
+		try await harness.waitUntil("repeated word-selection caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterCut, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: "Alpha<u></u>  **Bravo charlie echo** Delta", caret: 8,
+		 direction: "forward", expected: "Alpha<u></u>P **echo** Delta",
+		 afterTyping: "Alpha<u></u>PX **echo** Delta"),
+		(source: "alpha **Bravo charlie echo**<u></u> Delta", caret: 31,
+		 direction: "backward", expected: "alpha **Bravo P**<u></u> Delta",
+		 afterTyping: "alpha **Bravo PX**<u></u> Delta"),
+		(source: "Alpha<u></u>  [***`Bravo charlie echo`***](https://x) Delta", caret: 8,
+		 direction: "forward",
+		 expected: "Alpha<u></u>P [***`echo`***](https://x) Delta",
+		 afterTyping: "Alpha<u></u>PX [***`echo`***](https://x) Delta"),
+		(source: "alpha [***`Bravo charlie echo`***](https://x)<u></u> Delta", caret: 48,
+		 direction: "backward",
+		 expected: "alpha [***`Bravo P`***](https://x)<u></u> Delta",
+		 afterTyping: "alpha [***`Bravo PX`***](https://x)<u></u> Delta"),
+	])
+	func repeatedWordExpansionPastePreservesThePartialRunAndVisibleCaret(
+		source: String,
+		caret: Int,
+		direction: String,
+		expected: String,
+		afterTyping: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		restore(source, caret: caret, token: 721, in: harness)
+		try await harness.waitUntil("repeated word-paste caret") {
+			try await harness.evaluate(
+				"String(!!document.querySelector('[data-md-inline-caret-home]'))") == "true"
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			window.getSelection().modify('extend', '\(direction)', 'word');
+			""")
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected, "direction=\(direction)")
+
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterTyping, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(direction: "backward", copied: "A", expected: "P<u></u><u></u>B"),
+		(direction: "forward", copied: "B", expected: "A<u></u><u></u>P"),
+	])
+	func pasteOverASelectionBesideAdjacentRestoredEmptyUnderlines(
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let source = "A<u></u><u></u>B"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 8, token: 712))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("adjacent empty-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "8"
+		}
+		harness.rewireRoundTrip()
+		let key = direction == "backward" ? "ArrowLeft" : "ArrowRight"
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied,
+			"direction=\(direction)")
+		try await withPasteboard("P") {
+			try await harness.run("""
+				document.body.dispatchEvent(new ClipboardEvent('paste', {
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(source: #"A \\<u></u> B"#, caret: 11, key: "ArrowLeft",
+		 direction: "backward", copied: "\\", expected: "A P<u></u> B"),
+		(source: #"A<u></u>\* B"#, caret: 8, key: "ArrowRight",
+		 direction: "forward", copied: "*", expected: "A<u></u>P B"),
+		(source: #"[***Alpha \\<u></u> Bravo***](https://x)"#, caret: 15,
+		 key: "ArrowLeft", direction: "backward", copied: "\\",
+		 expected: "[***Alpha P<u></u> Bravo***](https://x)"),
+		(source: #"[***Alpha<u></u>\* Bravo***](https://x)"#, caret: 12,
+		 key: "ArrowRight", direction: "forward", copied: "*",
+		 expected: "[***Alpha<u></u>P Bravo***](https://x)"),
+	])
+	func pasteOverAnEscapedVisibleCharacterBesideAnEmptyUnderlineReplacesItsSourcePair(
+		source: String,
+		caret: Int,
+		key: String,
+		direction: String,
+		copied: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: caret, token: 717))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(source)
+		try await harness.waitUntil("escaped-character wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == String(caret)
+		}
+		harness.rewireRoundTrip()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
+			})
+			if (document.body.dispatchEvent(arrow)) {
+			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
+			""")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == copied)
+		try await withPasteboard("P") {
+			try await harness.run("""
+				document.body.dispatchEvent(new ClipboardEvent('paste', {
+				  bubbles: true, cancelable: true
+				}))
+				""")
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == expected, "direction=\(direction)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		(pasted: "P", afterPaste: "Alpha<u></u>P Tail",
+		 afterTyping: "Alpha<u></u>PX Tail"),
+		(pasted: "One\n\nTwo", afterPaste: "Alpha<u></u>One\n\nTwo Tail",
+		 afterTyping: "Alpha<u></u>One\n\nTwoX Tail"),
+	])
+	func pasteAtAHostRestoredPostWrapperCaretKeepsItsExactInsertionPoint(
+		pasted: String,
+		afterPaste: String,
+		afterTyping: String
+	) async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Seed")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 12, token: 706))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+		try await harness.waitUntil("full-navigation post-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var home = document.querySelector(
+				    '[data-md-inline-caret-after-empty-wrapper]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		try await withPasteboard(pasted) {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == afterPaste, "pasted=\(pasted.debugDescription)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == afterTyping, "pasted=\(pasted.debugDescription)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func restoringACharacterCutBesideAnEmptyUnderlineKeepsTheCaretTypable() async throws {
+		let formatted = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("""
+			var arrow = new KeyboardEvent('keydown', {
+			  key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
+			})
+			document.body.dispatchEvent(arrow)
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha<u></u>Tail")
+		try await harness.waitUntil("cut source rendered") {
+			try await harness.domVisibleText()
+				.replacingOccurrences(of: "\u{200B}", with: "")
+				.contains("AlphaTail")
+		}
+
+		restore(formatted, caret: 12, token: 701, in: harness)
+		try await harness.waitQuiescent()
+		try await harness.waitUntil("restored source rendered") {
+			try await harness.domVisibleText()
+				.replacingOccurrences(of: "\u{200B}", with: "")
+				.contains("Alpha Tail")
+		}
+		try await harness.waitUntil("caret restored after empty underline") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.anchorNode) return 'missing'
+				  var element = selection.anchorNode.nodeType === 1
+				    ? selection.anchorNode : selection.anchorNode.parentElement
+				  var home = element.closest('[data-md-inline-caret-home]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "12"
+		}
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		try await harness.waitUntil("post-restore typing rendered") {
+			try await harness.domVisibleText()
+				.replacingOccurrences(of: "\u{200B}", with: "")
+				.contains("AlphaX Tail")
+		}
+
+		#expect(harness.source == "Alpha<u></u>X Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0,
+			"resync=\(harness.coordinator.lastResyncReason ?? "none"), incidents=\(harness.coordinator.bridgeIncidents)")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func fullNavigationRestoreForwardsTheEmptyWrapperCaretMetadata() async throws {
+		let formatted = "<u></u>Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Tail")
+		harness.focusWebView()
+		harness.coordinator.parent = MarkdownWebView(
+			text: formatted, theme: .default, fontSize: 15)
+			.editable(true)
+			.caretTarget(MarkdownCaretTarget(offset: 3, token: 702))
+			.onSourceEdit { [weak harness] newText, _ in
+				harness?.recordExternalEdit(newText)
+			}
+		harness.coordinator.applyCaretTarget()
+		harness.coordinator.load(into: harness.webView)
+		harness.adoptHostText(formatted)
+
+		try await harness.waitUntil("full-navigation empty-wrapper caret") {
+			try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.anchorNode) return 'missing'
+				  var element = selection.anchorNode.nodeType === 1
+				    ? selection.anchorNode : selection.anchorNode.parentElement
+				  var home = element.closest('[data-md-inline-caret-source-neutral]')
+				  return home ? home.getAttribute('data-md-inline-caret-offset') : 'missing'
+				})()
+				""") == "3"
+		}
+		harness.rewireRoundTrip()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "<u>X</u>Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllCutAfterAnIndentedSoftLineDeletionRoundTripsWithoutCopyingTheCaretHome() async throws {
+		let expectedSource = "Term\n  : Definition\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await harness.run("""
+			window.__mdPlaceCaret(7, 1)
+			var target = window.getSelection().getRangeAt(0).cloneRange()
+			window.getSelection().collapseToStart()
+			var deletion = new InputEvent('beforeinput', {
+			  inputType: 'deleteContentForward', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(deletion, 'getTargetRanges', {
+			  value: function () { return [target] }
+			})
+			var allowed = document.body.dispatchEvent(deletion)
+			if (allowed) {
+			  target.deleteContents()
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'deleteContentForward', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("document.execCommand('selectAll')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+			let copied = try #require(TestPasteboard.string)
+			#expect(!copied.contains("\u{200B}"),
+				"clipboard exposed the DOM-only caret marker: \(copied.debugDescription)")
+			#expect(harness.source.isEmpty)
+			let exactSource = try #require(MarkdownPasteboard.source)
+			#expect(exactSource == expectedSource,
+				"private clipboard source was \(exactSource.debugDescription)")
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(3)
+		}
+
+		#expect(harness.source == expectedSource)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func partialCrossRunCutThroughARestoredCaretHomeRoundTripsExactSource() async throws {
+		let expectedSource = "Term\n  : Definition\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await deleteIndentedSoftLineCharacter(in: harness)
+		try await harness.run("""
+			var home = document.querySelector('[data-md-inline-caret-home]')
+			var runs = home.closest('p').querySelectorAll(
+			  '[data-s]:not([data-md-inline-caret-home])')
+			var range = document.createRange()
+			range.setStart(runs[0].firstChild, 2)
+			range.setEnd(runs[1].firstChild, 5)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(TestPasteboard.string == "rm : Def")
+			#expect(MarkdownPasteboard.source == "rm\n  : Def")
+			#expect(harness.source == "Teinition\n\nTail")
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: 2)
+			try await harness.waitForSourceEdits(3)
+		}
+
+		#expect(harness.source == expectedSource)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func typingImmediatelyAfterPasteAtARestoredCaretHomeReplaysAfterThePaste() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "Term\n  x: Definition\n\nTail")
+		try await deleteIndentedSoftLineCharacter(in: harness)
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.run("document.execCommand('insertText', false, 'Z')")
+			try await harness.waitForSourceEdits(3)
+		}
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Term\n  PZ: Definition\n\nTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllCutFromAnEmptyUnderlineCaretKeepsPublicTextCleanAndRoundTripsSource() async throws {
+		let formattedSource = "Alpha<u></u> Tail"
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		#expect(harness.source == formattedSource)
+		#expect(try await harness.evaluate(
+			"String(document.querySelectorAll('[data-md-inline-caret-source-neutral]').length)"
+		) == "1")
+		try await harness.run("document.execCommand('selectAll')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(TestPasteboard.string == "Alpha Tail")
+			#expect(MarkdownPasteboard.source == formattedSource)
+			#expect(harness.source.isEmpty)
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(3)
+		}
+
+		#expect(harness.source == formattedSource)
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(4)
+		try await harness.waitQuiescent()
+		#expect(harness.source == formattedSource + "X")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func partialCrossBlockCutContainingAnEmptyWrapperRoundTripsExactSource() async throws {
+		let source = "Before\n\nAlpha<u></u> Tail\n\nAfter"
+		let nsSource = source as NSString
+		let start = 2
+		let end = nsSource.range(of: "After").location + 2
+		let selectedSource = nsSource.substring(
+			with: NSRange(location: start, length: end - start))
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: start, length: end - start)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == "fore\n\nAlpha Tail\n\nAf")
+			#expect(MarkdownPasteboard.source == selectedSource)
+			#expect(harness.source == "Beter")
+			try await harness.waitQuiescent()
+			try await paste(into: harness, at: start)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Before\n\nAlpha<u></u> Tail\n\nAfXter")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [false, true])
+	func multilinePasteOverAPartialCrossBlockSelectionContainingAnEmptyWrapper(
+		backward: Bool
+	) async throws {
+		let source = "Before\n\nAlpha<u></u> Tail\n\nAfter"
+		let nsSource = source as NSString
+		let start = 2
+		let end = nsSource.range(of: "After").location + 2
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(
+			harness, start: start, length: end - start, backward: backward)
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "BeOne\n\nTwoter", "backward=\(backward)")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "BeOne\n\nTwoXter", "backward=\(backward)")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func pasteIntoAnEmptyUnderlineCaretKeepsThePasteUnderlinedAndTheCaretTypable() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("P") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha<u>P</u> Tail")
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "Alpha<u>PZ</u> Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func multiParagraphPasteAtAnEmptyUnderlineCaretExitsTheWrapperCleanly() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('underline')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "AlphaOne\n\nTwo Tail",
+			"incidents: \(harness.coordinator.bridgeIncidents)")
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "AlphaOne\n\nTwoZ Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [
+		"bold", "italic", "strikethrough", "inlineCode",
+		"highlight", "superscript", "subscript", "link",
+	])
+	func multiParagraphPasteAtAnEmptyMarkdownFormatCaretExitsTheDelimitersCleanly(
+		command: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Tail")
+		try await harness.batch([
+			"window.__mdPlaceCaret(5)",
+			"window.__mdApplyFormat('\(command)')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await withPasteboard("One\n\nTwo") {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == "AlphaOne\n\nTwo Tail",
+			"command \(command), incidents: \(harness.coordinator.bridgeIncidents)")
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "AlphaOne\n\nTwoZ Tail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func largeMultiBlockPasteOverASelectionPreservesTheLongTailAndNextCaret() async throws {
+		let tail = (0..<400).map {
+			"Tail paragraph \($0) with **style** and café 🙂."
+		}.joined(separator: "\n\n")
+		let source = "Intro\n\nreplace me\n\n" + tail
+		let replaced = (source as NSString).range(of: "replace me")
+		let payload = (0..<180).map {
+			"Pasted block \($0) with [link](https://example.com/\($0))."
+		}.joined(separator: "\n\n")
+		let expected = (source as NSString).replacingCharacters(
+			in: replaced, with: payload)
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: replaced.location, length: replaced.length)
+
+		try await withPasteboard(payload) {
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		#expect(harness.source == expected)
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+
+		let insertion = replaced.location + (payload as NSString).length
+		let expectedAfterTyping = (expected as NSString).replacingCharacters(
+			in: NSRange(location: insertion, length: 0), with: "Z")
+		#expect(harness.source == expectedAfterTyping)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	// MARK: Non-breaking spaces
+	//
+	// contentEditable renders a lone space as U+00A0 so layout can't collapse
+	// it, and hands that to the clipboard. These live here rather than in their
+	// own suite because they touch the same system pasteboard the tests above
+	// do, and a separate suite races them.
+
+	@Test func pastedTextNormalizesNonBreakingSpaces() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+
+		TestPasteboard.string = "Alpha\u{00A0}bravo"
+		#expect(MarkdownWebView.Coordinator.pasteboardText(foldingNewlines: false) == "Alpha bravo")
+	}
+
+	@Test func normalizationSurvivesTheTableCellFold() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+
+		// Folding splits on newlines and trims; an NBSP is not whitespace to
+		// `trimmingCharacters(in: .whitespaces)`'s eyes in the middle of a run,
+		// so it has to be gone before the fold rather than after.
+		TestPasteboard.string = "one\u{00A0}two\nthree"
+		#expect(MarkdownWebView.Coordinator.pasteboardText(foldingNewlines: true) == "one two three")
+	}
+
+	@Test func matchStylePasteIgnoresTheSourceFaithfulFlavor() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let savedText = MarkdownPasteboard.substitute
+		let savedSource = MarkdownPasteboard.sourceSubstitute
+		defer {
+			MarkdownPasteboard.substitute = savedText
+			MarkdownPasteboard.sourceSubstitute = savedSource
+		}
+		MarkdownPasteboard.substitute = { "visible prose" }
+		MarkdownPasteboard.sourceSubstitute = { "**visible prose**" }
+
+		#expect(MarkdownWebView.Coordinator.pasteboardText(
+			foldingNewlines: false, preferringSource: true) == "**visible prose**")
+		#expect(MarkdownWebView.Coordinator.pasteboardText(
+			foldingNewlines: false, preferringSource: false) == "visible prose")
+	}
+
+	@Test func pasteCaretArithmeticRejectsNegativeAndOverflowingStarts() {
+		#expect(MarkdownWebView.Coordinator.caretAfterInsertion(start: -1, text: "X") == nil)
+		#expect(MarkdownWebView.Coordinator.caretAfterInsertion(start: Int.max, text: "X") == nil)
+		#expect(MarkdownWebView.Coordinator.caretAfterInsertion(start: 7, text: "😀") == 9)
+	}
+
+	@Test func delayedCutDoesNotAttachSourceToAChangedPasteboard() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+		TestPasteboard.string = "new clipboard contents"
+
+		let wrote = MarkdownPasteboard.writeSource(
+			"**old selection**", ifTextMatches: "old selection")
+
+		#expect(!wrote)
+		#expect(TestPasteboard.source == nil)
+	}
+
+	@Test func delayedCutDoesNotIgnoreRemovedClipboardWhitespace() async {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		let saved = TestPasteboard.string
+		defer { TestPasteboard.string = saved }
+		TestPasteboard.string = "oldselection"
+
+		let wrote = MarkdownPasteboard.writeSource(
+			"**old selection**", ifTextMatches: "old selection")
+
+		#expect(!wrote)
+		#expect(TestPasteboard.source == nil)
+	}
+
+	@Test func cuttingAndPastingASingleSpaceIsANoOp() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		// Marker #3: the space between two words, cut and pasted straight back.
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha bravo charlie\n")
+		let space = ("Alpha bravo charlie\n" as NSString).range(of: " ").location
+
+		try await harness.run("window.__mdPlaceCaret(\(space), 1)")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "Alphabravo charlie\n")
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(space))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "Alpha bravo charlie\n")
+		#expect(!harness.source.contains("\u{00A0}"), "a non-breaking space reached the source")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func cuttingAndPastingAWordInAHeadingAddsNoMarkup() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		// Marker #4: the round trip is visually invisible but was writing
+		// emphasis markers into the source.
+		let source = "# Styled Clipboard Stress\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let word = (source as NSString).range(of: "Clipboard")
+
+		try await harness.run("window.__mdPlaceCaret(\(word.location), \(word.length))")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(word.location))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func cuttingAndPastingABlockSeparatorKeepsTheBlocksApart() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		// Marker #2: the blank line between a heading and the paragraph under
+		// it, cut and pasted back. Joining them would turn two blocks into one.
+		let source = "# Styled Clipboard Stress\n\nAlpha bravo charlie.\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let separator = (source as NSString).range(of: "\n\n")
+
+		try await harness.run("window.__mdPlaceCaret(\(separator.location), \(separator.length))")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		#expect(TestPasteboard.source == "\n\n")
+		try await harness.waitQuiescent()
+
+		try await harness.run("window.__mdPlaceCaret(\(separator.location))")
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+		// Still a heading and a paragraph, not one run-on block.
+		#expect(try await harness.evaluate("String(document.querySelectorAll('h1').length)") == "1")
+		#expect(try await harness.evaluate("String(document.querySelectorAll('p').length)") == "1")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func aLargeCutAndPasteLeavesNoExtraBlankLinesInTheDOM() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		// Marker #5: the source round-tripped exactly but the render kept
+		// visible blank lines the markdown doesn't have. Compare the live DOM
+		// against a fresh render of the same source — the convergence oracle.
+		let source = """
+			> Quoted text with punctuation: commas, semicolons; and em dashes — intact.
+
+			## Second Section
+
+			Paragraph A: 0123456789 repeated 0123456789 repeated 0123456789.
+			Paragraph B: Unicode café naïve emoji 🧪🚀 and symbols <>&.
+			"""
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let ns = source as NSString
+		let start = ns.range(of: "Second Section").location
+		let length = ns.length - start
+
+		try await harness.run("window.__mdPlaceCaret(\(start), \(length))")
+		try await harness.clipboardCommand(.cut)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		// The structural cut restores its insertion point at the expanded
+		// source boundary. The old visible-text offset may no longer exist after
+		// the heading marker is consumed, so moving back to that stale offset
+		// would test an impossible caret rather than the reported round trip.
+		try await harness.clipboardCommand(.paste)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == source)
+
+		let live = try await harness.domProjectedText()
+		let fresh = try await CoordinatorBridgeHarness(source: harness.source)
+		#expect(live == (try await fresh.domProjectedText()), "the DOM kept blank lines the source doesn't have")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func pastingPlainTextSplicesItAtTheCaret() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
+		try await withPasteboard("PASTED") {
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "alphaPASTED beta\n")
+		#expect(harness.lastCaretHint == 11)
+		#expect(harness.coordinator.hardRejections == 0)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func typingAfterAPasteContinuesFromTheRestoredCaret() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
+		try await withPasteboard("XY") {
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "alphaXYZ beta\n")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func pastingMultipleLinesBecomesRealBlocks() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "head\n")
+		try await withPasteboard("one\n\ntwo") {
+			try await paste(into: harness, at: 4)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "headone\n\ntwo\n")
+		try await harness.waitQuiescent()
+		// Re-rendered from the source: two paragraphs, both stamped correctly.
+		#expect(try await harness.evaluate("String(document.querySelectorAll('p').length)") == "2")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func pastingOverASelectionReplacesIt() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "alpha bravo charlie\n")
+		try await withPasteboard("X") {
+			try await harness.run("""
+				window.__mdPlaceCaret(6);
+				var s = window.getSelection(); var r = s.getRangeAt(0).cloneRange();
+				r.setEnd(r.startContainer, r.startOffset + 5); s.removeAllRanges(); s.addRange(r);
+				""")
+			try await harness.clipboardCommand(.paste)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "alpha X charlie\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func pasteUsesTheLiveSelectionWhenWebKitReportsACollapsedTarget() async throws {
+		let source = "alpha bravo charlie\n"
+		let bravo = (source as NSString).range(of: "bravo")
+		for backward in [false, true] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(
+				harness,
+				start: bravo.location,
+				length: bravo.length,
+				backward: backward)
+
+			try await withPasteboard("X") {
+				try await harness.run("""
+					var live = window.getSelection().getRangeAt(0)
+					var stale = document.createRange()
+					stale.setStart(live.startContainer, live.startOffset)
+					stale.collapse(true)
+					var paste = new InputEvent('beforeinput', {
+					  inputType: 'insertFromPaste', bubbles: true, cancelable: true
+					})
+					Object.defineProperty(paste, 'getTargetRanges', {
+					  value: function () { return [stale] }
+					})
+					document.body.dispatchEvent(paste)
+					""")
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == "alpha X charlie\n", "backward=\(backward)")
+			#expect(harness.lastCaretHint == 7, "backward=\(backward)")
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test func pastingOverMultipleStyledRunsConsumesTheirHiddenSyntax() async throws {
+		let source = "Before **Alpha** and _Beta_ after"
+		let start = (source as NSString).range(of: "Alpha").location
+		let beta = (source as NSString).range(of: "Beta")
+		for backward in [false, true] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(
+				harness,
+				start: start,
+				length: beta.upperBound - start,
+				backward: backward)
+
+			try await withPasteboard("X") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == "Before X after", "backward=\(backward)")
+			#expect(harness.lastCaretHint == ("Before X" as NSString).length)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+			try await harness.type("!")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "Before X! after", "backward=\(backward)")
+		}
+	}
+
+	@Test func pastingOverAWholePrefixedBlockPreservesItsHiddenPrefix() async throws {
+		let cases = [
+			(source: "# Alpha\n\nTail", expected: "# X\n\nTail", caret: 3),
+			(source: "> Alpha\n\nTail", expected: "> X\n\nTail", caret: 3),
+			(source: "- Alpha\n\nTail", expected: "- X\n\nTail", caret: 3),
+			(source: "1. Alpha\n\nTail", expected: "1. X\n\nTail", caret: 4),
+			(source: "- [ ] Alpha\n\nTail", expected: "- [ ] X\n\nTail", caret: 7),
+		]
+		for item in cases {
+			let alpha = (item.source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
+			try await select(harness, start: alpha.location, length: alpha.length)
+
+			try await withPasteboard("X") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == item.expected, "source=\(item.source)")
+			#expect(harness.lastCaretHint == item.caret)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test func pastingOverOneStyledRunPreservesItsFormatting() async throws {
+		let cases = [
+			(source: "**Alpha** Tail", expected: "**X** Tail", caret: 3),
+			(source: "_Alpha_ Tail", expected: "_X_ Tail", caret: 2),
+			(source: "[Alpha](https://example.com) Tail", expected: "[X](https://example.com) Tail", caret: 2),
+			(source: "[**Alpha**](https://example.com) Tail", expected: "[**X**](https://example.com) Tail", caret: 4),
+			(source: "***`Alpha`*** Tail", expected: "***`X`*** Tail", caret: 5),
+			(source: "***[Alpha](https://example.com)*** Tail",
+			 expected: "***[X](https://example.com)*** Tail", caret: 5),
+			(source: "***<u>Alpha</u>*** Tail", expected: "***<u>X</u>*** Tail", caret: 7),
+			(source: "***~~Alpha~~*** Tail", expected: "***~~X~~*** Tail", caret: 6),
+		]
+		for item in cases {
+			let alpha = (item.source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
+			try await select(harness, start: alpha.location, length: alpha.length)
+
+			try await withPasteboard("X") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == item.expected, "source=\(item.source)")
+			#expect(harness.lastCaretHint == item.caret)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test func multiParagraphPasteOverAWholeStyledRunExitsItsInlineSyntax() async throws {
+		let cases = [
+			(source: "**Alpha** Tail", expected: "One\n\nTwo Tail"),
+			(source: "_Alpha_ Tail", expected: "One\n\nTwo Tail"),
+			(source: "~~Alpha~~ Tail", expected: "One\n\nTwo Tail"),
+			(source: "`Alpha` Tail", expected: "One\n\nTwo Tail"),
+			(source: "==Alpha== Tail", expected: "One\n\nTwo Tail"),
+			(source: "^Alpha^ Tail", expected: "One\n\nTwo Tail"),
+			(source: "~Alpha~ Tail", expected: "One\n\nTwo Tail"),
+			(source: "<u>Alpha</u> Tail", expected: "One\n\nTwo Tail"),
+			(source: "[Alpha](https://example.com) Tail", expected: "One\n\nTwo Tail"),
+			(source: "[**Alpha**](https://example.com) Tail", expected: "One\n\nTwo Tail"),
+		]
+		for (index, item) in cases.enumerated() {
+			let alpha = (item.source as NSString).range(of: "Alpha")
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
+			try await select(
+				harness,
+				start: alpha.location,
+				length: alpha.length,
+				backward: index.isMultiple(of: 2))
+
+			try await withPasteboard("One\n\nTwo") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+
+			#expect(harness.source == item.expected,
+				"source=\(item.source), incidents=\(harness.coordinator.bridgeIncidents)")
+			try await harness.type("Z")
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == "One\n\nTwoZ Tail", "source=\(item.source)")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test func multiParagraphPasteInsideAStyledRunKeepsUntouchedFragmentsStyled() async throws {
+		let cases = [
+			(source: "**Alpha** Tail", selected: "ph",
+			 expected: "**Al**One\n\nTwo**a** Tail"),
+			(source: "**Alpha** Tail", selected: "Al",
+			 expected: "One\n\nTwo**pha** Tail"),
+			(source: "**Alpha** Tail", selected: "ha",
+			 expected: "**Alp**One\n\nTwo Tail"),
+			(source: "[Alpha](https://example.com) Tail", selected: "ph",
+			 expected: "[Al](https://example.com)One\n\nTwo[a](https://example.com) Tail"),
+			(source: "[**Alpha**](https://example.com) Tail", selected: "ph",
+			 expected: "[**Al**](https://example.com)One\n\nTwo[**a**](https://example.com) Tail"),
+			(source: "***`Alpha`*** Tail", selected: "ph",
+			 expected: "***`Al`***One\n\nTwo***`a`*** Tail"),
+			(source: "***[Alpha](https://example.com)*** Tail", selected: "ph",
+			 expected: "***[Al](https://example.com)***One\n\nTwo***[a](https://example.com)*** Tail"),
+			(source: "***<u>Alpha</u>*** Tail", selected: "ph",
+			 expected: "***<u>Al</u>***One\n\nTwo***<u>a</u>*** Tail"),
+			(source: "***~~Alpha~~*** Tail", selected: "ph",
+			 expected: "***~~Al~~***One\n\nTwo***~~a~~*** Tail"),
+			(source: "[***`Alpha`***](https://example.com/a(b)/c) Tail", selected: "ph",
+			 expected: "[***`Al`***](https://example.com/a(b)/c)One\n\nTwo[***`a`***](https://example.com/a(b)/c) Tail"),
+			(source: #"[***<u>Alpha</u>***](https://example.com/a\)b) Tail"#, selected: "ph",
+			 expected: "[***<u>Al</u>***](https://example.com/a\\)b)One\n\n" +
+				"Two[***<u>a</u>***](https://example.com/a\\)b) Tail"),
+		]
+		for (index, item) in cases.enumerated() {
+			let selected = (item.source as NSString).range(of: item.selected)
+			let harness = try await CoordinatorBridgeHarness(source: item.source)
+			try await select(
+				harness,
+				start: selected.location,
+				length: selected.length,
+				backward: index.isMultiple(of: 2))
+
+			try await withPasteboard("One\n\nTwo") {
+				try await harness.clipboardCommand(.paste)
+				try await harness.waitForSourceEdits(1)
+			}
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == item.expected,
+				"source=\(item.source), selected=\(item.selected)")
+			try await harness.type("Z")
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source.contains("TwoZ"), "source=\(item.source)")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
+	@Test func pastingMarkdownKeepsItAsSourceNotAsMarkup() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "head\n")
+		try await withPasteboard("**bold**") {
+			try await paste(into: harness, at: 4)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "head**bold**\n")
+		try await harness.waitQuiescent()
+		// The markers reached the source, so the render shows real bold — and
+		// the DOM has no styling the source can't account for.
+		#expect(try await harness.evaluate("String(document.querySelectorAll('strong').length)") == "1")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func pastingIntoATableCellFoldsLineBreaksIntoSpaces() async throws {
+		// A newline inside a row would shatter the table, and a cell can't show
+		// one anyway.
+		let table = "| a | b |\n| --- | --- |\n| c | d |"
+		let harness = try await CoordinatorBridgeHarness(source: table)
+		try await withPasteboard("one\ntwo") {
+			try await paste(into: harness, at: (table as NSString).range(of: "c").location + 1)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "| a | b |\n| --- | --- |\n| cone two | d |")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("String(document.querySelectorAll('table').length)") == "1")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func pastingAPipeIntoATableCellKeepsItInTheCell() async throws {
+		let table = "| Item | Notes |\n| --- | --- |\n| Alpha | café |\n"
+		let harness = try await CoordinatorBridgeHarness(source: table)
+		let selection = (table as NSString).range(of: "café")
+		try await select(harness, start: selection.location, length: selection.length)
+		try await withPasteboard("résumé | embedded") {
+			try await harness.clipboardCommand(.paste)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Alpha | résumé \\| embedded |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("String(document.querySelectorAll('tbody tr').length)") == "1")
+		#expect(try await harness.evaluate("document.querySelector('tbody td:last-child').textContent") == "résumé | embedded")
+		#expect(try await harness.stampMismatches() == [])
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Alpha | résumé \\| embeddedZ |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func tablePipeEscapingPreservesAlreadyEscapedPipes() {
+		#expect(MarkdownWebView.Coordinator.escapingTablePipes(
+			in: #"a \| b | c"#, source: "", insertion: 0) == #"a \| b \| c"#)
+	}
+
+	@Test func replacingASelectionAcrossAnEscapedTablePipe() async throws {
+		let table = "| Item | Notes |\n| --- | --- |\n| Beta | \\|Z |\n"
+		let harness = try await CoordinatorBridgeHarness(source: table)
+		try await harness.run("""
+			var cell = document.querySelector('tbody td:last-child')
+			var range = document.createRange()
+			range.selectNodeContents(cell)
+			window.getSelection().removeAllRanges()
+			window.getSelection().addRange(range)
+			""")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "|Z")
+		try await withPasteboard("foo | bar\nbaz") {
+			try await harness.clipboardCommand(.paste)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Beta | foo \\| bar baz |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("document.querySelector('tbody td:last-child [data-md-escaped-pipe-s]').getAttribute('data-md-escaped-pipe-s')") ==
+			String((harness.source as NSString).range(of: "\\|").location))
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.hardRejections == 0)
+
+		try await harness.run("""
+			var cell = document.querySelector('tbody td:last-child')
+			var range = document.createRange()
+			range.selectNodeContents(cell.querySelector('[data-md-escaped-pipe-s]'))
+			window.getSelection().removeAllRanges()
+			window.getSelection().addRange(range)
+			""")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "| Item | Notes |\n| --- | --- |\n| Beta | foo X bar baz |\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test func pastingWithNothingPastableThawsThePage() async throws {
+		await TestPasteboard.acquireExclusiveAccess()
+		defer { TestPasteboard.releaseExclusiveAccess() }
+		// The page freezes before posting, so a paste the host can't fulfil must
+		// still thaw it — otherwise typing stays silently dead until the
+		// frozen-timeout safety net fires seconds later.
+		let saved = TestPasteboard.string
+		defer {
+			TestPasteboard.string = saved
+		}
+		TestPasteboard.string = nil   // an empty pasteboard: nothing to paste
+
+		let harness = try await CoordinatorBridgeHarness(source: "alpha beta\n")
+		try await harness.placeCaret(5)
+		try await harness.clipboardCommand(.paste)
+		try await Task.sleep(for: .milliseconds(300))
+		#expect(harness.source == "alpha beta\n")
+		#expect(try await harness.evaluate("window.__mdIsFrozen() ? 'frozen' : 'live'") == "live")
+
+		// And typing works immediately, without waiting for the timeout.
+		try await harness.type("Q", at: 5)
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "alphaQ beta\n")
+	}
+
+	@Test func appKitResponderChainCutDeletesAForwardOrBackwardSelectionAndCopiesIt() async throws {
+		let source = "Before [linked](https://example.com/a_(b)) and **bold** after Tail"
+		let selectedSource = "Before [linked](https://example.com/a_(b)) and **bold** after"
+		let range = (source as NSString).range(of: selectedSource)
+		let expected = (source as NSString).replacingCharacters(in: range, with: "")
+		for backward in [false, true] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await select(harness, start: range.location, length: range.length, backward: backward)
+			try await withClearedPasteboard {
+				try await harness.clipboardCommand(.cut)
+				try await harness.waitForSourceEdits(1)
+				let copied = TestPasteboard.string ?? ""
+				#expect(copied.contains("Before linked and bold after"))
+			}
+			#expect(harness.source == expected, "backward=\(backward)")
+			#expect(harness.lastCaretHint == 0)
+			try await harness.waitQuiescent()
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.resyncCount == 0)
+			#expect(harness.coordinator.hardRejections == 0)
+			try await harness.type("Q")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "Q Tail")
+		}
+	}
+
+	@Test func commandXDeletesASelectionInsideAFencedCodeBlock() async throws {
+		let source = "```swift\nlet value = 1\nprint(value)\n```\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			var code = document.querySelector('pre code')
+			var range = document.createRange()
+			range.selectNodeContents(code)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string?.contains("let value = 1") == true)
+		}
+		#expect(harness.source == "```swift\n```\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func appKitCutAcrossLazyContinuationAndHTMLBreakUsesTheRealPasteboardRoute() async throws {
+		let source = """
+		2. **Timeline** - route<br />
+		This view is displayed when an item is selected. <br/>
+		When an event is visible, the user can access the ArticlePage.
+
+		Tail
+		"""
+		let selectedSource = """
+		This view is displayed when an item is selected. <br/>
+		When an event is visible, the user can access the
+		"""
+		let range = (source as NSString).range(of: selectedSource)
+		let expected = (source as NSString).replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length)
+		try await withClearedPasteboard {
+			try await harness.clipboardCommand(.cut)
+			try await harness.waitForSourceEdits(1)
+			let copied = TestPasteboard.string ?? ""
+			#expect(copied.contains("This view is displayed"))
+			#expect(copied.contains("the user can access the"))
+		}
+		#expect(harness.source == expected)
+		#expect(harness.lastCaretHint == range.location)
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func responderCopyThenPasteDuplicatesAStyledSelectionWithoutCopyMutatingSource() async throws {
+		let source = "Intro alpha **bold** and [link](https://example.com) tail"
+		let selectedSource = "alpha **bold** and [link](https://example.com)"
+		let range = (source as NSString).range(of: selectedSource)
+		let destination = (source as NSString).range(of: "tail").location
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.copy, in: harness)
+			try await harness.waitUntil("native Copy pasteboard delivery") {
+				TestPasteboard.string != nil
+			}
+			#expect(harness.source == source)
+			#expect(harness.sourceEditCount == 0)
+			let copied = try #require(TestPasteboard.string)
+			#expect(copied == "alpha bold and link")
+
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(1)
+			let expected = (source as NSString).replacingCharacters(
+				in: NSRange(location: destination, length: 0), with: copied)
+			#expect(harness.source == expected)
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesAChunkToANewPositionInTheSameRun() async throws {
+		let source = "zero alpha beta gamma omega"
+		let moved = "alpha beta "
+		let range = (source as NSString).range(of: moved)
+		let afterCut = (source as NSString).replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length, backward: true)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			#expect(TestPasteboard.string == moved)
+			try await harness.waitQuiescent()
+
+			let destination = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "zero gamma alpha beta omega")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesAWholeNestedCombinedLinkWithItsSourceSyntax() async throws {
+		let source = "zero ***[alpha beta](https://x)*** omega"
+		let visible = (source as NSString).range(of: "alpha beta")
+		let whole = (source as NSString).range(of: "***[alpha beta](https://x)***")
+		let afterCut = (source as NSString).replacingCharacters(in: whole, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(
+			harness, start: visible.location, length: visible.length, backward: true)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == "alpha beta")
+			#expect(MarkdownPasteboard.source == "***[alpha beta](https://x)***")
+			#expect(harness.source == afterCut)
+			try await harness.waitQuiescent()
+
+			let destination = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "zero ***[alpha beta](https://x)***X omega")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test(arguments: [false, true])
+	func cutThenPasteMovesAnInteriorSliceOutOfADeepWrapperStack(
+		backward: Bool
+	) async throws {
+		let source = "zero [***`alpha beta`***](https://example.com/a(b)/c) omega"
+		let moved = (source as NSString).range(of: "pha be")
+		let afterCut = "zero [***`alta`***](https://example.com/a(b)/c) omega"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(
+			harness, start: moved.location, length: moved.length, backward: backward)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(TestPasteboard.string == "pha be", "backward=\(backward)")
+			#expect(MarkdownPasteboard.source == "pha be", "backward=\(backward)")
+			#expect(harness.source == afterCut, "backward=\(backward)")
+			try await harness.waitQuiescent()
+
+			let destination = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: destination)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source ==
+				"zero [***`alta`***](https://example.com/a(b)/c) pha beomega",
+				"backward=\(backward)")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesTextBetweenTableCellsWithoutDamagingPipes() async throws {
+		let source = """
+			| Name | Age |
+			| --- | --- |
+			| Alice | 30 |
+			| Bob | 41 |
+			"""
+		let alice = (source as NSString).range(of: "Alice")
+		let afterCut = (source as NSString).replacingCharacters(in: alice, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: alice.location, length: alice.length)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			#expect(TestPasteboard.string == "Alice")
+			try await harness.waitQuiescent()
+
+			let bob = (afterCut as NSString).range(of: "Bob")
+			try await paste(into: harness, at: bob.location)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == """
+				| Name | Age |
+				| --- | --- |
+				|  | 30 |
+				| AliceBob | 41 |
+				""")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("String(document.querySelectorAll('table').length)") == "1")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.source.split(separator: "\n").allSatisfy {
+			$0.filter { $0 == "|" }.count == 3
+		})
+		// Cutting the cell down to "|  |" leaves two adjacent spaces, which is
+		// the case iOS WebKit rebalances: the run comes back a character short
+		// of the source it is stamped for, the queued edit's check catches it,
+		// and the bridge resyncs from the spliced source rather than trusting a
+		// DOM that has drifted. Everything that resync exists to protect is
+		// asserted above — source, pipes, stamps, no hard rejections. WebKit may
+		// rebalance this whitespace on either platform, but never needs more than
+		// the one bounded repair.
+		#expect(harness.coordinator.resyncCount <= 1)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func cutThenPasteMovesAMultiBlockChunkAndLeavesTheNextEditUsable() async throws {
+		let source = "First paragraph\n\nSecond paragraph\n\nThird paragraph\n\nTail"
+		let movedSource = "Second paragraph\n\nThird paragraph"
+		let range = (source as NSString).range(of: movedSource)
+		let afterCut = (source as NSString).replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		var pasted = ""
+		try await select(harness, start: range.location, length: range.length)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			let copied = try #require(TestPasteboard.string)
+			pasted = copied
+			#expect(copied.contains("Second paragraph"))
+			#expect(copied.contains("Third paragraph"))
+			try await harness.waitQuiescent()
+
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == copied + afterCut)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == pasted + "Q" + afterCut)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func largeBackwardResponderCutPasteRoundTripsMixedBlocksAndNextEdit() async throws {
+		let middle = (0..<120).map { index in
+			switch index % 4 {
+			case 0: return "Paragraph \(index) with **bold** and café 🙂."
+			case 1: return "- item \(index) with [link](https://example.com/\(index))"
+			case 2: return "> quote \(index) with `inline code`"
+			default: return "Line \(index)  \ncontinuation \(index)"
+			}
+		}.joined(separator: "\n\n")
+		let source = "Prefix alpha\n\n" + middle + "\n\nOmega suffix"
+		let text = source as NSString
+		let start = text.range(of: "alpha").location + 2
+		let end = text.range(of: "Omega").location + 3
+		let range = NSRange(location: start, length: end - start)
+		let selectedSource = text.substring(with: range)
+		let afterCut = text.replacingCharacters(in: range, with: "")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: range.location, length: range.length, backward: true)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == afterCut)
+			#expect(MarkdownPasteboard.source == selectedSource)
+			#expect(TestPasteboard.string?.contains("Paragraph 0 with bold") == true)
+			try await harness.waitQuiescent()
+
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		try await harness.waitQuiescent()
+
+		let expected = (source as NSString).replacingCharacters(
+			in: NSRange(location: end, length: 0), with: "Q")
+		#expect(harness.source == expected)
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func undoingAParagraphCutDoesNotCreateAStyledOnlyBlankParagraph() async throws {
+		let source = "Intro\n\n**Chosen paragraph.**\n\n**Next paragraph.**"
+		let chosenStart = (source as NSString).range(of: "**Chosen paragraph.**").location
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.run("""
+			var paragraphs = document.querySelectorAll('p')
+			var first = paragraphs[1].querySelector('[data-s]').firstChild
+			var next = paragraphs[2].querySelector('[data-s]').firstChild
+			var range = document.createRange()
+			range.setStart(first, 0)
+			range.setEnd(next, 0)
+			var selection = window.getSelection()
+			selection.removeAllRanges()
+			selection.addRange(range)
+			""")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source == "Intro\n\n**Next paragraph.**")
+			try await harness.waitQuiescent()
+
+			restore(source, caret: chosenStart, token: 1, in: harness)
+			try await harness.waitQuiescent()
+		}
+
+		#expect(harness.source == source)
+		#expect(try await harness.evaluate("""
+			String(Array.from(document.body.children).filter(function (element) {
+			  return element.tagName === 'P' && element.textContent.trim() === ''
+			}).length)
+			""") == "0")
+		#expect(try await harness.evaluate("""
+			Array.from(document.body.children).filter(function (element) {
+			  return element.tagName === 'P'
+			}).map(function (element) { return element.textContent }).join('|')
+			""") == "Intro|Chosen paragraph.|Next paragraph.")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func selectAllResponderCutKeepsPlainTextExternalAndRoundTripsExactSource() async throws {
+		let source = "# Heading\n\nAlpha **bold** text.\n\n> Quote\n\n- one\n- two"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("document.execCommand('selectAll')")
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await harness.waitForSourceEdits(1)
+			#expect(harness.source.isEmpty)
+			let copied = try #require(TestPasteboard.string)
+			#expect(copied.contains("Heading"))
+			#expect(copied.contains("Alpha bold text."))
+			#expect(copied.contains("one"))
+			try await harness.waitQuiescent()
+
+			try await paste(into: harness, at: 0)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source.hasSuffix("Q"))
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func pasteIssuedBeforeACutPatchSettlesIsIgnoredRatherThanAppliedAtStaleOffsets() async throws {
+		let source = "zero **move-this** chunk omega"
+		let moved = (source as NSString).range(of: "move-this")
+		let afterCut = "zero  chunk omega"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: moved.location, length: moved.length)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			// The cut freezes the old DOM synchronously. A nearly simultaneous
+			// paste must not address that old selection.
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(1)
+			try await Task.sleep(for: .milliseconds(150))
+			#expect(harness.source == afterCut)
+			#expect(harness.sourceEditCount == 1)
+			#expect(TestPasteboard.string == "move-this")
+			try await harness.waitQuiescent()
+
+			let omega = (afterCut as NSString).range(of: "omega").location
+			try await paste(into: harness, at: omega)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == "zero  chunk **move-this**omega")
+		}
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func immediatePasteAfterAPlainFastPathCutRoundTripsWithoutDivergence() async throws {
+		let source = "zero move-this chunk omega"
+		let moved = (source as NSString).range(of: "move-this ")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await select(harness, start: moved.location, length: moved.length)
+
+		try await withClearedPasteboard {
+			try await performResponderCommand(.cut, in: harness)
+			try await performResponderCommand(.paste, in: harness)
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source)
+			#expect(TestPasteboard.string == "move-this ")
+		}
+		try await harness.waitQuiescent()
+		try await harness.type("Q")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == "zero move-this Qchunk omega")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func pasteNormalizesMixedLineEndingsAndPreservesTabsAndUnicode() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Start\n")
+		try await withPasteboard("\tTabbed\r\nLine 😀\rCombining e\u{301}") {
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "Start\tTabbed\nLine 😀\nCombining e\u{301}\n")
+		try await harness.waitQuiescent()
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+}

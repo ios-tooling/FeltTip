@@ -6,4 +6,4 @@
 
 set -o pipefail
 
-MDR_RUN_BENCHMARKS=1 swift test --filter 'PerformanceTests|BenchmarkTests'
+FELTTIP_RUN_BENCHMARKS=1 swift test --filter 'PerformanceTests|BenchmarkTests'

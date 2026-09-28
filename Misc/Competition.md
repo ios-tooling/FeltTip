@@ -1,6 +1,6 @@
 # Spec coverage audit
 
-How MarkDownRange compares to the published markdown specs we target:
+How FeltTip compares to the published markdown specs we target:
 
 - **CommonMark 0.31.2** — https://spec.commonmark.org/0.31.2/
 - **GitHub Flavored Markdown (GFM)** — https://github.github.com/gfm/
