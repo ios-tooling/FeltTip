@@ -10,6 +10,23 @@
 
 import SwiftUI
 
+@MainActor
+enum MarkdownSplitEditRelay {
+	static func forward(
+		_ newText: String,
+		caret: Int?,
+		beginEditing: () -> Void,
+		report: ((String, Int?) -> Void)?,
+		write: (String) -> Void
+	) {
+		// The renderer can synchronously publish layout-driven scroll callbacks
+		// while the host is accepting this edit. Close the sync gate before the
+		// host changes its binding, rather than waiting for SwiftUI's onChange.
+		beginEditing()
+		if let report { report(newText, caret) } else { write(newText) }
+	}
+}
+
 /// Pane selected by the compact iOS source/rendered switch. Hosts can persist
 /// this per document while regular-width layouts continue to show both panes.
 public enum MarkdownCompactPane: String, CaseIterable, Identifiable, Sendable {
@@ -134,7 +151,7 @@ public struct WebSplitMarkdownScreen: View {
 				typewriterMode: typewriterMode,
 				theme: theme,
 				onCursorPositionChanged: { line, col, sel, offset in onCursorPositionChanged?(line, col, sel, offset) },
-				onSourceEdit: onSourceEdit.map { report in { new, caret in report(new, caret) } },
+				onSourceEdit: { new, caret in relaySourceEdit(new, caret: caret) },
 				onSelectionChanged: { range in
 					// Any selection activity here makes this the active pane:
 					// its own mirror is stale noise regardless of the new
@@ -176,6 +193,15 @@ public struct WebSplitMarkdownScreen: View {
 		}
 	}
 
+	private func relaySourceEdit(_ newText: String, caret: Int?) {
+		MarkdownSplitEditRelay.forward(
+			newText,
+			caret: caret,
+			beginEditing: suspendSyncWhileEditing,
+			report: onSourceEdit,
+			write: { text = $0 })
+	}
+
 	private var preview: MarkdownWebView {
 		var view = MarkdownWebView(text: text, theme: theme, fontSize: fontSize, baseURL: baseURL)
 			.renderMermaid(true)
@@ -207,7 +233,7 @@ public struct WebSplitMarkdownScreen: View {
 		}
 		if editablePreview {
 			view = view.editable(true).onSourceEdit { new, caret in
-				if let onSourceEdit { onSourceEdit(new, caret) } else { text = new }
+				relaySourceEdit(new, caret: caret)
 			}
 		}
 		return view
