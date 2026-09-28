@@ -1272,7 +1272,12 @@ extension MarkdownWebView {
 		/// mounted web view keeps it pending until its first stamped render;
 		/// an already-rendered view can apply it immediately.
 		func applySelectionTarget(to webView: WKWebView) {
-			guard let target = parent.selectionTarget,
+			// A prewarmed page can receive the new mode's target one update before
+			// it is revealed. Do not consume the token while hidden: placing the
+			// selection focuses the page, `updateUXView` immediately resigns it, and
+			// the visible update would otherwise mistake that target for applied.
+			guard !parent.isInactive,
+			      let target = parent.selectionTarget,
 			      target.token != lastSelectionTargetToken else { return }
 			lastSelectionTargetToken = target.token
 			let selection = composedSelection(target.range, in: parent.text as NSString)

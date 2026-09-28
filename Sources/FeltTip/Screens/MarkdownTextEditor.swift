@@ -267,6 +267,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let range = NSRange(location: location, length: selectedLength)
 			textView.setSelectedRange(range)
 			textView.scrollRangeToVisible(range)
+			// Selection notifications are intentionally ignored while SwiftUI is
+			// driving this update, so publish the cursor position explicitly. Without
+			// this, hosts keep the styled editor's stale line/column until the user
+			// moves the caret in the raw editor.
+			context.coordinator.reportCursorPosition(in: textView)
 		}
 
 		applyMirroredSelection(to: textView, coordinator: context.coordinator)

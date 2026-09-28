@@ -173,6 +173,41 @@ struct EditorSelectionHandoffTests {
 		}
 	}
 
+	@Test func inactiveStyledViewDefersSelectionTargetUntilRevealed() async throws {
+		let source = "# Heading\n\nbody tail"
+		let target = NSRange(
+			location: (source as NSString).range(of: "tail").location + 2,
+			length: 0)
+		let handoff = MarkdownSelectionTarget(range: target, token: 1)
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(handoff)
+		.inactive(true)
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+
+		// The hidden page retains an unrelated old caret. Revealing it with the
+		// same token must still install the incoming editor's selection.
+		try await harness.placeCaret(2)
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(handoff)
+		.onSourceEdit { [weak harness] newText, _ in
+			harness?.recordExternalEdit(newText)
+		}
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(1)
+
+		let expected = (source as NSString).replacingCharacters(in: target, with: "X")
+		#expect(harness.source == expected)
+	}
+
 	@Test func styledBlurPublishesTheFinalRangeEvenAfterFocusMovesToTheModeControl() async throws {
 		let source = "Alpha bravo charlie"
 		let range = (source as NSString).range(of: "bravo")
@@ -212,6 +247,42 @@ struct EditorSelectionHandoffTests {
 		let textView = try #require(try await waitForTextView(in: hosting))
 		#expect(textView.selectedRange() == NSRange(location: 8, length: 2))
 		#expect((textView.string as NSString).substring(with: textView.selectedRange()) == "89")
+	}
+
+	@Test func rawEditorReportsCursorAfterInstallingSelectionTarget() async throws {
+		let source = "# Heading\n\nsecond line\n"
+		let target = (source as NSString).length
+		let expected = MarkdownLineIndex(text: source).position(at: target)
+		var text = source
+		var heading: String?
+		var reports: [(line: Int, column: Int, offset: Int)] = []
+		let root = RawMarkdownScreen(
+			text: Binding(get: { text }, set: { text = $0 }),
+			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
+			fontSize: 14,
+			onCursorPositionChanged: { line, column, _, offset in
+				reports.append((line, column, offset))
+			},
+			selectionTarget: MarkdownSelectionTarget(
+				range: NSRange(location: target, length: 0), token: 1)
+		)
+		let hosting = NSHostingView(rootView: root)
+		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+
+		hosting.layoutSubtreeIfNeeded()
+		_ = try #require(try await waitForTextView(in: hosting))
+		for _ in 0..<40 where reports.last?.offset != target {
+			try await Task.sleep(for: .milliseconds(25))
+		}
+
+		#expect(reports.last?.offset == target)
+		#expect(reports.last?.line == expected.line)
+		#expect(reports.last?.column == expected.column)
 	}
 
 	@Test func unicodeSelectionRoundTripsThroughStyledAndRawHandoffs() async throws {
