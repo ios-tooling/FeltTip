@@ -2139,6 +2139,28 @@
   });
 
   document.addEventListener('keydown', function (event) {
+    // WebKit treats Tab as focus traversal before it emits a beforeinput
+    // indent/outdent command. In a list that silently abandons the live
+    // caret; Shift-Tabbing back then recreates it at the start of the page,
+    // so the next keystroke edits the heading instead of the list item the
+    // user left. List indentation is deliberately unsupported for now (see
+    // EDITING.md), so make the physical keys the same true no-op as the
+    // blocked edit commands while leaving normal Tab navigation everywhere
+    // else intact.
+    if (event.key === 'Tab' && document.activeElement === document.body &&
+        !event.metaKey && !event.ctrlKey && !event.altKey) {
+      var tabSelection = window.getSelection();
+      if (tabSelection && tabSelection.rangeCount) {
+        var tabRange = tabSelection.getRangeAt(0);
+        var tabNode = tabRange.startContainer.nodeType === 1
+          ? tabRange.startContainer : tabRange.startContainer.parentNode;
+        if (tabNode && tabNode.closest && tabNode.closest('li')) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
+    }
     // WebKit can decline the native Delete command (and AppKit emits the
     // system beep) when a mouse selection owns PRE/CODE element boundaries,
     // even though the block is content-editable. Route either physical delete
