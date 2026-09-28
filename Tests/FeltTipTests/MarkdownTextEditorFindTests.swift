@@ -6,6 +6,7 @@
 #endif
 import SwiftUI
 import Testing
+import WebKit
 @testable import FeltTip
 
 @MainActor
@@ -87,7 +88,13 @@ struct MarkdownTextEditorFindTests {
 			backing: .buffered,
 			defer: false
 		)
-		window.contentView = hostingView
+		let root = NSView(frame: hostingView.frame)
+		let prewarmedEditor = MarkdownWebViewFindHost(webView: WKWebView())
+		prewarmedEditor.frame = root.bounds
+		prewarmedEditor.isInactive = true
+		root.addSubview(prewarmedEditor)
+		root.addSubview(hostingView)
+		window.contentView = root
 		window.orderFront(nil)
 
 		var textView: NSTextView?
@@ -109,7 +116,7 @@ struct MarkdownTextEditorFindTests {
 		showFind.tag = NSTextFinder.Action.showFindInterface.rawValue
 		rawEditor.performTextFinderAction(showFind)
 
-		_ = try await waitForSearchField(in: hostingView)
+		let searchField = try await waitForSearchField(in: hostingView)
 		let findPasteboard = NSPasteboard(name: .find)
 		let previousFindString = findPasteboard.string(forType: .string)
 		defer {
@@ -143,6 +150,27 @@ struct MarkdownTextEditorFindTests {
 			rawEditor.selectedRange() == firstRange
 		}
 		#expect(rawEditor.string == original)
+
+		try #require(window.makeFirstResponder(searchField))
+		let escape = try #require(NSEvent.keyEvent(
+			with: .keyDown,
+			location: .zero,
+			modifierFlags: [],
+			timestamp: 0,
+			windowNumber: window.windowNumber,
+			context: nil,
+			characters: "\u{1b}",
+			charactersIgnoringModifiers: "\u{1b}",
+			isARepeat: false,
+			keyCode: 53
+		))
+		window.sendEvent(escape)
+		try await waitUntil("raw find bar dismissal") {
+			rawEditor.enclosingScrollView?.isFindBarVisible == false
+		}
+		try await Task.sleep(for: .milliseconds(500))
+		#expect(window.firstResponder === rawEditor)
+		#expect(rawEditor.selectedRange() == firstRange)
 	}
 
 	private func perform(_ action: NSTextFinder.Action, on textView: NSTextView) {

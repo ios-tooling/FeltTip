@@ -110,6 +110,43 @@ struct MarkdownWebViewFindHostTests {
 	}
 
 	@Test
+	func inactivePrewarmedHostCannotTakeFocusFromTheVisibleEditor() throws {
+		let root = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+		let visibleEditor = NSTextView(frame: root.bounds)
+		let host = MarkdownWebViewFindHost(webView: WKWebView())
+		host.frame = root.bounds
+		root.addSubview(host)
+		root.addSubview(visibleEditor)
+		let window = NSWindow(
+			contentRect: root.frame,
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		window.contentView = root
+		window.orderFront(nil)
+		try #require(window.makeFirstResponder(visibleEditor))
+
+		try #require(window.makeFirstResponder(host))
+		host.isInactive = true
+		#expect(!host.acceptsFirstResponder)
+		#expect(window.firstResponder !== host)
+		let bold = try #require(NSEvent.keyEvent(
+			with: .keyDown,
+			location: .zero,
+			modifierFlags: .command,
+			timestamp: 0,
+			windowNumber: window.windowNumber,
+			context: nil,
+			characters: "b",
+			charactersIgnoringModifiers: "b",
+			isARepeat: false,
+			keyCode: 11
+		))
+		#expect(host.performKeyEquivalent(with: bold) == false)
+	}
+
+	@Test
 	func dismissingFindRestoresTheEditableCaret() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Aster tail.\n")
 		let host = harness.installFindHost()

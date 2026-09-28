@@ -865,6 +865,28 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 /// the leading characters. This insets the content view by the ruler's thickness
 /// after the standard tiling so the text always starts to the right of the gutter.
 private final class RulerInsetScrollView: NSScrollView {
+	override var isFindBarVisible: Bool {
+		didSet {
+			guard oldValue, !isFindBarVisible,
+			      let textView = documentView as? NSTextView else { return }
+			let foundRange = textView.selectedRange()
+			// AppKit may leave the window itself (or an unrelated sibling) as
+			// first responder after Escape closes the native find bar. Restore
+			// the document view on the next turn so the found range remains the
+			// active editing selection for an immediate formatting shortcut.
+			RunLoop.main.perform { [weak self, weak textView] in
+				MainActor.assumeIsolated {
+					guard let self, let textView, !self.isFindBarVisible else { return }
+					if foundRange.length > 0,
+					   foundRange.upperBound <= (textView.string as NSString).length {
+						textView.setSelectedRange(foundRange)
+					}
+					self.window?.makeFirstResponder(textView)
+				}
+			}
+		}
+	}
+
 	override func tile() {
 		// Standard NSScrollView tiling already places a vertical ruler beside
 		// the content view — the frame surgery this subclass used to do (and

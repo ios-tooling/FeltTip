@@ -16,6 +16,11 @@ import WebKit
 
 public final class MarkdownWebViewFindHost: UIView {
 	public let webView: WKWebView
+	public var isInactive = false {
+		didSet {
+			if isInactive { webView.endEditing(true) }
+		}
+	}
 
 	public init(webView: WKWebView) {
 		self.webView = webView

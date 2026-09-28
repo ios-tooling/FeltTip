@@ -386,11 +386,13 @@ public struct MarkdownWebView: UXViewRepresentable {
 		#endif
 		// The host stacks the standard find bar above the web view — hosts
 		// route ⌘F to it the same way they would to an NSTextView.
+		host.isInactive = isInactive
 		return host
 	}
 
 	public func updateUXView(_ host: MarkdownWebViewFindHost, context: Context) {
 		let webView = host.webView
+		host.isInactive = isInactive
 		context.coordinator.parent = self
 		context.coordinator.resolvedTheme = theme.resolved(for: colorScheme)
 		context.coordinator.localResourceAccessPolicy?.setRoot(baseURL)
@@ -408,18 +410,6 @@ public struct MarkdownWebView: UXViewRepresentable {
 		#endif
 		context.coordinator.currentLineChanges = context.environment.markdownLineChanges
 		context.coordinator.applyLineChanges(to: webView)
-		if isInactive { resignFocus(of: webView) }
-	}
-
-	private func resignFocus(of webView: WKWebView) {
-		#if os(macOS)
-			guard let window = webView.window,
-				  let responder = window.firstResponder as? NSView,
-				  responder === webView || responder.isDescendant(of: webView) else { return }
-			window.makeFirstResponder(nil)
-		#else
-			webView.endEditing(true)
-		#endif
 	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(parent: self) }

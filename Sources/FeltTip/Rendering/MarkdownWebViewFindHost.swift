@@ -17,6 +17,26 @@
 
 public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	public let webView: WKWebView
+	/// A pre-warmed page can remain mounted behind another editor. It must not
+	/// participate in AppKit's key-view restoration while hidden: closing a
+	/// native find bar otherwise hands focus to this host and the next editing
+	/// shortcut is delivered to the invisible page.
+	public var isInactive = false {
+		didSet {
+			guard isInactive, let window,
+			      let responder = window.firstResponder as? NSView,
+			      responder === self || responder.isDescendant(of: self) else { return }
+			window.makeFirstResponder(nil)
+		}
+	}
+
+	public override var acceptsFirstResponder: Bool { !isInactive }
+
+	public override func becomeFirstResponder() -> Bool {
+		guard !isInactive else { return false }
+		return super.becomeFirstResponder()
+	}
+
 	private let bar = NSVisualEffectView()
 	private let searchField = NSSearchField()
 	private lazy var previousButton = chevronButton(system: "chevron.up", action: #selector(findPrevious))
@@ -42,6 +62,16 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	// MARK: Formatting key equivalents
 
 	public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+		// AppKit can restore focus to a wrapper after it was already marked
+		// inactive (notably when a sibling NSTextView's find bar closes). Give
+		// up that stale focus before returning so the same key equivalent can
+		// continue to the visible editor's menu command.
+		if isInactive {
+			if window?.firstResponder === self {
+				window?.makeFirstResponder(nil)
+			}
+			return false
+		}
 		// Bare WKWebView doesn't map ⌘B/⌘I/⌘⇧X to editing commands without
 		// a menu; claim them when the web view is focused and drive WebKit's
 		// editor commands, which reach the source through the edit bridge's
