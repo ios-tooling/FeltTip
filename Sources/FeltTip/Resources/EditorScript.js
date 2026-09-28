@@ -1507,6 +1507,7 @@
     return true;
   }
   function post(msg) { window.webkit.messageHandlers.mdedit.postMessage(msg); }
+  var lastFootnoteReference = null;
   function installLinkOpenButtons() {
     if (!document.getElementById('md-link-open-button-style')) {
       var style = document.createElement('style');
@@ -1573,12 +1574,22 @@
       // button (which would route the current document back through the host).
       if (rawHref.charAt(0) === '#') {
         link.title = rawHref;
+        var isFootnoteReference = rawHref.indexOf('#feltip-footnote-') === 0 &&
+          rawHref.indexOf('#feltip-footnote-ref-') !== 0;
+        var isFootnoteBacklink = rawHref.indexOf('#feltip-footnote-ref-') === 0;
         var navigateInPage = function (event) {
           if (event.type === 'mousedown' && event.button !== 0) { return; }
-          var target = document.getElementById(rawHref.slice(1));
+          var expectedReferenceHref = isFootnoteBacklink
+            ? rawHref.replace('#feltip-footnote-ref-', '#feltip-footnote-') : null;
+          var target = isFootnoteBacklink && lastFootnoteReference &&
+            lastFootnoteReference.isConnected &&
+            lastFootnoteReference.getAttribute('href') === expectedReferenceHref
+              ? lastFootnoteReference
+              : document.getElementById(rawHref.slice(1));
           if (!target) { return; }
           event.preventDefault();
           event.stopPropagation();
+          if (isFootnoteReference) { lastFootnoteReference = link; }
           target.scrollIntoView({ block: 'start' });
         };
         link.addEventListener('mousedown', navigateInPage);

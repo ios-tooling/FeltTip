@@ -200,6 +200,43 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		#expect(atReference < 200)
 	}
 
+	@Test func repeatedFootnoteBacklinkReturnsToActivatedOccurrence() async throws {
+		let firstFiller = (1...35).map { "First section \($0)." }.joined(separator: "\n\n")
+		let secondFiller = (1...35).map { "Second section \($0)." }.joined(separator: "\n\n")
+		let source = """
+		First occurrence.[^shared]
+
+		\(firstFiller)
+
+		Second occurrence.[^shared]
+
+		\(secondFiller)
+
+		[^shared]: Shared details.
+		"""
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.run("""
+			var references = document.querySelectorAll('a[href="#feltip-footnote-shared"]');
+			references[1].dispatchEvent(new MouseEvent('mousedown', {
+			  bubbles: true, cancelable: true, button: 0
+			}));
+			""")
+		let atNote = Int(try await harness.evaluate("String(Math.round(window.scrollY))") ?? "0") ?? 0
+		#expect(atNote > 1_000)
+
+		try await harness.run("""
+			var back = document.querySelector('a[href="#feltip-footnote-ref-shared"]');
+			back.dispatchEvent(new MouseEvent('mousedown', {
+			  bubbles: true, cancelable: true, button: 0
+			}));
+			""")
+		let atSecondReference = Int(
+			try await harness.evaluate("String(Math.round(window.scrollY))") ?? "0") ?? 0
+		#expect(atSecondReference > 500)
+		#expect(atSecondReference < atNote)
+	}
+
 	@Test func compositionReconcilesTheWholeRunAtOnce() async throws {
 		// The inline-predictive-text scenario: while a composition is live,
 		// plain keystrokes still arrive as ordinary insertText events, but
