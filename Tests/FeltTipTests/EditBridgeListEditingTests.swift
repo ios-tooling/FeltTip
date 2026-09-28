@@ -179,6 +179,29 @@ import Testing
 		#expect(buttons.allSatisfy { (0...4).contains($0.bottomInset) })
 	}
 
+	@Test func readOnlyDetailsListDoesNotAdvertiseAnAddButton() async throws {
+		let source = """
+			<details>
+			<summary>More</summary>
+
+			- read only
+
+			</details>
+
+			- editable
+			"""
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let inspection = try await harness.evaluate("""
+			String(document.querySelectorAll('.md-list-add-button').length)
+			  + '|' + String(document.querySelectorAll(
+			    'details .md-list-add-button').length)
+			""")
+
+		#expect(inspection == "1|0")
+		#expect(harness.source == source)
+		#expect(harness.sourceEditCount == 0)
+	}
+
 	@Test func clickingAListsButtonAppendsAndFocusesItsNewTask() async throws {
 		let source = "- first\n\nparagraph\n\n- [x] finished\n"
 		let harness = try await CoordinatorBridgeHarness(source: source)

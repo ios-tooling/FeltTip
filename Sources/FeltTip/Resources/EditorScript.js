@@ -1643,6 +1643,10 @@
       document.head.appendChild(style);
     }
     document.querySelectorAll('ul, ol').forEach(function (list) {
+      // Read-only islands (details, alerts, frontmatter, etc.) can contain
+      // source-stamped list runs, but their source cannot be edited through
+      // the bridge. Do not advertise an Add action that must silently fail.
+      if (!list.isContentEditable) return;
       if (!lastEditableRunInList(list)) return;
       if (Array.prototype.some.call(list.children, function (child) {
         return child.classList &&
