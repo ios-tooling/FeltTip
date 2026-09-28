@@ -71,6 +71,11 @@ extension MarkdownWebView {
 		/// through a requestAnimationFrame throttle that headless test windows
 		/// don't reliably run.
 		var lastScrollY: Double = 0
+		/// A full navigation resets WKWebView's native scroll view before the new
+		/// page can ask us to restore it. Keep the pre-navigation offset separate
+		/// so that reset's synthetic `scrollY == 0` report cannot overwrite the
+		/// user's reading position while the replacement page is loading.
+		var pendingReloadScrollY: Double?
 		/// Selection (offset + length; length 0 = caret) to restore after a
 		/// structural re-render. Style toggles restore the full selection so
 		/// repeated ⌘B/⌘I keep operating on the same text.
@@ -108,6 +113,9 @@ extension MarkdownWebView {
 		/// finished render only lands while its generation is still current, so
 		/// a slow render of stale text can't overwrite a newer page.
 		private var renderGeneration = 0
+		/// Cancels an older asynchronous pre-navigation scroll snapshot when a
+		/// newer configuration change supersedes it before JavaScript replies.
+		private var reloadCaptureGeneration = 0
 		/// Currently executing full/fragment render. Superseding work cancels
 		/// the task as well as advancing the generation, so cancellable render
 		/// stages can stop consuming CPU instead of merely dropping their result.
@@ -239,6 +247,7 @@ extension MarkdownWebView {
 			}
 			if lastRenderedText == nil || pendingSelection != nil || config != lastConfigSignature
 				|| (parent.renderMermaid && !parent.isEditable) {
+				let replacingExistingPage = lastRenderedText != nil
 				pendingSwap?.cancel()
 				pendingSwap = nil
 				pendingHostText = nil
@@ -250,7 +259,11 @@ extension MarkdownWebView {
 				pendingStructuralTailBoundary = nil
 				pendingStructuralText = nil
 				bumpEpoch()
-				loadHTML(for: parent.text, into: webView)
+				if replacingExistingPage {
+					captureScrollThenLoadHTML(for: parent.text, into: webView)
+				} else {
+					loadHTML(for: parent.text, into: webView)
+				}
 				return
 			}
 			beginHostUpdate(parent.text, in: webView)
@@ -260,6 +273,21 @@ extension MarkdownWebView {
 				guard !Task.isCancelled, let self, let webView else { return }
 				self.pendingSwap = nil
 				self.applyBodySwap(into: webView)
+			}
+		}
+
+		private func captureScrollThenLoadHTML(for text: String, into webView: WKWebView) {
+			reloadCaptureGeneration += 1
+			let generation = reloadCaptureGeneration
+			webView.evaluateJavaScript("window.scrollY || window.pageYOffset || 0") {
+				[weak self, weak webView] result, _ in
+				guard let self, let webView, generation == self.reloadCaptureGeneration else { return }
+				if let number = result as? NSNumber {
+					let capturedY = max(0, number.doubleValue)
+					self.lastScrollY = capturedY
+					self.pendingReloadScrollY = capturedY > 0 ? capturedY : nil
+				}
+				self.loadHTML(for: text, into: webView)
 			}
 		}
 
@@ -1126,6 +1154,7 @@ extension MarkdownWebView {
 
 		public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
 			completePageSetup(in: webView)
+			pendingReloadScrollY = nil
 		}
 
 		func completePageSetup(in webView: WKWebView) {
@@ -1176,9 +1205,9 @@ extension MarkdownWebView {
 				didApplyInitialScroll = true
 				log("didFinish: initial scroll fraction \(initial)")
 				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(initial));", completionHandler: nil)
-			} else if lastScrollY > 0 {
-				log("didFinish: restoring scrollY \(lastScrollY)")
-				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null, 0);", completionHandler: nil)
+			} else if let restoreY = pendingReloadScrollY ?? (lastScrollY > 0 ? lastScrollY : nil) {
+				log("didFinish: restoring scrollY \(restoreY)")
+				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(restoreY), null, 0);", completionHandler: nil)
 			}
 			if didStartInitialRender, !didSignalInitialRenderReady {
 				didSignalInitialRenderReady = true

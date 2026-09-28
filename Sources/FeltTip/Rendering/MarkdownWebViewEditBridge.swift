@@ -29,6 +29,10 @@ extension MarkdownWebView.Coordinator {
 		// Scroll position report — remembered so reloads don't jump to top, and
 		// forwarded to the host (as top/visible/content fractions) for sync.
 		if body["type"] as? String == "scroll" {
+			// A full navigation resets the native scroll view to zero before the
+			// replacement page is ready. Preserve the pre-navigation snapshot until
+			// didFinish restores it; otherwise that synthetic event wins the race.
+			guard pendingReloadScrollY == nil else { return }
 			if let y = body["y"] as? Double { lastScrollY = y }
 			if let top = body["top"] as? Double,
 			   let visible = body["visible"] as? Double,

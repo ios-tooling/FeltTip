@@ -17,6 +17,7 @@ import WebKit
 @MainActor
 private final class EditorHost: NSObject, WKScriptMessageHandler {
 	private(set) var text: String
+	private var theme: MarkdownTheme = .default
 	let webView: WKWebView
 	let coordinator: MarkdownWebView.Coordinator
 	private let host: TestWindowHost
@@ -43,10 +44,16 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		coordinator.load(into: webView)
 	}
 
+	func changeTheme(to theme: MarkdownTheme) {
+		self.theme = theme
+		updateParent()
+		coordinator.load(into: webView)
+	}
+
 	/// Mirrors `updateNSView`: a source edit updates the host's text, which
 	/// hands the coordinator a fresh parent value and re-runs `load`.
 	private func updateParent() {
-		coordinator.parent = MarkdownWebView(text: text, theme: .default, fontSize: 16)
+		coordinator.parent = MarkdownWebView(text: text, theme: theme, fontSize: 16)
 			.editable(true)
 			.onSourceEdit { [weak self] new, _ in
 				guard let self else { return }
@@ -389,6 +396,36 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		try await Task.sleep(for: .milliseconds(200))
 		let scrollY = try await host.evaluate("String(Math.round(window.scrollY))").flatMap { Double($0) } ?? -1
 		#expect(scrollY > 200, "outline scroll did not move the view (scrollY \(scrollY))")
+	}
+
+	@Test func themeReloadPreservesLiveScrollPosition() async throws {
+		let host = try await makeHost()
+		let target = try await host.evaluate("""
+			(function () {
+			  var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+			    - window.innerHeight;
+			  var y = Math.round(Math.max(0, maxY * 0.6));
+			  window.scrollTo(0, y);
+			  window.__testThemeReloadNonce = 'old-page';
+			  return String(y);
+			})()
+			""").flatMap(Double.init) ?? -1
+		#expect(target > 0)
+
+		host.changeTheme(to: .sepia)
+		for _ in 0..<100 {
+			let state = try await host.evaluate("""
+				(typeof window.__mdRestoreScrollThenCaret === 'function' &&
+				 typeof window.__testThemeReloadNonce === 'undefined') ? 'ready' : 'waiting'
+				""")
+			if state == "ready" { break }
+			try await Task.sleep(for: .milliseconds(50))
+		}
+		try await Task.sleep(for: .milliseconds(300))
+
+		let restored = try await host.evaluate("String(Math.round(window.scrollY))")
+			.flatMap(Double.init) ?? -1
+		#expect(abs(restored - target) < 60, "theme reload moved scroll from \(target) to \(restored)")
 	}
 
 	@Test func externalTextChangeSwapsContentWithoutNavigating() async throws {
