@@ -93,6 +93,29 @@ struct EditBridgeWhitespaceBoundaryTests {
 		try await assertHealthy(harness)
 	}
 
+	@Test func typingAndDeletingInATabbedRunPreservesTheTabWithoutRecovery() async throws {
+		let source = "Alpha\tBeta\n\nTail"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"window.__mdPlaceCaret(2)",
+			"document.execCommand('insertText', false, 'X')",
+			"document.execCommand('insertText', false, '!')",
+			"document.execCommand('insertText', false, '?')",
+			"document.execCommand('insertText', false, 'Z')",
+		])
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "AlX!?Zpha\tBeta\n\nTail")
+		try await assertHealthy(harness)
+
+		try await harness.batch([
+			"window.__mdPlaceCaret(2, 4)",
+			"document.execCommand('delete')",
+		])
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == source)
+		try await assertHealthy(harness)
+	}
+
 	@Test func backspaceMergePreservesWhitespaceOnBothSidesOfSeparator() async throws {
 		let source = "Alpha \n\n  Beta\n\nTail"
 		let beta = (source as NSString).range(of: "Beta").location
@@ -131,7 +154,8 @@ struct EditBridgeWhitespaceBoundaryTests {
 
 		#expect(harness.source == "text de ewor samle beta")
 		#expect(harness.coordinator.resyncCount == 0)
-		#expect(try await harness.stampMismatches() == [])
+		let mismatches = try await harness.stampMismatches()
+		#expect(mismatches == [], Comment(rawValue: mismatches.joined(separator: "; ")))
 	}
 
 	@Test func insertingAnotherRepeatedSpaceDoesNotNeedRecovery() async throws {

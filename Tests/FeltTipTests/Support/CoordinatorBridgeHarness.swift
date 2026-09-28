@@ -149,6 +149,16 @@ final class CoordinatorBridgeHarness {
 		coordinator.load(into: webView)
 	}
 
+	#if os(macOS)
+	/// Put the real coordinator's page inside the find host, as the app does.
+	func installFindHost() -> MarkdownWebViewFindHost {
+		let host = MarkdownWebViewFindHost(webView: webView)
+		host.frame = window.contentView?.bounds ?? webView.frame
+		window.contentView = host
+		return host
+	}
+	#endif
+
 	/// Adopt text the host set directly (an undo/redo restore), keeping the
 	/// harness's mirror of the source in step without counting an edit.
 	func adoptHostText(_ text: String) {

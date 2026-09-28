@@ -108,10 +108,26 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	}
 
 	private func showBar() {
+		let wasVisible = barVisible
 		barVisible = true
 		bar.isHidden = false
 		needsLayout = true
-		window?.makeFirstResponder(searchField)
+		if !wasVisible {
+			// WKWebView.find replaces the editor selection with its match. Keep the
+			// user's original caret so dismissing Find can resume editing there.
+			// Capture before moving focus: WebKit may clear its selection on blur.
+			webView.evaluateJavaScript("""
+				window.__mdFindSavedRange = (function () {
+				  var selection = window.getSelection();
+				  return selection && selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+				})(); true;
+				""") { [weak self] _, _ in
+				guard let self, self.barVisible else { return }
+				self.window?.makeFirstResponder(self.searchField)
+			}
+		} else {
+			window?.makeFirstResponder(searchField)
+		}
 	}
 
 	private func hideBar() {
@@ -119,7 +135,23 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		bar.isHidden = true
 		needsLayout = true
 		window?.makeFirstResponder(webView)
-		clearMatch()
+		webView.evaluateJavaScript("""
+			(function () {
+			  var selection = window.getSelection();
+			  if (!selection) return;
+			  selection.removeAllRanges();
+			  var saved = window.__mdFindSavedRange;
+			  window.__mdFindSavedRange = null;
+			  var range = saved && saved.startContainer.isConnected && saved.endContainer.isConnected
+			    ? saved : document.createRange();
+			  if (range !== saved) {
+			    range.selectNodeContents(document.body);
+			    range.collapse(false);
+			  }
+			  selection.addRange(range);
+			})()
+			""", completionHandler: nil)
+		updateMatchCount(for: "")
 	}
 
 	private func find(forward: Bool) {
@@ -139,6 +171,13 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		// WKWebView represents the active find result as a selection.
 		webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
 		updateMatchCount(for: "")
+	}
+
+	/// Host-driven source changes can replace the DOM without changing the
+	/// search field. Recount after the replacement actually lands on the page.
+	func refreshMatchCountIfVisible() {
+		guard barVisible else { return }
+		updateMatchCount(for: searchField.stringValue)
 	}
 
 	// MARK: Bar UI

@@ -94,6 +94,21 @@ struct InlineBuilder: MarkupWalker {
 	}
 
 	mutating func visitText(_ text: Markdown.Text) {
+		if let converter = sourceConverter, let range = text.range,
+		   let fragments = converter.fragmentsAroundEscapedPipes(
+			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
+			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
+			rendered: text.string) {
+			for fragment in fragments {
+				var str = AttributedString(fragment.text)
+				applyCurrentStyle(&str)
+				str.markdownSourceOffset = fragment.sourceOffset
+				str.markdownEscapedPipeSourceOffset = fragment.escapedPipeSourceOffset
+				result += str
+			}
+			charOffset += text.string.count
+			return
+		}
 		var str = AttributedString(text.string)
 		applyCurrentStyle(&str)
 		if let converter = sourceConverter, let range = text.range,

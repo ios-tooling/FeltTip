@@ -52,6 +52,29 @@ import Testing
 		#expect(change.selection == NSRange(location: 5, length: 0))
 	}
 
+	@Test(arguments: [
+		(source: "`Bravo charlie`", selected: "Bravo", expected: "Bravo `charlie`"),
+		(source: "`Bravo charlie`", selected: "charlie", expected: "`Bravo` charlie"),
+		(source: "`Alpha Bravo charlie`", selected: "Bravo",
+		 expected: "`Alpha` Bravo `charlie`"),
+		(source: "`Alpha` Bravo `charlie`", selected: "Bravo",
+		 expected: "`Alpha` `Bravo` `charlie`"),
+		(source: "`` `Alpha` Bravo charlie ``", selected: "Bravo",
+		 expected: "`` `Alpha` `` Bravo `charlie`"),
+	])
+	func partialSelectionsSplitTheCodeSpan(
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let change = try #require(
+			MarkdownInlineCodeToggle.change(in: source, selection: selection))
+		let result = applying(change, to: source)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: change.selection) == selected)
+	}
+
 	#if os(macOS)
 	@Test func rawEditorCommandRoundTripsTheSelection() {
 		let textView = MarkdownFormattingTextView(frame: .zero)

@@ -401,6 +401,34 @@ enum MarkdownEditSplicer {
 		return NSRange(location: start, length: end - start)
 	}
 
+	/// Expands a visible word through every complete inline wrapper immediately
+	/// surrounding it. Source-neutral word deletion has no DOM range carrying
+	/// syntax metadata, so it uses this same verified delimiter machinery to
+	/// avoid leaving one half of a styled run behind.
+	static func fullySyntaxExpandedInlineRange(
+		_ range: NSRange,
+		in text: NSString
+	) -> NSRange {
+		let inlineTags = ["strong", "em", "u", "del", "mark", "sup", "sub", "code", "a"]
+		var expanded = range
+		while true {
+			var next: NSRange?
+			for tag in inlineTags {
+				if let candidate = syntaxExpandedRange(
+					expanded,
+					syntaxStart: [tag],
+					syntaxEnd: [tag],
+					in: text),
+				   candidate != expanded {
+					next = candidate
+					break
+				}
+			}
+			guard let next else { return expanded }
+			expanded = next
+		}
+	}
+
 	private static func consumeSyntaxStart(
 		_ tags: [String],
 		cursor: inout Int,

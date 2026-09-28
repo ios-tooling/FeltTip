@@ -15,11 +15,23 @@ public enum MarkdownSourceOffsetAttribute: AttributedStringKey {
 	public static let name = "FeltTipSourceOffset"
 }
 
+/// A rendered table pipe whose two-character source spelling is `\|`.
+/// Kept separate from verbatim stamps because its displayed text is shorter.
+public enum MarkdownEscapedPipeSourceOffsetAttribute: AttributedStringKey {
+	public typealias Value = Int
+	public static let name = "MarkDownRangeEscapedPipeSourceOffset"
+}
+
 /// Converts swift-markdown source locations (1-based line, 1-based **UTF-8**
 /// column) into UTF-16 offsets in the parsed string, so edits can be applied
 /// with NSString / NSRange semantics. Builds a byte→UTF-16 table once, then
 /// answers lookups in O(1).
 struct SourceOffsetConverter {
+	struct VerbatimFragment {
+		let text: String
+		let sourceOffset: Int?
+		let escapedPipeSourceOffset: Int?
+	}
 	private let lineStartBytes: [Int]   // UTF-8 byte offset of each line's start
 	/// UTF-8 byte offset → UTF-16 offset. Nil when the source is ASCII, where
 	/// the mapping is identity and a document-sized Int table would be waste.
@@ -121,6 +133,62 @@ struct SourceOffsetConverter {
 		return match.flatMap {
 			verbatimSourceOffset(processedOffset: $0, length: renderedLength)
 		}
+	}
+
+	/// An escaped table pipe renders as `|` while its source is `\|`. The
+	/// whole text node cannot be stamped, but the exact source slices on
+	/// either side can. Keep the pipe itself unstamped and never guess across
+	/// any other transformation or non-contiguous preprocessing map.
+	func fragmentsAroundEscapedPipes(
+		lowerLine: Int, lowerColumn: Int, upperLine: Int, upperColumn: Int,
+		rendered: String
+	) -> [VerbatimFragment]? {
+		guard rendered.contains("|"),
+			  let lower = processedUTF16(line: lowerLine, column: lowerColumn),
+			  let upper = processedUTF16(line: upperLine, column: upperColumn),
+			  let lineEnd = processedLineEnd(upperLine),
+			  lower <= upper else { return nil }
+		let visible = Array(rendered.utf16)
+		// swift-markdown's Text end column can count rendered characters at
+		// an escape (Al\|ice reports a six-unit range for seven source units).
+		// Extend only by the number of visible pipes, never past this line,
+		// then verify every source unit before stamping any fragment.
+		let maxUpper = min(lineEnd, upper + visible.filter { $0 == 0x7C }.count)
+		let string = rendered as NSString
+		var sourceIndex = lower, visibleIndex = 0
+		var sourceStart = lower, visibleStart = 0
+		var fragments: [VerbatimFragment] = []
+		var foundEscape = false
+		func appendVerbatim(until sourceEnd: Int, visibleEnd: Int) -> Bool {
+			let length = visibleEnd - visibleStart
+			guard length == sourceEnd - sourceStart else { return false }
+			guard length > 0 else { return true }
+			guard let offset = verbatimSourceOffset(processedOffset: sourceStart, length: length) else { return false }
+			fragments.append(.init(text: string.substring(with: NSRange(location: visibleStart, length: length)), sourceOffset: offset, escapedPipeSourceOffset: nil))
+			return true
+		}
+		while sourceIndex < maxUpper, visibleIndex < visible.count {
+			if sourceIndex + 1 < maxUpper,
+			   processedUTF16[sourceIndex] == 0x5C,
+			   processedUTF16[sourceIndex + 1] == 0x7C,
+			   visible[visibleIndex] == 0x7C {
+				guard appendVerbatim(until: sourceIndex, visibleEnd: visibleIndex) else { return nil }
+				guard let escapeOffset = verbatimSourceOffset(processedOffset: sourceIndex, length: 2) else { return nil }
+				fragments.append(.init(text: "|", sourceOffset: nil, escapedPipeSourceOffset: escapeOffset))
+				foundEscape = true
+				sourceIndex += 2
+				visibleIndex += 1
+				sourceStart = sourceIndex
+				visibleStart = visibleIndex
+			} else {
+				guard processedUTF16[sourceIndex] == visible[visibleIndex] else { return nil }
+				sourceIndex += 1
+				visibleIndex += 1
+			}
+		}
+		guard foundEscape, sourceIndex >= upper, visibleIndex == visible.count,
+			  appendVerbatim(until: sourceIndex, visibleEnd: visible.count) else { return nil }
+		return fragments
 	}
 
 	/// Inline-code nodes have no child `Text` range: swift-markdown reports the

@@ -30,6 +30,7 @@ extension AttributeScopes {
 	public struct FeltTipAttributes: AttributeScope {
 		public let inlineFontTraits: InlineFontTraitsAttribute
 		public let markdownSourceOffset: MarkdownSourceOffsetAttribute
+		public let markdownEscapedPipeSourceOffset: MarkdownEscapedPipeSourceOffsetAttribute
 	}
 
 	public var feltTip: FeltTipAttributes.Type { FeltTipAttributes.self }

@@ -31,7 +31,9 @@ extension MarkdownHTMLRenderer {
 			guard !text.isEmpty else { continue }
 			let traits = run.inlineFontTraits ?? []
 			let offset = emitSourceOffsets ? run.markdownSourceOffset : nil
+			let escapedPipeOffset = emitSourceOffsets ? run.markdownEscapedPipeSourceOffset : nil
 			if let offset { result += "<span data-s=\"\(offset)\">" }
+			if let escapedPipeOffset { result += "<span data-md-escaped-pipe-s=\"\(escapedPipeOffset)\">" }
 			if let url = run.link {
 				result += "<a href=\"\(attributeValue(url.absoluteString, allowedSchemes: linkSchemes))\">"
 			}
@@ -57,6 +59,7 @@ extension MarkdownHTMLRenderer {
 			if traits.contains(.italic) { result += "</em>" }
 			if traits.contains(.bold) { result += "</strong>" }
 			if run.link != nil { result += "</a>" }
+			if escapedPipeOffset != nil { result += "</span>" }
 			if offset != nil { result += "</span>" }
 		}
 		return result

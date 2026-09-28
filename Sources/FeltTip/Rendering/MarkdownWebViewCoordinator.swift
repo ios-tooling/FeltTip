@@ -54,6 +54,17 @@ extension MarkdownWebView {
 		/// wrongly suppress a render.
 		struct SelfEdit { var rev: Int; var text: String }
 		var selfEdit: SelfEdit?
+		/// A source-faithful block-boundary Cut may need a special inverse when
+		/// pasted straight back at the synthetic caret it created. Scope that
+		/// inverse to the exact post-Cut document and wrapper so moving the same
+		/// clipboard fragment to another empty wrapper remains an ordinary paste.
+		struct BoundaryCutPasteOrigin {
+			var source: String
+			var wrapperStart: Int
+			var pasted: String
+			var generation: UInt64
+		}
+		var boundaryCutPasteOrigin: BoundaryCutPasteOrigin?
 		/// Last scroll position reported by the page, restored after any reload
 		/// so re-renders don't jump to the top.
 		/// Internal (not private) so tests can seed it — the page reports it
@@ -260,6 +271,7 @@ extension MarkdownWebView {
 			pendingHostText = text
 			currentSource = text
 			selfEdit = nil
+			boundaryCutPasteOrigin = nil
 			pendingStructuralTailDelta = nil
 			pendingStructuralTailBoundary = nil
 			pendingStructuralText = nil
@@ -421,6 +433,9 @@ extension MarkdownWebView {
 					self.lastFragments = fragments
 					self.exactFragmentText = text
 					self.applyLineChanges(to: webView, force: true)
+					#if os(macOS)
+					(webView.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+					#endif
 				}
 			}
 			guard let patch = rendered.patch,
@@ -464,6 +479,9 @@ extension MarkdownWebView {
 					self.lastFragments = fragments
 					self.exactFragmentText = tailSourceDelta == nil ? text : nil
 					self.applyLineChanges(to: webView, force: true)
+					#if os(macOS)
+					(webView.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+					#endif
 				} else {
 					self.log("patch refused by page — full swap fallback")
 					fullSwap()
@@ -726,13 +744,27 @@ extension MarkdownWebView {
 				!forceVisibleSyntaxSnap &&
 				source.substring(with: NSRange(location: offset - 7, length: 7))
 					.caseInsensitiveCompare("<u></u>") == .orderedSame
+			let caretBeforeEmptyUnderline = offset + 7 <= source.length &&
+				!isEscaped(at: offset) &&
+				!forceVisibleSyntaxSnap &&
+				source.substring(with: NSRange(location: offset, length: 7))
+					.caseInsensitiveCompare("<u></u>") == .orderedSame
 			var neutralPreviousOffset = "null"
 			var neutralPreviousCharacterJSON = "\"\""
 			var neutralNextOffset = "null"
 			var neutralNextCharacterJSON = "\"\""
 			var neutralWrapperJSON = "\"\""
-			if sourceNeutralCaretHome || caretAfterEmptyUnderline {
-				let wrapperStart = sourceNeutralCaretHome ? offset - 3 : offset - 7
+			var neutralPreviousBoundaryOffset = "null"
+			var neutralPreviousBoundaryJSON = "\"\""
+			var neutralNextBoundaryOffset = "null"
+			var neutralNextBoundaryJSON = "\"\""
+			var boundaryPreviousCharacterOffset = "null"
+			var boundaryPreviousCharacterJSON = "\"\""
+			var boundaryNextCharacterOffset = "null"
+			var boundaryNextCharacterJSON = "\"\""
+			if sourceNeutralCaretHome || caretAfterEmptyUnderline || caretBeforeEmptyUnderline {
+				let wrapperStart = caretBeforeEmptyUnderline
+					? offset : sourceNeutralCaretHome ? offset - 3 : offset - 7
 				let wrapperEnd = wrapperStart + 7
 				if sourceNeutralCaretHome {
 					neutralWrapperJSON = (try? JSONEncoder().encode(
@@ -751,6 +783,138 @@ extension MarkdownWebView {
 				}
 				while isEmptyUnderline(at: visibleWrapperEnd) {
 					visibleWrapperEnd += 7
+				}
+				func isBoundaryWhitespace(at location: Int) -> Bool {
+					guard location >= 0, location < source.length,
+					      let scalar = Unicode.Scalar(source.character(at: location)) else {
+						return false
+					}
+					return CharacterSet.whitespacesAndNewlines.contains(scalar)
+				}
+				func hiddenBlockPrefixEnd(from start: Int, to end: Int) -> Int? {
+					guard start >= 0, start < end, end <= source.length else { return nil }
+					func isHorizontalWhitespace(_ location: Int) -> Bool {
+						guard location < end else { return false }
+						let character = source.character(at: location)
+						return character == 0x20 || character == 0x09
+					}
+					func consumeHorizontalWhitespace(_ location: inout Int) {
+						while isHorizontalWhitespace(location) { location += 1 }
+					}
+					var cursor = start
+					var indentation = 0
+					while cursor < end, indentation < 3,
+					      source.character(at: cursor) == 0x20 {
+						cursor += 1
+						indentation += 1
+					}
+					var ownsPrefix = false
+					while cursor < end, source.character(at: cursor) == 0x3E {
+						ownsPrefix = true
+						cursor += 1
+						if cursor < end, source.character(at: cursor) == 0x20 { cursor += 1 }
+					}
+					if cursor < end {
+						let marker = source.character(at: cursor)
+						if marker == 0x23 {
+							let markerStart = cursor
+							while cursor < end, cursor - markerStart < 6,
+							      source.character(at: cursor) == 0x23 { cursor += 1 }
+							if cursor > markerStart, isHorizontalWhitespace(cursor) {
+								ownsPrefix = true
+								consumeHorizontalWhitespace(&cursor)
+							} else {
+								cursor = markerStart
+							}
+						} else if marker == 0x2D || marker == 0x2B || marker == 0x2A || marker == 0x3A {
+							if isHorizontalWhitespace(cursor + 1) {
+								ownsPrefix = true
+								cursor += 1
+								consumeHorizontalWhitespace(&cursor)
+							}
+						} else if marker >= 0x30, marker <= 0x39 {
+							let markerStart = cursor
+							while cursor < end, cursor - markerStart < 9 {
+								let digit = source.character(at: cursor)
+								guard digit >= 0x30, digit <= 0x39 else { break }
+								cursor += 1
+							}
+							if cursor > markerStart, cursor < end,
+							   source.character(at: cursor) == 0x2E || source.character(at: cursor) == 0x29,
+							   isHorizontalWhitespace(cursor + 1) {
+								ownsPrefix = true
+								cursor += 1
+								consumeHorizontalWhitespace(&cursor)
+							} else {
+								cursor = markerStart
+							}
+						}
+					}
+					if ownsPrefix, cursor + 3 <= end,
+					   source.character(at: cursor) == 0x5B,
+					   source.character(at: cursor + 2) == 0x5D {
+						let state = source.character(at: cursor + 1)
+						if state == 0x20 || state == 0x78 || state == 0x58,
+						   isHorizontalWhitespace(cursor + 3) {
+							cursor += 3
+							consumeHorizontalWhitespace(&cursor)
+						}
+					}
+					return ownsPrefix ? cursor : nil
+				}
+				// WebKit exposes a paragraph boundary as one visible selection
+				// character, while its source may be multiple newlines plus blank-line
+				// indentation. Preserve that exact whitespace for Shift-arrow Cut/Paste.
+				let previousBoundaryContentStart: Int
+				if let prefixEnd = hiddenBlockPrefixEnd(from: lineStart, to: lineEnd),
+				   prefixEnd == visibleWrapperStart {
+					previousBoundaryContentStart = lineStart
+				} else {
+					previousBoundaryContentStart = visibleWrapperStart
+				}
+				var previousBoundaryStart = previousBoundaryContentStart
+				while previousBoundaryStart > 0,
+				      isBoundaryWhitespace(at: previousBoundaryStart - 1) {
+					previousBoundaryStart -= 1
+				}
+				if previousBoundaryStart < previousBoundaryContentStart {
+					let range = NSRange(
+						location: previousBoundaryStart,
+						length: visibleWrapperStart - previousBoundaryStart)
+					let boundary = source.substring(with: range)
+					if boundary.contains("\n") || boundary.contains("\r") {
+						neutralPreviousBoundaryOffset = String(previousBoundaryStart)
+						neutralPreviousBoundaryJSON = (try? JSONEncoder().encode(boundary))
+							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+					}
+				}
+				var nextBoundaryEnd = visibleWrapperEnd
+				while nextBoundaryEnd < source.length,
+				      isBoundaryWhitespace(at: nextBoundaryEnd) {
+					nextBoundaryEnd += 1
+				}
+				if nextBoundaryEnd < source.length {
+					var nextLineEnd = nextBoundaryEnd
+					while nextLineEnd < source.length {
+						let character = source.character(at: nextLineEnd)
+						if character == 0x0A || character == 0x0D { break }
+						nextLineEnd += 1
+					}
+					if let prefixEnd = hiddenBlockPrefixEnd(
+						from: nextBoundaryEnd, to: nextLineEnd) {
+						nextBoundaryEnd = prefixEnd
+					}
+				}
+				if nextBoundaryEnd > visibleWrapperEnd {
+					let range = NSRange(
+						location: visibleWrapperEnd,
+						length: nextBoundaryEnd - visibleWrapperEnd)
+					let boundary = source.substring(with: range)
+					if boundary.contains("\n") || boundary.contains("\r") {
+						neutralNextBoundaryOffset = String(visibleWrapperEnd)
+						neutralNextBoundaryJSON = (try? JSONEncoder().encode(boundary))
+							.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+					}
 				}
 				if visibleWrapperStart > 0 {
 					let previousLocation = visibleWrapperStart - 1
@@ -781,8 +945,37 @@ extension MarkdownWebView {
 					neutralNextCharacterJSON = (try? JSONEncoder().encode(source.substring(with: range)))
 						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
 				}
+				if neutralPreviousBoundaryOffset != "null", previousBoundaryStart > 0 {
+					let location = previousBoundaryStart - 1
+					let range: NSRange
+					if location > 0,
+					   isASCIIPunctuation(source.character(at: location)),
+					   isEscaped(at: location) {
+						range = NSRange(location: location - 1, length: 2)
+					} else {
+						range = source.rangeOfComposedCharacterSequence(at: location)
+					}
+					boundaryPreviousCharacterOffset = String(range.location)
+					boundaryPreviousCharacterJSON = (try? JSONEncoder().encode(
+						source.substring(with: range)))
+						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+				}
+				if neutralNextBoundaryOffset != "null", nextBoundaryEnd < source.length {
+					let range: NSRange
+					if nextBoundaryEnd + 1 < source.length,
+					   source.character(at: nextBoundaryEnd) == 0x5C,
+					   isASCIIPunctuation(source.character(at: nextBoundaryEnd + 1)) {
+						range = NSRange(location: nextBoundaryEnd, length: 2)
+					} else {
+						range = source.rangeOfComposedCharacterSequence(at: nextBoundaryEnd)
+					}
+					boundaryNextCharacterOffset = String(range.location)
+					boundaryNextCharacterJSON = (try? JSONEncoder().encode(
+						source.substring(with: range)))
+						.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+				}
 			}
-			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap)"
+			return "\(offset), 0, \(lineStart), \(lineEnd), \(snapHiddenSyntax), \(visualBlankOffset), \(previousCharacterJSON), \(sourceNeutralCaretHome), \(neutralPreviousOffset), \(neutralPreviousCharacterJSON), \(neutralNextOffset), \(neutralNextCharacterJSON), \(neutralWrapperJSON), \(neutralPreviousBoundaryOffset), \(neutralPreviousBoundaryJSON), \(neutralNextBoundaryOffset), \(neutralNextBoundaryJSON), \(caretAfterEmptyUnderline), \(forceVisibleSyntaxSnap), \(caretBeforeEmptyUnderline), \(boundaryPreviousCharacterOffset), \(boundaryPreviousCharacterJSON), \(boundaryNextCharacterOffset), \(boundaryNextCharacterJSON)"
 		}
 
 		private func composedSelection(_ selection: NSRange, in source: NSString) -> NSRange {
@@ -992,6 +1185,9 @@ extension MarkdownWebView {
 				parent.onInitialRenderReady?()
 			}
 			finishInitialRenderIfNeeded()
+			#if os(macOS)
+			(webView.superview as? MarkdownWebViewFindHost)?.refreshMatchCountIfVisible()
+			#endif
 		}
 
 		public func webView(

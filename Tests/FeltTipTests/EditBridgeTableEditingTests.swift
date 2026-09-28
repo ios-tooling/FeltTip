@@ -24,6 +24,22 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func typingAPipeInBodyCellDoesNotCreateAColumn() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: Self.table)
+		try await harness.type("|", at: 33) // Al|ice
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "| Name | Age |\n| --- | --- |\n| Al\\|ice | 30 |\n| **Bob** | 41 |")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("document.querySelector('tbody td').textContent.replace(/\\u200B/g, '')") == "Al|ice")
+		#expect(try await harness.stampMismatches() == [])
+		try await harness.type("Z")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "| Name | Age |\n| --- | --- |\n| Al\\|Zice | 30 |\n| **Bob** | 41 |")
+		try await harness.waitQuiescent()
+		#expect(try await harness.evaluate("document.querySelector('tbody td').textContent.replace(/\\u200B/g, '')") == "Al|Zice")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func typingInHeaderCellSplicesBetweenPipes() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: Self.table)
 		try await harness.type("X", at: 6)   // Name|

@@ -8,6 +8,11 @@ import Foundation
 /// Metadata extracted from a parsed markdown document — counts, headings,
 /// links, images, code blocks, and frontmatter.
 public struct MarkdownMeta: Sendable, Equatable {
+	/// The whitespace counter below sees `- [ ]` as three source tokens but
+	/// `- [x]` as two. Exclude both forms of task-list markup so checking an
+	/// item never changes the displayed word count.
+	private static let taskMarker = try! NSRegularExpression(
+		pattern: #"(?m)^[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+\[([ xX])\](?=[ \t\r\n]|$)"#)
 	public let wordCount: Int
 	public let characterCount: Int
 	public let lineCount: Int
@@ -65,7 +70,13 @@ public struct MarkdownMeta: Sendable, Equatable {
 			}
 		}
 		self.characterCount = characterCount
-		self.wordCount = wordCount
+		let source = text as NSString
+		for match in Self.taskMarker.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+			// The bullet/ordinal is one token. An empty checkbox is two
+			// whitespace-separated tokens; a checked one is a single token.
+			wordCount -= source.character(at: match.range(at: 1).location) == 0x20 ? 3 : 2
+		}
+		self.wordCount = max(0, wordCount)
 
 		// `components(separatedBy:)` allocated one String per source line even
 		// though metadata needs only the count. Character treats CRLF as one

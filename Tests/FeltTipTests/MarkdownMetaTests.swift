@@ -19,6 +19,15 @@ import Foundation
 		#expect(meta.lineCount == 1)
 	}
 
+	@Test func taskToggleDoesNotChangeWordCount() {
+		let unchecked = "# Tasks\n\n- [ ] first 👩🏽‍💻\n  2. [x] second שלום\n"
+		let checked = unchecked.replacingOccurrences(of: "- [ ] first", with: "- [x] first")
+		let meta = MarkdownMeta(unchecked)
+		#expect(meta.wordCount == MarkdownMeta(checked).wordCount)
+		#expect(meta.wordCount == 6) // heading marker plus five prose tokens
+		#expect(meta.characterCount == MarkdownMeta(checked).characterCount)
+	}
+
 	@Test func lineCountCountsNewlines() {
 		let meta = MarkdownMeta("one\ntwo\nthree")
 		#expect(meta.lineCount == 3)

@@ -6,6 +6,7 @@
 //
 
 #if os(macOS)
+	import AppKit
 	import Testing
 	import WebKit
 	@testable import FeltTip
@@ -60,6 +61,47 @@
 			// walk — not three.
 			let host = try await host("aaaa\n")
 			#expect(try await count(of: "aa", in: host) == "2 results")
+		}
+
+		@Test func recountsWhenHostReplacesTheRenderedDocument() async throws {
+			let harness = try await CoordinatorBridgeHarness(source: "Aster Ω appears once.\n")
+			let host = harness.installFindHost()
+			let item = NSMenuItem()
+			item.tag = NSTextFinder.Action.showFindInterface.rawValue
+			host.performTextFinderAction(item)
+			let field = try #require(host.subviews
+				.flatMap(\.subviews).compactMap { $0 as? NSSearchField }.first)
+			field.stringValue = "Aster Ω"
+			field.sendAction(field.action, to: field.target)
+			try await waitForCount("1 result", in: host)
+
+			try await harness.replaceExternally("Aster Ω appears twice: Aster Ω.\n")
+			try await waitForCount("2 results", in: host)
+		}
+
+		@Test func recountsAfterAnInPlaceStyledEdit() async throws {
+			let harness = try await CoordinatorBridgeHarness(source: "Aster once.\n")
+			let host = harness.installFindHost()
+			let item = NSMenuItem()
+			item.tag = NSTextFinder.Action.showFindInterface.rawValue
+			host.performTextFinderAction(item)
+			let field = try #require(host.subviews
+				.flatMap(\.subviews).compactMap { $0 as? NSSearchField }.first)
+			field.stringValue = "Aster"
+			field.sendAction(field.action, to: field.target)
+			try await waitForCount("1 result", in: host)
+
+			try await harness.type(" Aster", at: 5)
+			#expect(harness.source == "Aster Aster once.\n")
+			try await waitForCount("2 results", in: host)
+		}
+
+		private func waitForCount(_ expected: String, in host: MarkdownWebViewFindHost) async throws {
+			for _ in 0..<80 {
+				if host.matchCountLabel.stringValue == expected { return }
+				try await Task.sleep(for: .milliseconds(50))
+			}
+			#expect(host.matchCountLabel.stringValue == expected)
 		}
 	}
 #endif

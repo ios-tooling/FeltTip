@@ -54,6 +54,7 @@ struct MarkdownWebViewFindHostTests {
 
 		perform(.showFindInterface, on: host)
 		let searchField = try #require(findSearchField(in: host))
+		try await waitUntil("find field focus") { searchField.currentEditor() != nil }
 		searchField.stringValue = "83"
 		searchField.sendAction(searchField.action, to: searchField.target)
 
@@ -106,6 +107,29 @@ struct MarkdownWebViewFindHostTests {
 		#expect(host.performKeyEquivalent(with: event))
 		#expect(webView.scripts.last?.contains(
 			"__mdInsertListItem") == true)
+	}
+
+	@Test
+	func dismissingFindRestoresTheEditableCaret() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Aster tail.\n")
+		let host = harness.installFindHost()
+		try await harness.placeCaret(11) // After the period.
+		perform(.showFindInterface, on: host)
+		let searchField = try #require(findSearchField(in: host))
+		try await waitUntil("find field focus") { searchField.currentEditor() != nil }
+		searchField.stringValue = "Aster"
+		searchField.sendAction(searchField.action, to: searchField.target)
+		try await waitUntil("styled find selection") {
+			try await harness.webView.evaluateJavaScript("window.getSelection().toString()") as? String == "Aster"
+		}
+
+		perform(.hideFindInterface, on: host)
+		try await waitUntil("restored caret") {
+			let selection = try await harness.webView.evaluateJavaScript("window.getSelection().toString()") as? String
+			return selection == ""
+		}
+		try await harness.type("!")
+		#expect(harness.source == "Aster tail.!\n")
 	}
 
 	private func perform(

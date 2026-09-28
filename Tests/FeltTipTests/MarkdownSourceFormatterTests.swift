@@ -68,6 +68,106 @@ import AppKit
 		}
 	}
 
+	@Test(arguments: [
+		(command: MarkdownFormattingCommand.bold, source: "**Bravo charlie**",
+		 selected: "Bravo", expected: "Bravo **charlie**"),
+		(command: MarkdownFormattingCommand.bold, source: "**Bravo charlie**",
+		 selected: "charlie", expected: "**Bravo** charlie"),
+		(command: MarkdownFormattingCommand.italic, source: "_Bravo charlie_",
+		 selected: "Bravo", expected: "Bravo _charlie_"),
+		(command: MarkdownFormattingCommand.italic, source: "_Bravo charlie_",
+		 selected: "charlie", expected: "_Bravo_ charlie"),
+		(command: MarkdownFormattingCommand.bold, source: "**Alpha Bravo charlie**",
+		 selected: "Bravo", expected: "**Alpha** Bravo **charlie**"),
+		(command: MarkdownFormattingCommand.italic, source: "_Alpha Bravo charlie_",
+		 selected: "Bravo", expected: "_Alpha_ Bravo _charlie_"),
+		(command: MarkdownFormattingCommand.strikethrough, source: "~~Alpha Bravo charlie~~",
+		 selected: "Bravo", expected: "~~Alpha~~ Bravo ~~charlie~~"),
+		(command: MarkdownFormattingCommand.highlight, source: "==Alpha Bravo charlie==",
+		 selected: "Bravo", expected: "==Alpha== Bravo ==charlie=="),
+		(command: MarkdownFormattingCommand.superscript, source: "^Alpha Bravo charlie^",
+		 selected: "Bravo", expected: "^Alpha^ Bravo ^charlie^"),
+		(command: MarkdownFormattingCommand.subscriptText, source: "~Alpha Bravo charlie~",
+		 selected: "Bravo", expected: "~Alpha~ Bravo ~charlie~"),
+		(command: MarkdownFormattingCommand.bold, source: "**Alpha** Bravo **charlie**",
+		 selected: "Bravo", expected: "**Alpha** **Bravo** **charlie**"),
+		(command: MarkdownFormattingCommand.bold, source: "***Alpha Bravo charlie***",
+		 selected: "Bravo", expected: "***Alpha*** *Bravo* ***charlie***"),
+		(command: MarkdownFormattingCommand.italic, source: "***Alpha Bravo charlie***",
+		 selected: "Bravo", expected: "***Alpha*** **Bravo** ***charlie***"),
+		(command: MarkdownFormattingCommand.bold, source: "***Bravo charlie***",
+		 selected: "Bravo", expected: "*Bravo* ***charlie***"),
+		(command: MarkdownFormattingCommand.italic, source: "***Bravo charlie***",
+		 selected: "charlie", expected: "***Bravo*** **charlie**"),
+		(command: MarkdownFormattingCommand.bold, source: "___Alpha Bravo charlie___",
+		 selected: "Bravo", expected: "___Alpha___ _Bravo_ ___charlie___"),
+		(command: MarkdownFormattingCommand.italic, source: "___Alpha Bravo charlie___",
+		 selected: "Bravo", expected: "___Alpha___ __Bravo__ ___charlie___"),
+		(command: MarkdownFormattingCommand.bold, source: "***Alpha*** Bravo ***charlie***",
+		 selected: "Bravo", expected: "***Alpha*** **Bravo** ***charlie***"),
+		(command: MarkdownFormattingCommand.bold, source: "**_Alpha Bravo charlie_**",
+		 selected: "Bravo", expected: "**_Alpha_** _Bravo_ **_charlie_**"),
+		(command: MarkdownFormattingCommand.italic, source: "_**Alpha Bravo charlie**_",
+		 selected: "Bravo", expected: "_**Alpha**_ **Bravo** _**charlie**_"),
+		(command: MarkdownFormattingCommand.bold, source: "**<u>Alpha Bravo charlie</u>**",
+		 selected: "Bravo", expected: "**<u>Alpha</u>** <u>Bravo</u> **<u>charlie</u>**"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "**[Alpha Bravo charlie](https://x)**", selected: "Bravo",
+		 expected: "**[Alpha](https://x)** [Bravo](https://x) **[charlie](https://x)**"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "**`Alpha Bravo charlie`**", selected: "Bravo",
+		 expected: "**`Alpha`** `Bravo` **`charlie`**"),
+		(command: MarkdownFormattingCommand.bold, source: "**_Bravo_**",
+		 selected: "Bravo", expected: "_Bravo_"),
+		(command: MarkdownFormattingCommand.bold, source: "**<u>Bravo</u>**",
+		 selected: "Bravo", expected: "<u>Bravo</u>"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "**[Bravo](https://x)**", selected: "Bravo",
+		 expected: "[Bravo](https://x)"),
+		(command: MarkdownFormattingCommand.bold, source: "**`Bravo`**",
+		 selected: "Bravo", expected: "`Bravo`"),
+		(command: MarkdownFormattingCommand.bold, source: "***`Bravo`***",
+		 selected: "Bravo", expected: "*`Bravo`*"),
+		(command: MarkdownFormattingCommand.italic, source: "***`Bravo`***",
+		 selected: "Bravo", expected: "**`Bravo`**"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***`Alpha Bravo charlie`***", selected: "Bravo",
+		 expected: "***`Alpha`*** *`Bravo`* ***`charlie`***"),
+		(command: MarkdownFormattingCommand.italic,
+		 source: "***`Alpha Bravo charlie`***", selected: "Bravo",
+		 expected: "***`Alpha`*** **`Bravo`** ***`charlie`***"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***[Bravo](https://x)***", selected: "Bravo",
+		 expected: "*[Bravo](https://x)*"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***[Alpha Bravo charlie](https://x)***", selected: "Bravo",
+		 expected: "***[Alpha](https://x)*** *[Bravo](https://x)* ***[charlie](https://x)***"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***<u>Bravo</u>***", selected: "Bravo",
+		 expected: "*<u>Bravo</u>*"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***<u>Alpha Bravo charlie</u>***", selected: "Bravo",
+		 expected: "***<u>Alpha</u>*** *<u>Bravo</u>* ***<u>charlie</u>***"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***~~Bravo~~***", selected: "Bravo",
+		 expected: "*~~Bravo~~*"),
+		(command: MarkdownFormattingCommand.bold,
+		 source: "***~~Alpha Bravo charlie~~***", selected: "Bravo",
+		 expected: "***~~Alpha~~*** *~~Bravo~~* ***~~charlie~~***"),
+	])
+	func togglingAStyledRunFragmentSplitsTheRunCleanly(
+		command: MarkdownFormattingCommand,
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let (result, resultSelection) = try apply(
+			command, to: source, selection: selection)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: resultSelection) == selected)
+	}
+
 	@Test func underlineRoundTripsItsAsymmetricHTMLMarkers() throws {
 		let source = "Alpha Beta"
 		let selection = (source as NSString).range(of: "Alpha")
@@ -83,6 +183,38 @@ import AppKit
 			selection: underlinedSelection)
 		#expect(restored == source)
 		#expect(restoredSelection == selection)
+	}
+
+	@Test(arguments: [
+		(source: "<u>Bravo charlie</u>", selected: "Bravo",
+		 expected: "Bravo <u>charlie</u>"),
+		(source: "<u>Bravo charlie</u>", selected: "charlie",
+		 expected: "<u>Bravo</u> charlie"),
+		(source: "<u>Alpha Bravo charlie</u>", selected: "Bravo",
+		 expected: "<u>Alpha</u> Bravo <u>charlie</u>"),
+		(source: "<u>Alpha</u> Bravo <u>charlie</u>", selected: "Bravo",
+		 expected: "<u>Alpha</u> <u>Bravo</u> <u>charlie</u>"),
+		(source: "<u>**Alpha Bravo charlie**</u>", selected: "Bravo",
+		 expected: "<u>**Alpha**</u> **Bravo** <u>**charlie**</u>"),
+		(source: "<u>[Alpha Bravo charlie](https://x)</u>", selected: "Bravo",
+		 expected: "<u>[Alpha](https://x)</u> [Bravo](https://x) <u>[charlie](https://x)</u>"),
+		(source: "<u>`Alpha Bravo charlie`</u>", selected: "Bravo",
+		 expected: "<u>`Alpha`</u> `Bravo` <u>`charlie`</u>"),
+		(source: "<u>**Bravo**</u>", selected: "Bravo", expected: "**Bravo**"),
+		(source: "<u>[Bravo](https://x)</u>", selected: "Bravo",
+		 expected: "[Bravo](https://x)"),
+		(source: "<u>`Bravo`</u>", selected: "Bravo", expected: "`Bravo`"),
+	])
+	func togglingAnUnderlineFragmentSplitsTheRunCleanly(
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let (result, resultSelection) = try apply(
+			.underline, to: source, selection: selection)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: resultSelection) == selected)
 	}
 
 	@Test func linkWrapsAndUnwrapsWithoutLosingItsLabel() throws {
@@ -164,6 +296,34 @@ import AppKit
 		#expect(restoredSelection == selection)
 	}
 
+	@Test(arguments: [
+		(source: "[Bravo charlie](https://x)", selected: "Bravo",
+		 expected: "Bravo [charlie](https://x)"),
+		(source: "[Bravo charlie](https://x)", selected: "charlie",
+		 expected: "[Bravo](https://x) charlie"),
+		(source: "[Bravo charlie](https://x/a(b)/c)", selected: "Bravo",
+		 expected: "Bravo [charlie](https://x/a(b)/c)"),
+		(source: "[Bravo charlie](https://x/a\\)/c)", selected: "charlie",
+		 expected: "[Bravo](https://x/a\\)/c) charlie"),
+		(source: "[Alpha Bravo charlie](https://x)", selected: "Bravo",
+		 expected: "[Alpha](https://x) Bravo [charlie](https://x)"),
+		(source: "[Alpha](https://a) Bravo [charlie](https://c)", selected: "Bravo",
+		 expected: "[Alpha](https://a) [Bravo]() [charlie](https://c)"),
+		(source: "[[Alpha] Bravo charlie](https://x)", selected: "Bravo",
+		 expected: "[[Alpha]](https://x) Bravo [charlie](https://x)"),
+	])
+	func togglingALinkLabelFragmentPreservesTheRemainingDestination(
+		source: String,
+		selected: String,
+		expected: String
+	) throws {
+		let selection = (source as NSString).range(of: selected)
+		let (result, resultSelection) = try apply(
+			.link, to: source, selection: selection)
+		#expect(result == expected)
+		#expect((result as NSString).substring(with: resultSelection) == selected)
+	}
+
 	@Test func listCommandsConvertAndToggleMultipleLines() throws {
 		let source = "Alpha\nBeta\n"
 		let selection = NSRange(location: 0, length: 10)
@@ -199,8 +359,11 @@ import AppKit
 		let source = "Alpha\nBeta"
 		let selection = (source as NSString).range(of: "Alpha")
 		let (formatted, caret) = try apply(.horizontalRule, to: source, selection: selection)
-		#expect(formatted == "Alpha\n---\n\nBeta")
-		#expect(caret == NSRange(location: 11, length: 0))
+		#expect(formatted == "Alpha\n\n---\n\nBeta")
+		#expect(caret == NSRange(location: 12, length: 0))
+		let html = MarkdownHTMLRenderer.renderDocument(markdown: formatted)
+		#expect(html.contains("<hr"))
+		#expect(!html.contains("<h2>Alpha</h2>"))
 	}
 
 	@Test func horizontalRuleAtACollapsedCaretDoesNotSplitTheCurrentLine() throws {
@@ -208,8 +371,15 @@ import AppKit
 			.horizontalRule,
 			to: "Alpha Tail",
 			selection: NSRange(location: 5, length: 0))
-		#expect(formatted == "Alpha Tail\n---\n")
-		#expect(caret == NSRange(location: 15, length: 0))
+		#expect(formatted == "Alpha Tail\n\n---\n")
+		#expect(caret == NSRange(location: 16, length: 0))
+	}
+
+	@Test func horizontalRuleReusesExistingBlankLine() throws {
+		let source = "Alpha\n\nBeta"
+		let selection = (source as NSString).range(of: "Alpha")
+		let (formatted, _) = try apply(.horizontalRule, to: source, selection: selection)
+		#expect(formatted == "Alpha\n\n---\n\nBeta")
 	}
 
 	@Test func formattingNearTheEndOfALargeDocumentTouchesOnlyThePrefix() throws {

@@ -33,6 +33,13 @@
   // edit, desyncing the source and getting the batch rejected.
   var pendingEdits = [];
   var pendingEditWatchdog = null;
+  // macOS WebKit's text Transformations context menu replaces an entire
+  // paragraph even when the user selected only a phrase. The replacement
+  // arrives as insertText with null data and a plain-text
+  // dataTransfer. Remember the verified selection before WebKit expands it.
+  var contextMenuSourceSelection = null;
+  var pendingContextCaseEdit = null;
+  var pendingContextCaseResync = false;
   // A structural edit or desync was posted; swallow input until the host's
   // re-render (which reinjects this script) so nothing maps from a source
   // that's about to change shape. Holds { token } while frozen; if the
@@ -60,6 +67,7 @@
   // Ordinary rapid typing never sets this and follows the restored caret.
   var frozenRequestedSelection = null;
   var inlineNavigationSelection = null;
+  var inlineWordSelectionHome = null;
   // Shared stamp cache — normally installed by the scroll-sync script, which
   // loads first; defined here too so the editor script stands alone (the
   // integration-test harness injects only this script).
@@ -226,7 +234,18 @@
   // Source offset for a DOM position, or null if it isn't inside a run.
   function sourceOffsetOf(node, offset) {
     var span = spanOf(node, offset);
-    if (!span) return null;
+    if (!span) {
+      var owner = node.nodeType === 3 ? node.parentElement : node;
+      var escaped = owner && owner.closest && owner.closest('[data-md-escaped-pipe-s]');
+      if (escaped && escaped.textContent === '|') {
+        var relative = textOffsetWithin(escaped, node, offset);
+        var source = parseInt(escaped.getAttribute('data-md-escaped-pipe-s'), 10);
+        if (Number.isFinite(source) && (relative === 0 || relative === 1)) {
+          return source + (relative ? 2 : 0);
+        }
+      }
+      return null;
+    }
     var base = parseInt(span.getAttribute('data-s'), 10);
     var chars = textOffsetWithin(span, node, offset);
     if (chars == null) return null;
@@ -436,7 +455,10 @@
       repaintMirror();
     }
   }
-  document.addEventListener('mousedown', clearOwnMirror, true);
+  document.addEventListener('mousedown', function () {
+    inlineWordSelectionHome = null;
+    clearOwnMirror();
+  }, true);
   window.addEventListener('focus', function () {
     clearOwnMirror();
     // Deferred: during the focus event document.hasFocus() can still be
@@ -454,29 +476,232 @@
     reportSelection(true);
   });
   // Empty-wrapper caret homes represent invisible source syntax. A native
-  // left-arrow move otherwise lands at a hidden wrapper boundary—the same
-  // visual caret stop—and appears not to move. Consume that hidden stop plus
-  // one real character; right-arrow already crosses the holder and following
-  // visible character in one native move.
+  // arrow move otherwise lands at one of the hidden wrapper boundaries—the
+  // same visual caret stop—and appears not to move. Start from the adjacent
+  // real text node so normalized/nested wrapper depth cannot change how many
+  // native moves are needed, then consume exactly one visible character.
+  function selectRangeInDirection(selection, range, direction) {
+    selection.removeAllRanges();
+    if (selection.setBaseAndExtent) {
+      if (direction === 'backward') {
+        selection.setBaseAndExtent(
+          range.endContainer, range.endOffset,
+          range.startContainer, range.startOffset);
+      } else {
+        selection.setBaseAndExtent(
+          range.startContainer, range.startOffset,
+          range.endContainer, range.endOffset);
+      }
+    } else {
+      selection.addRange(range);
+    }
+  }
   document.body.addEventListener('keydown', function (event) {
     if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
-        event.altKey || event.ctrlKey || event.metaKey) return;
+        event.ctrlKey || event.metaKey) return;
+    var selection = window.getSelection();
+    var direction = event.key === 'ArrowLeft' ? 'backward' : 'forward';
+    // WebKit cannot contract a one-word Option-Shift selection across a block
+    // edge back onto a zero-width synthetic home. It instead strands the
+    // focus beside hidden source syntax, where the next edit is dropped or
+    // damages a wrapper. Snap only the final one-word reversal; selections
+    // containing multiple visible words keep their native word contraction.
+    if (event.altKey && event.shiftKey && selection && selection.rangeCount) {
+      if (selection.isCollapsed) {
+        var startingWordHome = activeInlineCaretHome();
+        inlineWordSelectionHome = startingWordHome
+          ? { home: startingWordHome, direction: direction } : null;
+      } else {
+        var wordNavigation = liveInlineCaretEndpointSelection();
+        var wordHome = inlineWordSelectionHome && inlineWordSelectionHome.home ||
+          wordNavigation && wordNavigation.home;
+        var reversingWord = inlineWordSelectionHome
+          ? inlineWordSelectionHome.direction !== direction
+          : wordNavigation &&
+            ((wordNavigation.selectionStartsAtHome === true && direction === 'backward') ||
+             (wordNavigation.selectionStartsAtHome !== true && direction === 'forward'));
+        var selectedWord = plain(selection.toString()).replace(/\u200B/g, '').trim();
+        if (reversingWord && selectedWord && !/\s/.test(selectedWord) &&
+            wordHome && wordHome.firstChild) {
+          event.preventDefault();
+          selection.collapse(
+            wordHome.firstChild,
+            wordHome.firstChild.nodeType === 3
+              ? wordHome.firstChild.nodeValue.length : 0);
+          inlineNavigationSelection = null;
+          inlineWordSelectionHome = null;
+          return;
+        }
+      }
+    }
+    if (event.altKey) return;
+    inlineWordSelectionHome = null;
+    var boundaryNavigation = event.shiftKey
+      ? currentInlineNavigationSelection() : null;
+    if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
+        boundaryNavigation.boundaryDirection !== direction &&
+        boundaryNavigation.boundaryExtensionCount > 0 &&
+        selection && selection.rangeCount && !selection.isCollapsed) {
+      event.preventDefault();
+      var boundaryRoot = boundaryNavigation.boundaryRoot;
+      if (!boundaryRoot || boundaryNavigation.boundaryExtensionCount === 1) {
+        boundaryRoot = boundaryRoot || boundaryNavigation;
+        selectRangeInDirection(
+          selection, boundaryRoot.range, boundaryRoot.boundaryDirection);
+        inlineNavigationSelection = boundaryRoot;
+        return;
+      }
+      selection.modify('extend', direction, 'character');
+      var contractedRange = selection.getRangeAt(0).cloneRange();
+      var contractedCombinedRange = document.createRange();
+      try {
+        if (boundaryNavigation.boundaryDirection === 'backward') {
+          contractedCombinedRange.setStart(
+            contractedRange.startContainer, contractedRange.startOffset);
+          contractedCombinedRange.setEnd(
+            boundaryRoot.range.endContainer, boundaryRoot.range.endOffset);
+        } else {
+          contractedCombinedRange.setStart(
+            boundaryRoot.range.startContainer, boundaryRoot.range.startOffset);
+          contractedCombinedRange.setEnd(
+            contractedRange.endContainer, contractedRange.endOffset);
+        }
+        selectRangeInDirection(
+          selection, contractedCombinedRange, boundaryNavigation.boundaryDirection);
+        var contractedNavigation = liveInlineCaretEndpointSelection() ||
+          repeatedBoundaryEndpointSelection(
+            selection, contractedCombinedRange, boundaryRoot,
+            boundaryNavigation.boundaryDirection,
+            boundaryNavigation.boundaryExtensionCount - 1);
+        if (contractedNavigation) {
+          var contractedBoundaryText = boundaryRoot.boundaryClipboardText == null
+            ? boundaryRoot.expected : boundaryRoot.boundaryClipboardText;
+          var contractedVisible = boundaryNavigation.boundaryDirection === 'backward'
+            ? contractedNavigation.expected + contractedBoundaryText
+            : contractedBoundaryText + contractedNavigation.expected;
+          contractedNavigation.expected = contractedVisible;
+          contractedNavigation.sourceExpected = contractedVisible;
+          contractedNavigation.domExpected = plain(selection.toString()).replace(/\u200B/g, '');
+          contractedNavigation.blockBoundary = true;
+          contractedNavigation.boundaryDirection = boundaryNavigation.boundaryDirection;
+          contractedNavigation.boundaryClipboardText = contractedBoundaryText;
+          contractedNavigation.boundaryRoot = boundaryRoot;
+          contractedNavigation.home = boundaryRoot.home;
+          contractedNavigation.boundaryExtensionCount =
+            boundaryNavigation.boundaryExtensionCount - 1;
+          inlineNavigationSelection = contractedNavigation;
+        } else {
+          inlineNavigationSelection = null;
+        }
+      } catch (_) {
+        inlineNavigationSelection = null;
+      }
+      return;
+    }
+    if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
+        boundaryNavigation.boundaryDirection !== direction &&
+        !(boundaryNavigation.boundaryExtensionCount > 0) &&
+        selection && selection.rangeCount && !selection.isCollapsed) {
+      var contractionHome = boundaryNavigation.home;
+      if (contractionHome && contractionHome.firstChild) {
+        event.preventDefault();
+        selection.collapse(
+          contractionHome.firstChild,
+          contractionHome.firstChild.nodeType === 3
+            ? contractionHome.firstChild.nodeValue.length : 0);
+        inlineNavigationSelection = null;
+        return;
+      }
+    }
+    if (boundaryNavigation && boundaryNavigation.blockBoundary === true &&
+        boundaryNavigation.boundaryDirection === direction &&
+        selection && selection.rangeCount && !selection.isCollapsed) {
+      event.preventDefault();
+      selection.modify('extend', direction, 'character');
+      var extendedRange = selection.getRangeAt(0).cloneRange();
+      var combinedRange = document.createRange();
+      try {
+        if (direction === 'backward') {
+          combinedRange.setStart(extendedRange.startContainer, extendedRange.startOffset);
+          combinedRange.setEnd(
+            boundaryNavigation.range.endContainer, boundaryNavigation.range.endOffset);
+        } else {
+          combinedRange.setStart(
+            boundaryNavigation.range.startContainer, boundaryNavigation.range.startOffset);
+          combinedRange.setEnd(extendedRange.endContainer, extendedRange.endOffset);
+        }
+        selectRangeInDirection(selection, combinedRange, direction);
+        var extendedNavigation = liveInlineCaretEndpointSelection() ||
+          repeatedBoundaryEndpointSelection(
+            selection, combinedRange,
+            boundaryNavigation.boundaryRoot || boundaryNavigation,
+            direction, (boundaryNavigation.boundaryExtensionCount || 0) + 1);
+        if (extendedNavigation) {
+          var extendedWhitespaceOnly = /^\s+$/.test(extendedNavigation.expected);
+          var boundaryClipboardText = boundaryNavigation.boundaryClipboardText == null
+            ? boundaryNavigation.expected : boundaryNavigation.boundaryClipboardText;
+          var combinedVisible = direction === 'backward'
+            ? extendedNavigation.expected + boundaryClipboardText
+            : boundaryClipboardText + extendedNavigation.expected;
+          extendedNavigation.expected = combinedVisible;
+          extendedNavigation.sourceExpected = combinedVisible;
+          extendedNavigation.domExpected = plain(selection.toString()).replace(/\u200B/g, '');
+          extendedNavigation.blockBoundary = true;
+          extendedNavigation.boundaryDirection = direction;
+          extendedNavigation.boundaryClipboardText = boundaryClipboardText;
+          extendedNavigation.boundaryRoot = boundaryNavigation.boundaryRoot ||
+            boundaryNavigation;
+          extendedNavigation.home = boundaryNavigation.home ||
+            extendedNavigation.boundaryRoot.home;
+          extendedNavigation.boundaryExtensionCount =
+            (boundaryNavigation.boundaryExtensionCount || 0) + 1;
+          if (extendedWhitespaceOnly) {
+            extendedNavigation.syntaxStart = [];
+            extendedNavigation.syntaxEnd = [];
+          }
+          inlineNavigationSelection = extendedNavigation;
+        } else {
+          inlineNavigationSelection = null;
+        }
+      } catch (_) {
+        inlineNavigationSelection = null;
+      }
+      return;
+    }
     var home = activeInlineCaretHome();
     if (!home ||
         (!home.hasAttribute('data-md-inline-caret-source-neutral') &&
-         !home.hasAttribute('data-md-inline-caret-after-empty-wrapper'))) return;
-    var selection = window.getSelection();
+         !home.hasAttribute('data-md-inline-caret-after-empty-wrapper') &&
+         !home.hasAttribute('data-md-inline-caret-before-empty-wrapper'))) return;
     if (!selection || !selection.rangeCount || !selection.isCollapsed) return;
     event.preventDefault();
-    if (event.shiftKey) {
-      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      walker.currentNode = home;
-      var adjacent = event.key === 'ArrowLeft'
-        ? walker.previousNode() : walker.nextNode();
-      while (adjacent && (home.contains(adjacent) || !adjacent.nodeValue.length)) {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    walker.currentNode = home;
+    var homeBlock = blockOf(home);
+    var boundaryAdjacent = null;
+    var adjacent = event.key === 'ArrowLeft'
+      ? walker.previousNode() : walker.nextNode();
+    while (adjacent && (home.contains(adjacent) || !adjacent.nodeValue.length ||
+           blockOf(adjacent.parentElement) !== homeBlock)) {
+      // Never turn a horizontal arrow at a paragraph edge into navigation
+      // through the body's formatting newline or into another block.
+      if (!home.contains(adjacent) &&
+          blockOf(adjacent.parentElement) !== homeBlock) {
+        var adjacentBlock = adjacent.parentElement.closest(
+          'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th');
+        if (adjacentBlock && adjacentBlock !== homeBlock) {
+          boundaryAdjacent = adjacent;
+          adjacent = null;
+          break;
+        }
         adjacent = event.key === 'ArrowLeft'
           ? walker.previousNode() : walker.nextNode();
+        continue;
       }
+      adjacent = event.key === 'ArrowLeft'
+        ? walker.previousNode() : walker.nextNode();
+    }
+    if (event.shiftKey) {
       if (adjacent) {
         selection.collapse(
           adjacent,
@@ -514,10 +739,51 @@
             range: selection.getRangeAt(0).cloneRange()
           };
         }
+      } else if (boundaryAdjacent) {
+        // From an internal paragraph edge, the first native extension owns
+        // the visual block separator. Backward traversal first encounters the
+        // synthetic holder itself, so consume that invisible stop as well.
+        selection.modify(
+          'extend', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+        if (event.key === 'ArrowLeft') {
+          selection.modify('extend', 'backward', 'character');
+        }
+        var boundaryOffset = event.key === 'ArrowLeft'
+          ? home.__mdNeutralPreviousBoundaryOffset
+          : home.__mdNeutralNextBoundaryOffset;
+        var boundarySource = event.key === 'ArrowLeft'
+          ? home.__mdNeutralPreviousBoundarySource
+          : home.__mdNeutralNextBoundarySource;
+        if (Number.isFinite(boundaryOffset) && boundarySource) {
+          var boundaryRange = selection.getRangeAt(0).cloneRange();
+          inlineNavigationSelection = {
+            start: boundaryOffset,
+            end: boundaryOffset + boundarySource.length,
+            expected: plain(selection.toString()).replace(/\u200B/g, ''),
+            sourceExpected: boundarySource,
+            canonicalSourceSelection: false,
+            blockBoundary: true,
+            boundaryDirection: event.key === 'ArrowLeft' ? 'backward' : 'forward',
+            boundaryClipboardText: plain(selection.toString()).replace(/\u200B/g, ''),
+            home: home,
+            syntaxStart: [],
+            syntaxEnd: [],
+            range: boundaryRange
+          };
+        }
       }
       return;
     }
-    selection.modify('move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+    if (adjacent) {
+      selection.collapse(
+        adjacent,
+        event.key === 'ArrowLeft' ? adjacent.nodeValue.length : 0);
+      selection.modify(
+        'move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
+      return;
+    }
+    selection.modify(
+      'move', event.key === 'ArrowLeft' ? 'backward' : 'forward', 'character');
     if (event.key === 'ArrowLeft') {
       selection.modify('move', 'backward', 'character');
     }
@@ -569,8 +835,209 @@
       liveRange.startOffset === navigation.range.startOffset &&
       liveRange.endContainer === navigation.range.endContainer &&
       liveRange.endOffset === navigation.range.endOffset;
-    return sameRange && plain(selection.toString()) === navigation.expected
+    var liveText = plain(selection.toString()).replace(/\u200B/g, '');
+    var sameBoundaryHome = navigation.blockBoundary === true &&
+      navigation.home === selectedInlineCaretHome();
+    var expectedLiveText = navigation.domExpected == null
+      ? navigation.expected : navigation.domExpected;
+    return (sameRange || sameBoundaryHome) && liveText === expectedLiveText
       ? navigation : null;
+  }
+
+  function inlineNavigationClipboardText(navigation) {
+    if (!navigation) return null;
+    var source = navigation.sourceExpected || '';
+    // Preserve tabs and paragraph separators on the public plain-text flavor,
+    // while retaining the bridge-wide NBSP-to-space normalization.
+    return source && /^\s+$/.test(source) ? plain(source) : navigation.expected;
+  }
+
+  // Option-Shift/word selection is performed by WebKit itself, so it bypasses
+  // the single-character keydown route that records inlineNavigationSelection.
+  // If one endpoint is the synthetic caret home — or WebKit normalized it to
+  // that home's exact adjacent text boundary — recover the source edge from
+  // the metadata installed with the home. WebKit otherwise omits Paste's
+  // beforeinput for this geometry and silently drops the replacement.
+  function liveInlineCaretEndpointSelection() {
+    var selection = window.getSelection();
+    var home = selectedInlineCaretHome();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
+    var range = selection.getRangeAt(0);
+    var startPosition = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPosition = normalizePosition(range.endContainer, range.endOffset, false);
+    var mappedStart = sourceOffsetOf(startPosition.node, startPosition.offset);
+    var mappedEnd = sourceOffsetOf(endPosition.node, endPosition.offset);
+    var startsAtHome = !!home &&
+      (range.startContainer === home || home.contains(range.startContainer));
+    var endsAtHome = !!home &&
+      (range.endContainer === home || home.contains(range.endContainer));
+    // Repeated native word extension can normalize an anchor out of the
+    // zero-width holder and onto the immediately adjacent text boundary. Keep
+    // treating that exact, source-verified edge as the synthetic home; a real
+    // visible gap or a different mapped offset must continue through the
+    // ordinary selection route.
+    if (!home || startsAtHome === endsAtHome) {
+      function hasEmptyOrderedGap(startNode, startOffset, endNode, endOffset) {
+        var startPoint = document.createRange();
+        var endPoint = document.createRange();
+        var gap = document.createRange();
+        try {
+          startPoint.setStart(startNode, startOffset);
+          startPoint.collapse(true);
+          endPoint.setStart(endNode, endOffset);
+          endPoint.collapse(true);
+          if (startPoint.compareBoundaryPoints(Range.START_TO_START, endPoint) > 0) {
+            return false;
+          }
+          gap.setStart(startNode, startOffset);
+          gap.setEnd(endNode, endOffset);
+          return plain(gap.toString()) === '';
+        } catch (_) {
+          return false;
+        }
+      }
+      var homes = document.querySelectorAll('[data-md-inline-caret-home]');
+      for (var i = 0; i < homes.length; i++) {
+        var candidate = homes[i];
+        var parent = candidate.parentNode;
+        if (!parent) continue;
+        var childIndex = Array.prototype.indexOf.call(parent.childNodes, candidate);
+        var nextOffset = candidate.__mdNeutralNextOffset;
+        if (Number.isFinite(nextOffset) && mappedStart === nextOffset &&
+            hasEmptyOrderedGap(
+              parent, childIndex + 1, range.startContainer, range.startOffset)) {
+          home = candidate;
+          startsAtHome = true;
+          endsAtHome = false;
+          break;
+        }
+        var previousOffset = candidate.__mdNeutralPreviousOffset;
+        var previousSource = candidate.__mdNeutralPreviousCharacter || '';
+        if (Number.isFinite(previousOffset) &&
+            mappedEnd === previousOffset + previousSource.length &&
+            hasEmptyOrderedGap(
+              range.endContainer, range.endOffset, parent, childIndex)) {
+          home = candidate;
+          startsAtHome = false;
+          endsAtHome = true;
+          break;
+        }
+      }
+    }
+    if (!home) return null;
+    if (startsAtHome === endsAtHome) return null;
+    var expected = plain(rangeTextWithoutInlineCaretHome(range, home));
+    if (!expected) return null;
+    var start;
+    var end;
+    var blockBoundary = false;
+    var boundaryDirection = null;
+    if (startsAtHome) {
+      start = home.__mdNeutralNextOffset;
+      if (!Number.isFinite(start)) {
+        start = home.__mdNeutralNextBoundaryOffset;
+        blockBoundary = Number.isFinite(start);
+        boundaryDirection = 'forward';
+      }
+      end = mappedEnd;
+    } else {
+      start = mappedStart;
+      var previousOffset = home.__mdNeutralPreviousOffset;
+      var previousSource = home.__mdNeutralPreviousCharacter || '';
+      if (Number.isFinite(previousOffset)) {
+        end = previousOffset + previousSource.length;
+      } else {
+        var previousBoundaryOffset = home.__mdNeutralPreviousBoundaryOffset;
+        var previousBoundarySource = home.__mdNeutralPreviousBoundarySource || '';
+        end = Number.isFinite(previousBoundaryOffset)
+          ? previousBoundaryOffset + previousBoundarySource.length : null;
+        blockBoundary = Number.isFinite(end);
+        boundaryDirection = 'backward';
+      }
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return null;
+    var syntaxStart = selectedSyntaxBoundaries(range, true);
+    var syntaxEnd = selectedSyntaxBoundaries(range, false);
+    // A synthetic home sits outside the adjacent inline element. When the
+    // selection begins at that element's first visible character and ends at
+    // the home, the DOM start owns both of its hidden source delimiters.
+    if (endsAtHome && syntaxStart.length && !syntaxEnd.length) {
+      syntaxEnd = syntaxStart.slice();
+    }
+    return {
+      start: start,
+      end: end,
+      expected: expected,
+      sourceExpected: expected,
+      canonicalSourceSelection: true,
+      inlineCaretOffset: parseInt(
+        home.getAttribute('data-md-inline-caret-offset'), 10),
+      inlineCaretAfterWrapper:
+        home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
+      inlineCaretBeforeWrapper:
+        home.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
+      home: home,
+      selectionStartsAtHome: startsAtHome,
+      blockBoundary: blockBoundary,
+      boundaryDirection: boundaryDirection,
+      syntaxStart: syntaxStart,
+      syntaxEnd: syntaxEnd,
+      range: range.cloneRange()
+    };
+  }
+  // WebKit can normalize a selection completely off the synthetic caret home
+  // when repeated Shift-arrow reaches a run whose visible character has a
+  // different source spelling (for example `\\*`). Reattach the cached block
+  // boundary and recover the exact adjacent source edge from the home's
+  // metadata; the host will canonicalize the complete source interval.
+  function repeatedBoundaryEndpointSelection(selection, range, boundaryRoot,
+                                              direction, extensionCount) {
+    var home = boundaryRoot && boundaryRoot.home;
+    if (!selection || !range || !home || extensionCount < 1) return null;
+    var startPosition = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPosition = normalizePosition(range.endContainer, range.endOffset, false);
+    var start = sourceOffsetOf(startPosition.node, startPosition.offset);
+    var end = sourceOffsetOf(endPosition.node, endPosition.offset);
+    if (direction === 'backward') {
+      end = boundaryRoot.end;
+      if (extensionCount === 1 &&
+          Number.isFinite(home.__mdBoundaryPreviousCharacterOffset)) {
+        start = home.__mdBoundaryPreviousCharacterOffset;
+      }
+    } else {
+      start = boundaryRoot.start;
+      if (extensionCount === 1 &&
+          Number.isFinite(home.__mdBoundaryNextCharacterOffset)) {
+        end = home.__mdBoundaryNextCharacterOffset +
+          (home.__mdBoundaryNextCharacter || '').length;
+      }
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) {
+      return null;
+    }
+    var expected = plain(selection.toString()).replace(/\u200B/g, '');
+    expected = direction === 'backward'
+      ? expected.replace(/[\r\n]+$/, '')
+      : expected.replace(/^[\r\n]+/, '');
+    if (!expected) return null;
+    return {
+      start: start,
+      end: end,
+      expected: expected,
+      sourceExpected: expected,
+      canonicalSourceSelection: true,
+      inlineCaretOffset: parseInt(
+        home.getAttribute('data-md-inline-caret-offset'), 10),
+      inlineCaretAfterWrapper:
+        home.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
+      inlineCaretBeforeWrapper:
+        home.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
+      selectionStartsAtHome: direction === 'forward',
+      syntaxStart: selectedSyntaxBoundaries(range, true),
+      syntaxEnd: selectedSyntaxBoundaries(range, false),
+      home: home,
+      range: range.cloneRange()
+    };
   }
   function rangeTextWithoutInlineCaretHome(range, inlineHome) {
     var value = rangeText(range);
@@ -597,6 +1064,10 @@
     post({ op: 'paste', matchStyle: matchStyle, inCell: !!cell,
            start: offset, end: offset, expected: '', crossRun: false,
            selected: false, endAtBlockStart: false,
+           inlineCaretBeforeWrapper:
+             inlineHome.hasAttribute('data-md-inline-caret-before-empty-wrapper'),
+           inlineCaretAfterWrapper:
+             inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper'),
            syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
            before: '', after: '', rev: stampRev, seq: seq++ });
     return true;
@@ -604,7 +1075,14 @@
   function placeInlineCaretHome(span, offset, previousSourceCharacter, sourceNeutral,
                                 neutralPreviousOffset, neutralPreviousCharacter,
                                 neutralNextOffset, neutralNextCharacter,
-                                neutralWrapperSource, afterSpan, afterEmptyWrapper) {
+                                neutralWrapperSource, afterSpan, afterEmptyWrapper,
+                                neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+                                neutralNextBoundaryOffset, neutralNextBoundarySource,
+                                beforeEmptyWrapper,
+                                boundaryPreviousCharacterOffset,
+                                boundaryPreviousCharacter,
+                                boundaryNextCharacterOffset,
+                                boundaryNextCharacter) {
     if (!span || !span.parentNode) return false;
     var inlineHolder = document.createElement('span');
     inlineHolder.setAttribute('data-s', String(offset - 1));
@@ -614,6 +1092,9 @@
     if (afterEmptyWrapper) {
       inlineHolder.setAttribute('data-md-inline-caret-after-empty-wrapper', '1');
     }
+    if (beforeEmptyWrapper) {
+      inlineHolder.setAttribute('data-md-inline-caret-before-empty-wrapper', '1');
+    }
     inlineHolder.__mdPreviousSourceCharacter = sourceNeutral
       ? '' : (previousSourceCharacter || '');
     inlineHolder.__mdNeutralPreviousOffset = neutralPreviousOffset;
@@ -621,6 +1102,14 @@
     inlineHolder.__mdNeutralNextOffset = neutralNextOffset;
     inlineHolder.__mdNeutralNextCharacter = neutralNextCharacter || '';
     inlineHolder.__mdNeutralWrapperSource = neutralWrapperSource || '';
+    inlineHolder.__mdNeutralPreviousBoundaryOffset = neutralPreviousBoundaryOffset;
+    inlineHolder.__mdNeutralPreviousBoundarySource = neutralPreviousBoundarySource || '';
+    inlineHolder.__mdNeutralNextBoundaryOffset = neutralNextBoundaryOffset;
+    inlineHolder.__mdNeutralNextBoundarySource = neutralNextBoundarySource || '';
+    inlineHolder.__mdBoundaryPreviousCharacterOffset = boundaryPreviousCharacterOffset;
+    inlineHolder.__mdBoundaryPreviousCharacter = boundaryPreviousCharacter || '';
+    inlineHolder.__mdBoundaryNextCharacterOffset = boundaryNextCharacterOffset;
+    inlineHolder.__mdBoundaryNextCharacter = boundaryNextCharacter || '';
     var inlineCaretText = document.createTextNode('\u200B');
     inlineHolder.appendChild(inlineCaretText);
     var insertionReference = afterSpan ? span.nextSibling : span;
@@ -638,7 +1127,9 @@
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap) {
+  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, neutralPreviousBoundaryOffset, neutralPreviousBoundarySource, neutralNextBoundaryOffset, neutralNextBoundarySource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap, caretBeforeEmptyUnderline, boundaryPreviousCharacterOffset, boundaryPreviousCharacter, boundaryNextCharacterOffset, boundaryNextCharacter) {
+    inlineNavigationSelection = null;
+    inlineWordSelectionHome = null;
     length = length || 0;
     if (frozen) {
       frozenRequestedSelection = { offset: offset, length: length };
@@ -651,12 +1142,18 @@
     // ordinary visible-character behavior.
     var mappedStart = spotFor(offset);
     var visibleWrapperText = false;
-    if (caretAfterEmptyUnderline && offset >= 7) {
+    var visibleWrapperStart = caretBeforeEmptyUnderline
+      ? offset : caretAfterEmptyUnderline
+      ? offset - 7 : sourceNeutralCaretHome ? offset - 3 : null;
+    var visibleWrapperEnd = caretBeforeEmptyUnderline
+      ? offset + 7 : caretAfterEmptyUnderline
+      ? offset : sourceNeutralCaretHome ? offset + 4 : null;
+    if (Number.isFinite(visibleWrapperStart) && Number.isFinite(visibleWrapperEnd)) {
       var mappedSpans = document.querySelectorAll('[data-s]');
       for (var mappedIndex = 0; mappedIndex < mappedSpans.length; mappedIndex++) {
         var mappedBase = parseInt(mappedSpans[mappedIndex].getAttribute('data-s'), 10);
-        if (mappedBase <= offset - 7 &&
-            mappedBase + textLength(mappedSpans[mappedIndex]) >= offset) {
+        if (mappedBase <= visibleWrapperStart &&
+            mappedBase + textLength(mappedSpans[mappedIndex]) >= visibleWrapperEnd) {
           visibleWrapperText = true;
           break;
         }
@@ -664,7 +1161,13 @@
     }
     var useAfterEmptyUnderlineHome = caretAfterEmptyUnderline &&
       !visibleWrapperText;
-    var start = useAfterEmptyUnderlineHome ? null : mappedStart;
+    var useSourceNeutralCaretHome = sourceNeutralCaretHome &&
+      !visibleWrapperText;
+    var useBeforeEmptyUnderlineHome = caretBeforeEmptyUnderline &&
+      !visibleWrapperText;
+    var start = useAfterEmptyUnderlineHome || useSourceNeutralCaretHome ||
+      useBeforeEmptyUnderlineHome
+      ? null : mappedStart;
     if (start && length) {
       var end = spotFor(offset + length) || start;
       document.body.focus({ preventScroll: true });
@@ -701,13 +1204,38 @@
     for (var i = 0; i < spans.length; i++) {
       var base = parseInt(spans[i].getAttribute('data-s'), 10);
       var len = textLength(spans[i]);
-      if (base + len < offset) { prev = spans[i]; prevEnd = base + len; }
+      if (base + len < offset ||
+          (useBeforeEmptyUnderlineHome && base + len === offset)) {
+        prev = spans[i]; prevEnd = base + len;
+      }
       if ((base > offset || (useAfterEmptyUnderlineHome && base === offset)) && !next) {
         next = spans[i]; nextBase = base;
       }
     }
     var prevBlock = prev ? blockOf(prev) : null;
     var nextBlock = next ? blockOf(next) : null;
+    if (useBeforeEmptyUnderlineHome && sourceLineStart != null && sourceLineEnd != null) {
+      var beforeNextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
+      var beforePrevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
+      if (beforeNextOnLine && placeInlineCaretHome(
+            next, offset, '', false,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter,
+            '', false, false,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource, true,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
+      if (beforePrevOnLine && placeInlineCaretHome(
+            prev, offset, '', false,
+            neutralPreviousOffset, neutralPreviousCharacter,
+            neutralNextOffset, neutralNextCharacter,
+            '', true, false,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource, true,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
+    }
     if (useAfterEmptyUnderlineHome && sourceLineStart != null && sourceLineEnd != null) {
       var afterNextOnLine = next && nextBase >= sourceLineStart && nextBase <= sourceLineEnd;
       var afterPrevOnLine = prev && prevEnd >= sourceLineStart && prevEnd <= sourceLineEnd;
@@ -715,12 +1243,20 @@
             next, offset, '', false,
             neutralPreviousOffset, neutralPreviousCharacter,
             neutralNextOffset, neutralNextCharacter,
-            '', false, true)) return;
+            '', false, true,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
       if (afterPrevOnLine && placeInlineCaretHome(
             prev, offset, '', false,
             neutralPreviousOffset, neutralPreviousCharacter,
             neutralNextOffset, neutralNextCharacter,
-            '', true, true)) return;
+            '', true, true,
+            neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+            neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+            boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+            boundaryNextCharacterOffset, boundaryNextCharacter)) return;
     }
     // A host-restored caret can address hidden Markdown syntax rather than a
     // rendered run (undoing a Cut at the start of `**paragraph**`, for
@@ -741,12 +1277,20 @@
               next, offset, '', true,
               neutralPreviousOffset, neutralPreviousCharacter,
               neutralNextOffset, neutralNextCharacter,
-              neutralWrapperSource, false)) return;
+              neutralWrapperSource, false, false,
+              neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+              neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+              boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+              boundaryNextCharacterOffset, boundaryNextCharacter)) return;
         if (prevOnLine && placeInlineCaretHome(
               prev, offset, '', true,
               neutralPreviousOffset, neutralPreviousCharacter,
               neutralNextOffset, neutralNextCharacter,
-              neutralWrapperSource, true)) return;
+              neutralWrapperSource, true, false,
+              neutralPreviousBoundaryOffset, neutralPreviousBoundarySource,
+              neutralNextBoundaryOffset, neutralNextBoundarySource, false,
+              boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
+              boundaryNextCharacterOffset, boundaryNextCharacter)) return;
       }
       // Any remaining hidden syntax snaps to the nearest visible run on its
       // source line. Actual empty underline constructs already took their
@@ -1141,6 +1685,32 @@
       return live.toString();
     } catch (e) { return ''; }
   }
+  // A mapped escaped pipe consumes two source characters despite showing one.
+  // Clone only the selected DOM so a partial selection keeps its exact source
+  // spelling; the host still verifies the full replacement before splicing.
+  function sourceRangeText(r) {
+    if (r.collapsed) return '';
+    var visible = plain(rangeText(r));
+    if (!visible.includes('|')) return visible;
+    var startOwner = r.startContainer.nodeType === 3
+      ? r.startContainer.parentElement : r.startContainer;
+    var endOwner = r.endContainer.nodeType === 3
+      ? r.endContainer.parentElement : r.endContainer;
+    var startEscape = startOwner && startOwner.closest && startOwner.closest('[data-md-escaped-pipe-s]');
+    if (startEscape && startEscape ===
+        (endOwner && endOwner.closest && endOwner.closest('[data-md-escaped-pipe-s]')) &&
+        visible === '|') return '\\|';
+    var live = document.createRange();
+    live.setStart(r.startContainer, r.startOffset);
+    live.setEnd(r.endContainer, r.endOffset);
+    var fragment = live.cloneContents();
+    var escapes = fragment.querySelectorAll('[data-md-escaped-pipe-s]');
+    if (!escapes.length || plain(fragment.textContent) !== visible) return visible;
+    escapes.forEach(function (span) {
+      if (span.textContent === '|') span.textContent = '\\|';
+    });
+    return plain(fragment.textContent);
+  }
   // Hidden Markdown delimiters are outside stamped text runs. When a real
   // selection owns the whole visible contents of an inline element, report
   // which syntax boundaries were selected. Deletion consumes them; nonempty
@@ -1318,6 +1888,13 @@
     return /^[ \t]+$/.test(replacement) &&
       (/[ \t]$/.test(before) || /^[ \t]/.test(after));
   }
+  // WebKit rewrites an existing tab in an editable text node to a plain space
+  // when it mutates any nearby character. The UTF-16 length stays unchanged,
+  // but the stamped run is no longer a verbatim source slice. Re-render edits
+  // in these uncommon runs instead of accepting drift and recovering later.
+  function needsStructuralTabRun(span) {
+    return !!(span && span.textContent && span.textContent.indexOf('\t') >= 0);
+  }
   function needsStructuralBlockPrefixRefresh(range, replacement, before, after) {
     var node = range.startContainer;
     var owner = node.nodeType === 1 ? node : node.parentElement;
@@ -1379,6 +1956,34 @@
              rev: stampRev, seq: seq++ });
       return true;
     }
+    var formatNavigation = liveInlineCaretEndpointSelection();
+    if (formatNavigation) {
+      freeze();
+      post({ op: 'format', command: command,
+             start: formatNavigation.start,
+             end: formatNavigation.end == null
+               ? formatNavigation.start + formatNavigation.sourceExpected.length
+               : formatNavigation.end,
+             expected: formatNavigation.sourceExpected,
+             canonicalSelection:
+               formatNavigation.canonicalSourceSelection === true,
+             inlineCaretOffset: formatNavigation.inlineCaretOffset,
+             inlineCaretAfterWrapper:
+               formatNavigation.inlineCaretAfterWrapper === true,
+             inlineCaretBeforeWrapper:
+               formatNavigation.inlineCaretBeforeWrapper === true,
+             selectionStartsAtHome:
+               formatNavigation.selectionStartsAtHome === true,
+             crossRun: !!(formatNavigation.syntaxStart &&
+               formatNavigation.syntaxStart.length ||
+               formatNavigation.syntaxEnd && formatNavigation.syntaxEnd.length),
+             selected: true, endAtBlockStart: false,
+             syntaxStart: formatNavigation.syntaxStart || [],
+             syntaxEnd: formatNavigation.syntaxEnd || [], blockPrefixes: [],
+             before: '', after: '', caret: formatNavigation.end,
+             rev: stampRev, seq: seq++ });
+      return true;
+    }
     var startPos = normalizePosition(range.startContainer, range.startOffset, true);
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
     var start = sourceOffsetOf(startPos.node, startPos.offset);
@@ -1400,7 +2005,7 @@
       command: command,
       start: start,
       end: end,
-      expected: plain(range.toString()),
+      expected: sourceRangeText(range),
       crossRun: crossRun,
       selected: !sel.isCollapsed,
       endAtBlockStart: !range.collapsed && isVisualBlockStart(endPos.node, endPos.offset),
@@ -1421,7 +2026,8 @@
   // only that marked synthetic position here; every ordinary paste continues
   // through the native beforeinput route below.
   document.body.addEventListener('paste', function (e) {
-    var navigation = currentInlineNavigationSelection();
+    var navigation = currentInlineNavigationSelection() ||
+      liveInlineCaretEndpointSelection();
     if (navigation && !frozen && !frozenInputReplayTimer) {
       inlineNavigationSelection = null;
       var navigationMatchStyle = nextPasteMatchesStyle;
@@ -1429,10 +2035,19 @@
       freeze();
       post({ op: 'paste', matchStyle: navigationMatchStyle, inCell: false,
              start: navigation.start,
-             end: navigation.start + navigation.sourceExpected.length,
-             expected: navigation.sourceExpected, crossRun: false, selected: true,
-             endAtBlockStart: false, syntaxStart: [], syntaxEnd: [],
-             blockPrefixes: [], before: '', after: '',
+             end: navigation.end == null
+               ? navigation.start + navigation.sourceExpected.length : navigation.end,
+             expected: navigation.sourceExpected, selected: true,
+             endAtBlockStart: false, blockPrefixes: [], before: '', after: '',
+             canonicalSelection: navigation.canonicalSourceSelection === true,
+             inlineCaretOffset: navigation.inlineCaretOffset,
+             inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
+             inlineCaretBeforeWrapper: navigation.inlineCaretBeforeWrapper === true,
+             selectionStartsAtHome: navigation.selectionStartsAtHome === true,
+             crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
+               navigation.syntaxEnd && navigation.syntaxEnd.length),
+             syntaxStart: navigation.syntaxStart || [],
+             syntaxEnd: navigation.syntaxEnd || [],
              rev: stampRev, seq: seq++ });
       e.preventDefault();
       return;
@@ -1451,11 +2066,16 @@
   // Override only that exceptional copy and keep every ordinary copy native.
   document.body.addEventListener('copy', function (e) {
     var selection = window.getSelection();
+    var navigation = currentInlineNavigationSelection();
     var inlineHome = selectedInlineCaretHome();
-    if (!inlineHome || !e.clipboardData) return;
-    var copied = plain(selection && selection.rangeCount
-      ? rangeTextWithoutInlineCaretHome(selection.getRangeAt(0), inlineHome)
-      : '');
+    if ((!inlineHome && !navigation) || !e.clipboardData) return;
+    if (!navigation) navigation = liveInlineCaretEndpointSelection();
+    var copied = inlineNavigationClipboardText(navigation);
+    if (copied == null) {
+      copied = plain(selection && selection.rangeCount
+        ? rangeTextWithoutInlineCaretHome(selection.getRangeAt(0), inlineHome)
+        : '');
+    }
     e.clipboardData.setData('text/plain', copied);
     e.preventDefault();
   });
@@ -1466,20 +2086,33 @@
   // syntax-boundary expansion, freeze, and caret restoration.
   document.body.addEventListener('cut', function (e) {
     var liveSelection = window.getSelection();
-    var navigation = currentInlineNavigationSelection();
+    var navigation = currentInlineNavigationSelection() ||
+      liveInlineCaretEndpointSelection();
     if (navigation && e.clipboardData) {
       inlineNavigationSelection = null;
-      e.clipboardData.setData('text/plain', navigation.expected);
+      var clipboardExpected = inlineNavigationClipboardText(navigation);
+      e.clipboardData.setData('text/plain', clipboardExpected);
       e.preventDefault();
       if (frozen || frozenInputReplayTimer) return;
       setTimeout(function () {
         if (frozen || frozenInputReplayTimer) return;
         freeze();
         post({ op: 'cut', start: navigation.start,
-               end: navigation.start + navigation.sourceExpected.length,
+               end: navigation.end == null
+                 ? navigation.start + navigation.sourceExpected.length : navigation.end,
                text: '', expected: navigation.sourceExpected,
-               crossRun: false, selected: true, endAtBlockStart: false,
-               syntaxStart: [], syntaxEnd: [], blockPrefixes: [],
+               clipboardExpected: clipboardExpected,
+               blockBoundary: navigation.blockBoundary === true,
+               canonicalSelection: navigation.canonicalSourceSelection === true,
+               inlineCaretOffset: navigation.inlineCaretOffset,
+               inlineCaretAfterWrapper: navigation.inlineCaretAfterWrapper === true,
+               inlineCaretBeforeWrapper: navigation.inlineCaretBeforeWrapper === true,
+               selectionStartsAtHome: navigation.selectionStartsAtHome === true,
+               crossRun: !!(navigation.syntaxStart && navigation.syntaxStart.length ||
+                 navigation.syntaxEnd && navigation.syntaxEnd.length),
+               selected: true, endAtBlockStart: false,
+               syntaxStart: navigation.syntaxStart || [],
+               syntaxEnd: navigation.syntaxEnd || [], blockPrefixes: [],
                before: '', after: '', caret: navigation.start,
                rev: stampRev, seq: seq++ });
       }, 0);
@@ -1535,6 +2168,34 @@
       event.preventDefault();
       event.stopPropagation();
     }
+  }, true);
+
+  document.body.addEventListener('contextmenu', function () {
+    contextMenuSourceSelection = null;
+    if (frozen || pendingEdits.length) return;
+    var selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+    // An unmappable selection is still a context-menu selection. Remember it
+    // so an overbroad native case change is refused instead of reaching the
+    // ordinary insertText route with WebKit's expanded paragraph range.
+    contextMenuSourceSelection = { rev: stampRev, time: Date.now() };
+    if (selectionTouchesReadOnlyIsland()) return;
+    var range = selection.getRangeAt(0);
+    var startPos = normalizePosition(range.startContainer, range.startOffset, true);
+    var endPos = normalizePosition(range.endContainer, range.endOffset, false);
+    var span = spanOf(startPos.node, startPos.offset);
+    if (!span || span !== spanOf(endPos.node, endPos.offset)) return;
+    var start = sourceOffsetOf(startPos.node, startPos.offset);
+    var end = sourceOffsetOf(endPos.node, endPos.offset);
+    var expected = plain(range.toString());
+    if (start == null || end == null || end <= start ||
+        end - start !== expected.length) return;
+    contextMenuSourceSelection = {
+      start: start, end: end, expected: expected, span: span,
+      before: contextBefore(startPos.node, startPos.offset),
+      after: contextAfter(endPos.node, endPos.offset),
+      rev: stampRev, time: Date.now()
+    };
   }, true);
 
   document.body.addEventListener('beforeinput', function (e) {
@@ -1594,13 +2255,155 @@
       e.preventDefault();
       return;
     }
+    if (e.inputType === 'insertText' && e.data == null &&
+        e.dataTransfer && contextMenuSourceSelection &&
+        Date.now() - contextMenuSourceSelection.time < 60000 &&
+        contextMenuSourceSelection.rev === stampRev && !pendingEdits.length) {
+      var menuSelection = window.getSelection();
+      var menuRange = menuSelection && menuSelection.rangeCount
+        ? menuSelection.getRangeAt(0) : null;
+      var original = menuRange ? plain(menuRange.toString()) : '';
+      var transformed = plain(e.dataTransfer.getData('text/plain'));
+      // A case-only change with equal UTF-16 length lets us slice WebKit's
+      // transformed paragraph at the user's original source offsets. If any
+      // boundary is uncertain, restore the source after WebKit's native input.
+      if (original && transformed !== original &&
+          transformed.length === original.length &&
+          transformed.toLocaleLowerCase() === original.toLocaleLowerCase()) {
+        var captured = contextMenuSourceSelection;
+        var menuStartPos = normalizePosition(
+          menuRange.startContainer, menuRange.startOffset, true);
+        var menuEndPos = normalizePosition(
+          menuRange.endContainer, menuRange.endOffset, false);
+        var menuStart = sourceOffsetOf(menuStartPos.node, menuStartPos.offset);
+        var menuEnd = sourceOffsetOf(menuEndPos.node, menuEndPos.offset);
+        var relativeStart = captured.start - menuStart;
+        var relativeEnd = captured.end - menuStart;
+        if (menuStart != null && menuEnd != null &&
+            menuEnd - menuStart === original.length &&
+            captured.span && captured.span.isConnected &&
+            captured.span === spanOf(menuStartPos.node, menuStartPos.offset) &&
+            captured.span === spanOf(menuEndPos.node, menuEndPos.offset) &&
+            relativeStart >= 0 && relativeEnd <= original.length &&
+            original.slice(relativeStart, relativeEnd) === captured.expected) {
+          var replacement = transformed.slice(relativeStart, relativeEnd);
+          var caseEdit = {
+            start: captured.start, end: captured.end,
+            text: replacement, expected: captured.expected,
+            crossRun: false, selected: true, endAtBlockStart: false,
+            before: captured.before, after: captured.after,
+            caret: captured.start + replacement.length,
+            rev: stampRev, seq: seq++
+          };
+          if (e.cancelable) {
+            e.preventDefault();
+            freeze();
+            post(caseEdit);
+          } else {
+            pendingContextCaseEdit = caseEdit;
+          }
+        } else {
+          if (e.cancelable) e.preventDefault();
+          else pendingContextCaseResync = true;
+        }
+        contextMenuSourceSelection = null;
+        return;  // Non-cancelable variants finish after WebKit's input event.
+      }
+    }
+    contextMenuSourceSelection = null;
+    // A selected Backspace/Delete beside a synthetic home has the same source
+    // geometry as Cut, but it must not read or write the clipboard. WebKit may
+    // omit its target range or truncate it through the hidden wrapper, so route
+    // the verified live selection before consulting getTargetRanges().
+    var selectedDeletion = e.inputType === 'deleteContentBackward' ||
+      e.inputType === 'deleteContentForward' ||
+      e.inputType === 'deleteWordBackward' ||
+      e.inputType === 'deleteWordForward';
+    if (selectedDeletion) {
+      var deletionNavigation = currentInlineNavigationSelection() ||
+        liveInlineCaretEndpointSelection();
+      if (deletionNavigation) {
+        e.preventDefault();
+        freeze();
+        post({ op: 'deleteSelection', start: deletionNavigation.start,
+               end: deletionNavigation.end == null
+                 ? deletionNavigation.start + deletionNavigation.sourceExpected.length
+                 : deletionNavigation.end,
+               text: '', expected: deletionNavigation.sourceExpected,
+               canonicalSelection:
+                 deletionNavigation.canonicalSourceSelection === true,
+               inlineCaretOffset: deletionNavigation.inlineCaretOffset,
+               inlineCaretAfterWrapper:
+                 deletionNavigation.inlineCaretAfterWrapper === true,
+               inlineCaretBeforeWrapper:
+                 deletionNavigation.inlineCaretBeforeWrapper === true,
+               selectionStartsAtHome:
+                 deletionNavigation.selectionStartsAtHome === true,
+               blockBoundary: deletionNavigation.blockBoundary === true,
+               crossRun: !!(deletionNavigation.syntaxStart &&
+                 deletionNavigation.syntaxStart.length ||
+                 deletionNavigation.syntaxEnd && deletionNavigation.syntaxEnd.length),
+               selected: true, endAtBlockStart: false,
+               syntaxStart: deletionNavigation.syntaxStart || [],
+               syntaxEnd: deletionNavigation.syntaxEnd || [], blockPrefixes: [],
+               before: '', after: '', caret: deletionNavigation.start,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
+    // Typing over the same synthetic-home selection needs its inserted text
+    // preserved, unlike deletion, but uses the identical verified endpoints.
+    // Handle it before WebKit can drop the forward edit or consume the hidden
+    // wrapper on a backward edit.
+    if (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') {
+      var replacementNavigation = currentInlineNavigationSelection() ||
+        liveInlineCaretEndpointSelection();
+      var navigationText = e.data;
+      if (navigationText == null && e.dataTransfer) {
+        navigationText = e.dataTransfer.getData('text/plain');
+      }
+      if (replacementNavigation && navigationText != null) {
+        navigationText = plain(navigationText);
+        e.preventDefault();
+        freeze();
+        post({ op: 'replaceSelection', start: replacementNavigation.start,
+               end: replacementNavigation.end == null
+                 ? replacementNavigation.start +
+                   replacementNavigation.sourceExpected.length
+                 : replacementNavigation.end,
+               text: navigationText,
+               expected: replacementNavigation.sourceExpected,
+               canonicalSelection:
+                 replacementNavigation.canonicalSourceSelection === true,
+               inlineCaretOffset: replacementNavigation.inlineCaretOffset,
+               inlineCaretAfterWrapper:
+                 replacementNavigation.inlineCaretAfterWrapper === true,
+               inlineCaretBeforeWrapper:
+                 replacementNavigation.inlineCaretBeforeWrapper === true,
+               selectionStartsAtHome:
+                 replacementNavigation.selectionStartsAtHome === true,
+               blockBoundary: replacementNavigation.blockBoundary === true,
+               crossRun: !!(replacementNavigation.syntaxStart &&
+                 replacementNavigation.syntaxStart.length ||
+                 replacementNavigation.syntaxEnd &&
+                 replacementNavigation.syntaxEnd.length),
+               selected: true, endAtBlockStart: false,
+               syntaxStart: replacementNavigation.syntaxStart || [],
+               syntaxEnd: replacementNavigation.syntaxEnd || [], blockPrefixes: [],
+               before: '', after: '', caret: replacementNavigation.start,
+               rev: stampRev, seq: seq++ });
+        return;
+      }
+    }
     // WebKit reports the zero-width character inside an inline caret home as
     // the replacement target, even though it is a DOM-only anchor and the
     // source selection is collapsed. Route that one synthetic position by its
     // explicit source offset so the first restored keystroke cannot disappear
     // or be rejected as an attempt to replace text the source never contained.
     var inlineHome = activeInlineCaretHome();
-    if (inlineHome && inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper') &&
+    if (inlineHome &&
+        (inlineHome.hasAttribute('data-md-inline-caret-after-empty-wrapper') ||
+         inlineHome.hasAttribute('data-md-inline-caret-before-empty-wrapper')) &&
         (e.inputType === 'deleteContentBackward' ||
          e.inputType === 'deleteContentForward' ||
          e.inputType === 'deleteWordBackward' ||
@@ -1608,6 +2411,8 @@
       e.preventDefault();
       var afterWrapperCaretOffset = parseInt(
         inlineHome.getAttribute('data-md-inline-caret-offset'), 10);
+      var beforeEmptyWrapper = inlineHome.hasAttribute(
+        'data-md-inline-caret-before-empty-wrapper');
       var afterWrapperBackward = e.inputType === 'deleteContentBackward';
       var afterWrapperWordBackward = e.inputType === 'deleteWordBackward';
       var afterWrapperWordForward = e.inputType === 'deleteWordForward';
@@ -1616,6 +2421,7 @@
         freeze();
         post({ op: 'neutralWordDelete', start: afterWrapperCaretOffset,
                backward: afterWrapperWordBackward, afterWrapper: true,
+               beforeWrapper: beforeEmptyWrapper,
                rev: stampRev, seq: seq++ });
         return;
       }
@@ -1687,6 +2493,7 @@
         return;
       }
     }
+    var escapedPipeInsertionTarget = false;
     if (e.inputType === 'insertText') {
       var inlineHomeData = e.data;
       if (inlineHome && inlineHomeData != null) {
@@ -1800,6 +2607,14 @@
           targetInsertionPos.node, targetInsertionPos.offset);
         var liveInsertionOffset = sourceOffsetOf(
           liveInsertionPos.node, liveInsertionPos.offset);
+        var targetOwner = targetInsertionPos.node.nodeType === 3
+          ? targetInsertionPos.node.parentElement : targetInsertionPos.node;
+        escapedPipeInsertionTarget = !!(targetOwner && targetOwner.closest &&
+          targetOwner.closest('[data-md-escaped-pipe-s]'));
+        if (escapedPipeInsertionTarget && liveInsertionOffset != null &&
+            liveInsertionOffset === targetInsertionOffset) {
+          range = liveInsertionRange;
+        }
         if (targetInsertionOffset != null && liveInsertionOffset != null &&
             targetInsertionOffset !== liveInsertionOffset &&
             spanOf(targetInsertionPos.node, targetInsertionPos.offset) ===
@@ -1882,7 +2697,7 @@
     var selectedCaretHome = selectedInlineCaretHome();
     var expected = plain(selectedCaretHome
       ? rangeTextWithoutInlineCaretHome(range, selectedCaretHome)
-      : rangeText(range));
+      : sourceRangeText(range));
     var startSpan = spanOf(startPos.node, startPos.offset);
     // A real selection means the user chose the range — hidden syntax
     // inside it may go. A collapsed caret (block merge) may only remove
@@ -1934,7 +2749,10 @@
       // leading whitespace is a separate live <p>, but adding text before that
       // whitespace makes it part of the following source paragraph. Re-render
       // this first insertion; subsequent characters use the normal fast path.
-      if (crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
+      if ((startCell && (data.includes('|') || escapedPipeInsertionTarget ||
+            (!range.collapsed && expected !== plain(rangeText(range))))) ||
+          crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
+          needsStructuralTabRun(startSpan) ||
           needsStructuralWhitespaceInsertion(data, before, after) ||
           needsStructuralBlockPrefixRefresh(range, data, before, after) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
@@ -1943,6 +2761,7 @@
         e.preventDefault();
         freeze();
         post({ start: start, end: end, text: data, expected: expected,
+               inCell: !!startCell,
                crossRun: crossRun, selected: selected,
                endAtBlockStart: endAtBlockStart,
                syntaxStart: replacementSyntaxStart,
@@ -1976,6 +2795,7 @@
         (!selected && crossRun && isVisualBlockStart(endPos.node, endPos.offset));
       if (crossRun || targetOwnsStampedText || syntaxStart.length ||
           syntaxEnd.length || blockPrefixes.length ||
+          needsStructuralTabRun(startSpan) ||
           needsStructuralWhitespaceDeletion(expected, before, after) ||
           needsStructuralBlockPrefixRefresh(range, '', before, after) ||
           needsStructuralInlineRefresh(range, '', before, after)) {
@@ -2149,6 +2969,15 @@
     }
   }
   document.body.addEventListener('input', function () {
+    if (pendingContextCaseEdit || pendingContextCaseResync) {
+      var caseEdit = pendingContextCaseEdit;
+      pendingContextCaseEdit = null;
+      pendingContextCaseResync = false;
+      freeze();
+      if (caseEdit) post(caseEdit);
+      else post({ type: 'desync' });
+      return;
+    }
     if (pendingEditWatchdog) {
       clearTimeout(pendingEditWatchdog);
       pendingEditWatchdog = null;

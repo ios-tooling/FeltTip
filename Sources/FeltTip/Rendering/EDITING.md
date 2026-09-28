@@ -14,8 +14,11 @@ attribute holding its **UTF-16 source offset**:
 > **A stamped run's text equals the source at its own stamp.**
 
 Runs whose rendered form differs from their source (escapes, smart quotes,
-entity references, trailing-space hard breaks) get **no stamp**, so the caret
-there maps to nothing and the keystroke is vetoed rather than guessed at. Tests
+entity references, trailing-space hard breaks) get **no verbatim stamp**. A
+verified table `\|` is a narrow exception: its visible pipe carries a separate
+`data-md-escaped-pipe-s` source offset, and selections expand it back to both
+source characters before the host verifies the splice. Other transformed
+characters remain unmapped and their edits are vetoed. Tests
 assert the invariant directly via `CoordinatorBridgeHarness.stampMismatches()` —
 add that assertion to any new editing test; it catches drift that happens to
 leave the visible text correct.
@@ -88,18 +91,19 @@ pre-restore source — typing the undo straight back out.
 
 | Input | Route | Notes |
 | --- | --- | --- |
-| Typing, delete, forward/word delete | in-place | cross-run and Markdown-syntax-sensitive variants go structural |
+| Typing, delete, forward/word delete | in-place | cross-run, Markdown-syntax-sensitive, and table-cell pipe insertions go structural; a literal pipe becomes `\|` |
 | Typing / Return in fenced code | in-place / structural | mapped only when the rendered code is one exact source slice; Return inserts one source newline and syntax highlighting is preserved after re-render |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
 | Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix and the caret move down with the text |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
 | Format → inline styles / Link | structural | shared source formatter; inline cross-run selections are blocked |
+| macOS context menu → case Transformations | structural | saves the verified single-run selection before WebKit expands it to a paragraph; applies only the corresponding case-only slice, then re-renders; unequal-length/uncertain mappings are refused |
 | Format → headings / quote / lists / rule | structural | expands to source line boundaries and supports multi-block selections |
 | Format → List → Add List Item | structural | invokes the same verified list-continuation route as Enter for the focused styled list |
 | List add button / ⌘Return | structural | appends after the target list's final item and restores the caret in the new item; ⌘Return prefers the caret's list, then the first source-mapped list visible from the top |
 | ⇧Enter | structural | writes a `\` break, and swallows the next line's leading whitespace |
-| ⌘V | structural | host reads `NSPasteboard`; see below |
+| ⌘V | structural | host reads `NSPasteboard`; in a table cell, newlines fold to spaces and unescaped pipes become `\|` so the row keeps its columns |
 | IME / dead keys / predictive text | structural | whole run diffed at `compositionend`, then re-rendered |
 | Checkbox click | host callback | `onCheckboxToggle` |
 
