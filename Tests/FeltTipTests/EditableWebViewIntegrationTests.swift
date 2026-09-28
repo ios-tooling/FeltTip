@@ -166,6 +166,40 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		#expect(cleared == "no")
 	}
 
+	@Test func footnoteLinksNavigateInsideEditableDocument() async throws {
+		let filler = (1...80)
+			.map { "Paragraph \($0): enough text to require scrolling." }
+			.joined(separator: "\n\n")
+		let source = """
+		# Footnotes
+
+		Jump to the note.[^deploy]
+
+		\(filler)
+
+		[^deploy]: Deployment details.
+		"""
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.run("""
+			var reference = document.querySelector('a[href="#feltip-footnote-deploy"]');
+			reference.dispatchEvent(new MouseEvent('mousedown', {
+			  bubbles: true, cancelable: true, button: 0
+			}));
+			""")
+		let atNote = Int(try await harness.evaluate("String(Math.round(window.scrollY))") ?? "0") ?? 0
+		#expect(atNote > 500)
+
+		try await harness.run("""
+			var back = document.querySelector('a[href="#feltip-footnote-ref-deploy"]');
+			back.dispatchEvent(new MouseEvent('mousedown', {
+			  bubbles: true, cancelable: true, button: 0
+			}));
+			""")
+		let atReference = Int(try await harness.evaluate("String(Math.round(window.scrollY))") ?? "9999") ?? 9999
+		#expect(atReference < 200)
+	}
+
 	@Test func compositionReconcilesTheWholeRunAtOnce() async throws {
 		// The inline-predictive-text scenario: while a composition is live,
 		// plain keystrokes still arrive as ordinary insertText events, but

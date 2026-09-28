@@ -49,10 +49,17 @@ import Testing
 	@Test @MainActor func localResourceTooltipsUseAuthoredRelativePath() {
 		let script = MarkdownWebView.Coordinator.editorScript
 		#expect(script.contains("if (link.href.indexOf('markerlocalres://') === 0)"))
-		#expect(script.contains("displayHref = link.getAttribute('href') || link.href;"))
+		#expect(script.contains("displayHref = rawHref || link.href;"))
 		#expect(script.contains("link.title = displayHref;"))
 		#expect(script.contains("button.title = displayHref;"))
 		#expect(script.contains("button.setAttribute('data-href', link.href);"))
+	}
+
+	@Test @MainActor func fragmentLinksNavigateWithoutExternalOpenButtons() {
+		let script = MarkdownWebView.Coordinator.editorScript
+		#expect(script.contains("if (rawHref.charAt(0) === '#')"))
+		#expect(script.contains("document.getElementById(rawHref.slice(1))"))
+		#expect(script.contains("target.scrollIntoView({ block: 'start' })"))
 	}
 
 	@Test @MainActor func linkButtonsAreInsertedOutsideSourceOffsetRuns() {

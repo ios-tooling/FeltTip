@@ -35,7 +35,7 @@ extension MarkdownHTMLRenderer {
 			if let offset { result += "<span data-s=\"\(offset)\">" }
 			if let escapedPipeOffset { result += "<span data-md-escaped-pipe-s=\"\(escapedPipeOffset)\">" }
 			if let url = run.link {
-				result += "<a href=\"\(attributeValue(url.absoluteString, allowedSchemes: linkSchemes))\">"
+				result += "<a \(linkAttributes(for: url))>"
 			}
 			let struck = run.strikethroughStyle != nil
 			let underlined = run.underlineStyle != nil
@@ -74,6 +74,37 @@ extension MarkdownHTMLRenderer {
 
 	static let linkSchemes: Set<String> = ["http", "https", "mailto", "file", "tel", "sms"]
 	static let imageSchemes: Set<String> = ["http", "https", "file", "data"]
+
+	/// Converts the private URLs emitted by `MarkdownPreprocessor` into real
+	/// in-page anchors. Keeping the schemes out of `linkSchemes` is deliberate:
+	/// arbitrary custom schemes must still collapse to `#`, while these three
+	/// known navigation markers never leave the rendered document.
+	static func linkAttributes(for url: URL) -> String {
+		let value = url.absoluteString
+		guard let scheme = url.scheme?.lowercased() else {
+			return "href=\"\(attributeValue(value, allowedSchemes: linkSchemes))\""
+		}
+		switch scheme {
+		case "footnote":
+			guard let label = footnoteLabel(in: value) else { return "href=\"#\"" }
+			return "href=\"#feltip-footnote-\(attributeValue(label))\" id=\"feltip-footnote-ref-\(attributeValue(label))\""
+		case "footnote-anchor":
+			guard let label = footnoteLabel(in: value) else { return "href=\"#\"" }
+			return "href=\"#feltip-footnote-ref-\(attributeValue(label))\" id=\"feltip-footnote-\(attributeValue(label))\""
+		case "footnote-back":
+			guard let label = footnoteLabel(in: value) else { return "href=\"#\"" }
+			return "href=\"#feltip-footnote-ref-\(attributeValue(label))\""
+		default:
+			return "href=\"\(attributeValue(value, allowedSchemes: linkSchemes))\""
+		}
+	}
+
+	private static func footnoteLabel(in value: String) -> String? {
+		guard let separator = value.range(of: "://"), separator.upperBound < value.endIndex else {
+			return nil
+		}
+		return String(value[separator.upperBound...])
+	}
 
 	/// HTML-escapes the five characters that change meaning inside element
 	/// content or attribute values.

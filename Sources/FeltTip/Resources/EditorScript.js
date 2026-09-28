@@ -1566,9 +1566,28 @@
       if (link.dataset.mdOpenDecorated === '1') { return; }
       if (link.closest('.md-link-open-button')) { return; }
       link.dataset.mdOpenDecorated = '1';
+      var rawHref = link.getAttribute('href') || '';
+      // WebKit does not perform an anchor's default navigation while it lives
+      // inside a contenteditable body. Footnotes are rendered as fragment-only
+      // links, so handle those locally instead of adding the external-link
+      // button (which would route the current document back through the host).
+      if (rawHref.charAt(0) === '#') {
+        link.title = rawHref;
+        var navigateInPage = function (event) {
+          if (event.type === 'mousedown' && event.button !== 0) { return; }
+          var target = document.getElementById(rawHref.slice(1));
+          if (!target) { return; }
+          event.preventDefault();
+          event.stopPropagation();
+          target.scrollIntoView({ block: 'start' });
+        };
+        link.addEventListener('mousedown', navigateInPage);
+        link.addEventListener('click', navigateInPage);
+        return;
+      }
       var displayHref = link.href;
       if (link.href.indexOf('markerlocalres://') === 0) {
-        displayHref = link.getAttribute('href') || link.href;
+        displayHref = rawHref || link.href;
       }
       link.title = displayHref;
 

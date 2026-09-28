@@ -74,6 +74,25 @@ import Testing
 		#expect(html.contains("<del>gone</del>"))
 	}
 
+	@Test func rendersFootnotesAsNavigableInPageAnchors() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "See the note.[^release]\n\n[^release]: Deployment details.",
+			theme: .default)
+		#expect(html.contains("href=\"#feltip-footnote-release\" id=\"feltip-footnote-ref-release\""))
+		#expect(html.contains("href=\"#feltip-footnote-ref-release\" id=\"feltip-footnote-release\""))
+		#expect(html.contains("href=\"#feltip-footnote-ref-release\""))
+		#expect(!html.contains("footnote://"))
+		#expect(!html.contains("footnote-anchor://"))
+		#expect(!html.contains("footnote-back://"))
+	}
+
+	@Test func blocksUnknownCustomLinkSchemes() {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "[unsafe](untrusted-scheme://payload)", theme: .default)
+		#expect(html.contains("href=\"#\""))
+		#expect(!html.contains("href=\"untrusted-scheme://payload\""))
+	}
+
 	@Test func imageRowsDoNotStretchBadgeImages() {
 		let markdown = """
 		[![GitHub release](https://img.shields.io/github/v/release/agalwood/Motrix.svg)](https://github.com/agalwood/Motrix/releases) ![Build/release](https://github.com/agalwood/Motrix/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/agalwood/Motrix/total.svg)
