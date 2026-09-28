@@ -202,8 +202,37 @@
     while (lo > 0 && bases[lo - 1] >= offset) { lo--; }
     return lo;
   }
+  // A host update can replace the whole body or the top-level block that owns
+  // a <details> element. Keep disclosures the reader opened from snapping shut
+  // just because editable content inside them changed. Summary text plus its
+  // duplicate ordinal is stable across ordinary child edits, while avoiding
+  // accidentally opening a newly inserted disclosure at the same DOM index.
+  function captureOpenDetails() {
+    var occurrences = Object.create(null);
+    var open = Object.create(null);
+    document.querySelectorAll('details').forEach(function (details) {
+      var summary = details.querySelector(':scope > summary');
+      var label = summary ? summary.textContent : '';
+      var ordinal = occurrences[label] || 0;
+      occurrences[label] = ordinal + 1;
+      if (details.open) { open[label + '\u0000' + ordinal] = true; }
+    });
+    return open;
+  }
+  function restoreOpenDetails(open) {
+    var occurrences = Object.create(null);
+    document.querySelectorAll('details').forEach(function (details) {
+      var summary = details.querySelector(':scope > summary');
+      var label = summary ? summary.textContent : '';
+      var ordinal = occurrences[label] || 0;
+      occurrences[label] = ordinal + 1;
+      if (open[label + '\u0000' + ordinal]) { details.open = true; }
+    });
+  }
   window.__mdSwapContent = function (html, rev) {
+    var openDetails = captureOpenDetails();
     document.body.innerHTML = html;
+    restoreOpenDetails(openDetails);
     invalidateDimensions();
     window.__mdStampsInvalidate();
     if (window.__mdAfterSwap) { window.__mdAfterSwap(rev); }
@@ -261,11 +290,13 @@
     }
     // All validation precedes mutation: a refused patch must leave a pristine
     // old DOM for the coordinator's full-swap fallback.
+    var openDetails = captureOpenDetails();
     for (var i = 0; i < removeCount; i++) { blocks[start + i].remove(); }
     var anchor = start + removeCount < blocks.length ? blocks[start + removeCount] : null;
     var tpl = document.createElement('template');
     tpl.innerHTML = htmlArray.join('');
     document.body.insertBefore(tpl.content, anchor);
+    restoreOpenDetails(openDetails);
     invalidateDimensions();
     if (tailAnchorOffset >= 0) {
       if (delta) {
