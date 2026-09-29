@@ -1451,6 +1451,7 @@
       return child.tagName === 'LI';
     });
   }
+  var pendingListInsertion = null;
   function lastEditableRunInList(list) {
     var items = directListItems(list);
     for (var itemIndex = items.length - 1; itemIndex >= 0; itemIndex--) {
@@ -1483,6 +1484,34 @@
     return null;
   }
   function placeCaretAtListEnd(list) {
+    var items = list ? directListItems(list) : [];
+    var finalItem = items.length ? items[items.length - 1] : null;
+    if (finalItem) {
+      var nestedLists = Array.prototype.filter.call(
+        finalItem.children,
+        function (child) { return child.tagName === 'UL' || child.tagName === 'OL'; }
+      );
+      if (nestedLists.length) {
+        var subtreeRuns = finalItem.querySelectorAll('[data-s]');
+        var finalRun = subtreeRuns.length ? subtreeRuns[subtreeRuns.length - 1] : null;
+        var referenceRun = lastEditableRunInList(list);
+        var reference = referenceRun
+          ? parseInt(referenceRun.getAttribute('data-s'), 10) : NaN;
+        if (finalRun && Number.isFinite(reference)) {
+          var finalText = lastTextIn(finalRun);
+          if (finalText) {
+            placeCaretIn(finalText, finalText.nodeValue.length, finalRun);
+          } else {
+            placeCaretIn(finalRun, finalRun.childNodes.length, finalRun);
+          }
+          pendingListInsertion = {
+            marker: list.tagName === 'OL' ? '\n1. ' : '\n- ',
+            reference: reference
+          };
+          return true;
+        }
+      }
+    }
     var run = list && lastEditableRunInList(list);
     if (!run) return false;
     var text = lastTextIn(run);
@@ -1499,10 +1528,12 @@
   // detection, undo, freezing, patching, and caret restoration match Return.
   window.__mdInsertListItem = function (requestedList) {
     if (frozen) return false;
+    pendingListInsertion = null;
     var list = requestedList || listContainingSelection() ||
       firstVisibleEditableList();
     if (!placeCaretAtListEnd(list)) return false;
     document.execCommand('insertParagraph');
+    pendingListInsertion = null;
     return true;
   };
   // Markdown syntax can be hidden before a block's first visible character:
@@ -2996,7 +3027,10 @@
       // as leading spaces) — flag it and let the splice prefix it.
       var enterPre = enterHost && enterHost.closest ? enterHost.closest('pre') : null;
       var inEditableCode = !!(enterPre && enterPre.querySelector('[data-s]'));
-      var listMarker = listItemMarker(range.startContainer);
+      var requestedInsertion = pendingListInsertion;
+      pendingListInsertion = null;
+      var listMarker = requestedInsertion
+        ? requestedInsertion.marker : listItemMarker(range.startContainer);
       var marker = inEditableCode ? '\n' : (listMarker || '\n\n');
       var blockStartBreak = !listMarker
         && !inEditableCode
@@ -3007,6 +3041,7 @@
              endAtBlockStart: endAtBlockStart, before: before, after: after,
              collapsedSyntaxEnd: selected ? [] : selectedSyntaxBoundaries(range, false),
              caret: start + marker.length, listBreak: !!listMarker,
+             listReference: requestedInsertion ? requestedInsertion.reference : undefined,
              blockStartBreak: blockStartBreak,
              rev: stampRev, seq: seq++ });
       return;

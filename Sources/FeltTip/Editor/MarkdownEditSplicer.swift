@@ -56,6 +56,9 @@ enum MarkdownEditSplicer {
 		/// the item is indented and whether it is a task, so the splice matches
 		/// both properties. A continued task is always created unchecked.
 		var listBreak = false
+		/// Source offset of the list item whose shape should be continued when
+		/// insertion itself occurs after that item's nested subtree.
+		var listReference: Int? = nil
 		/// Enter was pressed at the first visible character of a block. The
 		/// splice verifies any source prefix hidden by rendering (`# `, `> `,
 		/// `**`, etc.) and inserts before it so the whole block moves.
@@ -215,8 +218,12 @@ enum MarkdownEditSplicer {
 		// Re-indent a list continuation to the item it continues; without this a
 		// nested item's Enter produced a top-level item and reflowed the list.
 		if edit.listBreak, replacement.hasPrefix("\n") {
-			let indent = lineIndent(in: text, at: edit.start)
-			if isTaskListItem(in: text, at: edit.start) {
+			let reference = edit.listReference ?? edit.start
+			guard reference >= 0, reference <= text.length else {
+				return .rejected("out-of-bounds list reference \(reference) len=\(text.length)")
+			}
+			let indent = lineIndent(in: text, at: reference)
+			if isTaskListItem(in: text, at: reference) {
 				replacement += "[ ] "
 				caret = caret.map { $0 + 4 }
 			}
@@ -752,6 +759,7 @@ extension MarkdownEditSplicer.Edit {
 		self.blockPrefixes = body["blockPrefixes"] as? [String] ?? []
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
+		self.listReference = body["listReference"] as? Int
 		self.blockStartBreak = body["blockStartBreak"] as? Bool ?? false
 		self.endAtBlockStart = body["endAtBlockStart"] as? Bool ?? false
 		self.hardBreak = body["hardBreak"] as? Bool ?? false

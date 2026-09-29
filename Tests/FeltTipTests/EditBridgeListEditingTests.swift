@@ -261,6 +261,22 @@ import Testing
 		#expect(try await harness.stampMismatches().isEmpty)
 	}
 
+	@Test func outerListButtonAppendsAfterFinalNestedContent() async throws {
+		let source = "- [ ] first\n- [x] second\n  - nested detail\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			Array.from(document.querySelectorAll('.md-list-add-button'))
+			  .find(function (button) { return !button.parentElement.closest('li'); })
+			  .click()
+			""")
+		try await harness.waitForSourceEdits(1)
+
+		#expect(harness.source
+			== "- [ ] first\n- [x] second\n  - nested detail\n- [ ] \n")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func commandReturnPrefersTheListContainingTheCaret() async throws {
 		let source = "- first\n\nparagraph\n\n1. second\n"
 		let harness = try await CoordinatorBridgeHarness(source: source)
