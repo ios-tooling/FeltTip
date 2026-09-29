@@ -168,6 +168,29 @@ enum MarkdownEditSplicer {
 				   length <= text.length - edit.end,
 				   text.substring(with: NSRange(location: edit.start - length, length: length)) == alternate,
 				   text.substring(with: NSRange(location: edit.end, length: length)) == alternate {
+					// A lone `*` or `_` is italic only when the complete delimiter
+					// run beside the selection has odd length. In `**bold**`, the
+					// adjacent inner characters belong to the bold delimiter and must
+					// not make an italic command unwrap bold.
+					if length == 1,
+					   let unit = alternate.utf16.first,
+					   unit == 0x2A || unit == 0x5F {
+						var openingRunLength = 0
+						var offset = edit.start
+						while offset > 0, text.character(at: offset - 1) == unit {
+							openingRunLength += 1
+							offset -= 1
+						}
+						var closingRunLength = 0
+						offset = edit.end
+						while offset < text.length, text.character(at: offset) == unit {
+							closingRunLength += 1
+							offset += 1
+						}
+						guard openingRunLength % 2 == 1, closingRunLength % 2 == 1 else {
+							continue
+						}
+					}
 					let unwrapped = text.substring(to: edit.start - length) + actual + text.substring(from: edit.end + length)
 					let replacedRange = NSRange(
 						location: edit.start - length,

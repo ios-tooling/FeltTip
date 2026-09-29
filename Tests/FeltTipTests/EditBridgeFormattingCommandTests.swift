@@ -161,6 +161,24 @@ import Testing
 		}
 	}
 
+	@Test func nativeItalicCommandPreservesExistingBoldFormatting() async throws {
+		let source = "**Alpha**\n\nTail"
+		let selection = (source as NSString).range(of: "Alpha")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.batch([
+			"window.__mdPlaceCaret(\(selection.location), \(selection.length))",
+			"document.execCommand('italic')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+
+		#expect(harness.source == "***Alpha***\n\nTail")
+		#expect(try await harness.stampMismatches() == [])
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func overlappingMenuFormatsSerializeWithoutDuplicateEdits() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\nTail")
 		try await harness.batch([
