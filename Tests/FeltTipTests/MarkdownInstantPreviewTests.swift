@@ -55,6 +55,20 @@ struct MarkdownInstantPreviewTests {
 	}
 
 	@Test @MainActor
+	func resolvesReferenceLinksInsideDefinitionLists() {
+		let markdown = "Term\n: Read the [documentation][docs].\n\n[docs]: https://example.com/docs"
+		let rendered = MarkdownInstantPreview.renderForTesting(markdown)
+		let linkRange = (rendered.string as NSString).range(of: "documentation")
+
+		#expect(rendered.string.contains("Read the documentation."))
+		#expect(!rendered.string.contains("[documentation][docs]"))
+		#expect(rendered.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL
+			== URL(string: "https://example.com/docs"))
+		#expect(rendered.attribute(
+			.markdownSourceOffset, at: linkRange.location, effectiveRange: nil) as? Int == 17)
+	}
+
+	@Test @MainActor
 	func launchRendererProvidesReadableSelectableTextWithoutFullParse() {
 		let rendered = MarkdownInstantPreview.renderLaunchForTesting(
 			"# Heading\n\n- A **fast** item\n\n```swift\nlet value = 1\n```")

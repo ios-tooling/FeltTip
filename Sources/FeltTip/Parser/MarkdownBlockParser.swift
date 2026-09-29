@@ -98,7 +98,10 @@ public enum MarkdownBlockParser {
 			blocks.insert(fm, at: 0)
 		}
 		let tPost0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
-		let result = postProcess(blocks, definitionSourceGroups: definitionSourceGroups)
+		let result = postProcess(
+			blocks,
+			definitionSourceGroups: definitionSourceGroups,
+			processedMarkdown: processed)
 		guard !Task.isCancelled else { return [] }
 		if collectMetrics {
 			let tEnd = CFAbsoluteTimeGetCurrent()
@@ -227,9 +230,27 @@ public enum MarkdownBlockParser {
 
 	private static func postProcess(
 		_ blocks: [MarkdownBlock],
-		definitionSourceGroups: [[DefinitionListProcessor.SourceItem]]
+		definitionSourceGroups: [[DefinitionListProcessor.SourceItem]],
+		processedMarkdown: String
 	) -> [MarkdownBlock] {
-		removeCommentOnlyHTMLBlocks(convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLHeadings(convertHTMLTables(convertDefinitionLists(blocks, sourceGroups: definitionSourceGroups))))))))
+		let containsDefinitionList = blocks.contains { block in
+			guard case .htmlBlock(let html, _, _) = block else { return false }
+			return html.lowercased().contains("<dl")
+		}
+		let references = containsDefinitionList
+			? linkReferenceDefinitions(in: processedMarkdown)
+			: nil
+		let definitions = convertDefinitionLists(
+			blocks,
+			sourceGroups: definitionSourceGroups,
+			linkReferenceDefinitions: references)
+		let tables = convertHTMLTables(definitions)
+		let headings = convertHTMLHeadings(tables)
+		let inlines = convertHTMLInlines(headings)
+		let preformatted = convertPreBlocks(inlines)
+		let details = groupDetailsBlocks(preformatted)
+		let alerts = convertAlerts(details)
+		return removeCommentOnlyHTMLBlocks(alerts)
 	}
 
 	/// Drop HTML blocks that contain nothing but HTML comments — they'd
@@ -265,7 +286,8 @@ public enum MarkdownBlockParser {
 	/// Convert `<dl>` HTML blocks into `.definitionList` blocks.
 	private static func convertDefinitionLists(
 		_ blocks: [MarkdownBlock],
-		sourceGroups: [[DefinitionListProcessor.SourceItem]]
+		sourceGroups: [[DefinitionListProcessor.SourceItem]],
+		linkReferenceDefinitions: String?
 	) -> [MarkdownBlock] {
 		blocks.map { block in
 			guard case .htmlBlock(let html, let blockSourceOffset, let id) = block,
@@ -282,14 +304,81 @@ public enum MarkdownBlockParser {
 						termSourceStart: source.termStart,
 						definitionSourceStarts: source.definitionStarts.map(Optional.some),
 						termSourceText: source.term,
-						definitionSourceTexts: source.definitions.map(Optional.some))
+						definitionSourceTexts: source.definitions.map(Optional.some),
+						linkReferenceDefinitions: linkReferenceDefinitions)
 				}
 			} else {
-				items = parsedItems
+				items = parsedItems.map {
+					DefinitionItem(
+						term: $0.term,
+						definitions: $0.definitions,
+						linkReferenceDefinitions: linkReferenceDefinitions)
+				}
 			}
 			guard !items.isEmpty else { return block }
 			return .definitionList(items: items, id: id)
 		}
+	}
+
+	/// Definition-list terms and descriptions are reparsed as standalone inline
+	/// Markdown after CommonMark has resolved the surrounding document. Preserve
+	/// the document's reference definitions so links in those fragments retain
+	/// the same resolution context. Continuation lines are limited to the
+	/// indented destination/title forms permitted by CommonMark.
+	private static func linkReferenceDefinitions(in markdown: String) -> String? {
+		let lines = markdown.components(separatedBy: .newlines)
+		var definitions: [String] = []
+		var index = 0
+		var inFence = false
+
+		while index < lines.count {
+			let line = lines[index]
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+				inFence.toggle()
+				index += 1
+				continue
+			}
+			guard !inFence, let colon = linkReferenceDefinitionColon(in: line) else {
+				index += 1
+				continue
+			}
+
+			definitions.append(line)
+			let hasDestination = !line[line.index(after: colon)...]
+				.trimmingCharacters(in: .whitespaces).isEmpty
+			index += 1
+			var continuationLimit = hasDestination ? 1 : 2
+			while index < lines.count, continuationLimit > 0,
+			      !lines[index].trimmingCharacters(in: .whitespaces).isEmpty,
+			      (lines[index].first == " " || lines[index].first == "\t") {
+				definitions.append(lines[index])
+				index += 1
+				continuationLimit -= 1
+			}
+		}
+
+		return definitions.isEmpty ? nil : definitions.joined(separator: "\n")
+	}
+
+	private static func linkReferenceDefinitionColon(in line: String) -> String.Index? {
+		let leadingSpaces = line.prefix { $0 == " " }.count
+		guard leadingSpaces <= 3 else { return nil }
+		let start = line.index(line.startIndex, offsetBy: leadingSpaces)
+		guard start < line.endIndex, line[start] == "[" else { return nil }
+		var escaped = false
+		for index in line.indices.drop(while: { $0 <= start }) {
+			let character = line[index]
+			if character == "]", !escaped {
+				let next = line.index(after: index)
+				guard next < line.endIndex, line[next] == ":" else { return nil }
+				let label = line[line.index(after: start)..<index]
+				return !label.isEmpty && label.first != "^" && label.first != "@" ? next : nil
+			}
+			escaped = character == "\\" && !escaped
+			if character != "\\" { escaped = false }
+		}
+		return nil
 	}
 
 	private static func generatedDefinitionListIndex(in html: String) -> Int? {

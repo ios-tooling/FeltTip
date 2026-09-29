@@ -18,10 +18,12 @@ public enum SmartQuotes {
 		guard text.contains("\"") || text.contains("'") else { return text }
 		var output: [String] = []
 		var inFence = false
+		var referenceContinuationLines = 0
 		for line in text.components(separatedBy: "\n") {
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
 				inFence.toggle()
+				referenceContinuationLines = 0
 				output.append(line); continue
 			}
 			if inFence { output.append(line); continue }
@@ -29,16 +31,42 @@ public enum SmartQuotes {
 			// title quotes to stay ASCII so the CommonMark parser still
 			// recognises them; curling those mid-stream silently drops the
 			// reference altogether.
-			if isLinkReferenceDefinition(trimmed) { output.append(line); continue }
+			var preservesReferenceSyntax = false
+			if referenceContinuationLines > 0,
+			   !trimmed.isEmpty,
+			   (line.first == " " || line.first == "\t") {
+				preservesReferenceSyntax = true
+				referenceContinuationLines -= 1
+			} else if !trimmed.isEmpty {
+				referenceContinuationLines = 0
+			}
+			if let continuationLimit = referenceDefinitionContinuationLimit(trimmed) {
+				preservesReferenceSyntax = true
+				referenceContinuationLines = continuationLimit
+			}
+			if preservesReferenceSyntax { output.append(line); continue }
 			output.append(processLine(line))
 		}
 		return output.joined(separator: "\n")
 	}
 
-	private static func isLinkReferenceDefinition(_ trimmed: String) -> Bool {
+	static func isLinkReferenceDefinition(_ trimmed: String) -> Bool {
 		guard trimmed.hasPrefix("["), let close = trimmed.firstIndex(of: "]") else { return false }
 		let after = trimmed.index(after: close)
 		return after < trimmed.endIndex && trimmed[after] == ":"
+	}
+
+	/// Number of indented destination/title lines that may follow a reference
+	/// definition opener. Those lines must retain straight quote delimiters so
+	/// CommonMark can recognize an optional title.
+	static func referenceDefinitionContinuationLimit(_ trimmed: String) -> Int? {
+		guard isLinkReferenceDefinition(trimmed), let close = trimmed.firstIndex(of: "]") else {
+			return nil
+		}
+		let colon = trimmed.index(after: close)
+		let remainder = trimmed[trimmed.index(after: colon)...]
+			.trimmingCharacters(in: .whitespaces)
+		return remainder.isEmpty ? 2 : 1
 	}
 
 	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.

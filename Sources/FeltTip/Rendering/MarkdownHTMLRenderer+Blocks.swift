@@ -100,7 +100,8 @@ extension MarkdownHTMLRenderer {
 				let termHTML = renderInlineMarkdown(
 					item.term,
 					sourceStart: item.termSourceStart,
-					sourceText: item.termSourceText)
+					sourceText: item.termSourceText,
+					linkReferenceDefinitions: item.linkReferenceDefinitions)
 				body += "<dt>\(termHTML)</dt>"
 				for (index, def) in item.definitions.enumerated() {
 					let sourceStart = item.definitionSourceStarts.indices.contains(index)
@@ -108,7 +109,10 @@ extension MarkdownHTMLRenderer {
 					let sourceText = item.definitionSourceTexts.indices.contains(index)
 						? item.definitionSourceTexts[index] : nil
 					let definitionHTML = renderInlineMarkdown(
-						def, sourceStart: sourceStart, sourceText: sourceText)
+						def,
+						sourceStart: sourceStart,
+						sourceText: sourceText,
+						linkReferenceDefinitions: item.linkReferenceDefinitions)
 					body += "<dd>\(definitionHTML)</dd>"
 				}
 			}
@@ -123,10 +127,12 @@ extension MarkdownHTMLRenderer {
 	static func renderInlineMarkdown(
 		_ markdown: String,
 		sourceStart: Int?,
-		sourceText: String? = nil
+		sourceText: String? = nil,
+		linkReferenceDefinitions: String? = nil
 	) -> String {
 		let shouldTrack = emitSourceOffsets && sourceStart != nil
-		let blocks = MarkdownBlockParser.parse(markdown, trackSourceOffsets: shouldTrack)
+		let parseInput = linkReferenceDefinitions.map { markdown + "\n\n" + $0 } ?? markdown
+		let blocks = MarkdownBlockParser.parse(parseInput, trackSourceOffsets: shouldTrack)
 		guard blocks.count == 1,
 			  case .paragraph(let content, _, _) = blocks[0] else {
 			return escape(markdown)

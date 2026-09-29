@@ -96,6 +96,30 @@ import Testing
 		#expect(!html.contains("[^qa]"))
 	}
 
+	@Test func resolvesReferenceLinksInsideDefinitionLists() {
+		let html = MarkdownHTMLRenderer.renderBodyFragment(
+			markdown: "Term\n: Read the [documentation][docs].\n\n[docs]: https://example.com/docs \"Docs\"",
+			includeSourceOffsets: true)
+
+		#expect(html.contains("href=\"https://example.com/docs\""))
+		#expect(html.contains(">documentation</a>"))
+		#expect(!html.contains("[documentation][docs]"))
+	}
+
+	@Test func resolvesMultilineReferenceDefinitionsInsideDefinitionLists() {
+		let html = MarkdownHTMLRenderer.renderBodyFragment(markdown: """
+			Term
+			: Read the [documentation][docs].
+
+			[docs]:
+			  https://example.com/docs
+			  "Docs"
+			""")
+
+		#expect(html.contains("href=\"https://example.com/docs\""))
+		#expect(!html.contains("[documentation][docs]"))
+	}
+
 	@Test func rendersFootnotesAsNavigableInPageAnchors() {
 		let html = MarkdownHTMLRenderer.renderDocument(
 			markdown: "See the note.[^release]\n\n[^release]: Deployment details.",

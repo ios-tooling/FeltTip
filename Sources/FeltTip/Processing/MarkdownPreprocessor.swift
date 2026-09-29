@@ -232,6 +232,7 @@ public enum MarkdownPreprocessor {
 		guard features.requiresPass else { return text }
 		var output: [String] = []
 		var inFence = false
+		var referenceContinuationLines = 0
 		let lines = text.components(separatedBy: "\n")
 		output.reserveCapacity(lines.count)
 		for (index, line) in lines.enumerated() {
@@ -240,9 +241,24 @@ public enum MarkdownPreprocessor {
 				let trimmed = line.trimmingCharacters(in: .whitespaces)
 				if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
 					inFence.toggle()
+					referenceContinuationLines = 0
 					output.append(line); continue
 				}
 				if inFence { output.append(line); continue }
+			}
+			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			var preservesReferenceSyntax = false
+			if referenceContinuationLines > 0,
+			   !trimmed.isEmpty,
+			   (line.first == " " || line.first == "\t") {
+				preservesReferenceSyntax = true
+				referenceContinuationLines -= 1
+			} else if !trimmed.isEmpty {
+				referenceContinuationLines = 0
+			}
+			if let continuationLimit = SmartQuotes.referenceDefinitionContinuationLimit(trimmed) {
+				preservesReferenceSyntax = true
+				referenceContinuationLines = continuationLimit
 			}
 			var processed = line
 			if features.headings { processed = HeadingSpaceInjector.applyLine(processed) }
@@ -251,7 +267,7 @@ public enum MarkdownPreprocessor {
 			if features.emoticons {
 				processed = EmoticonShortcodes.applyLine(processed)
 			}
-			if features.quotes {
+			if features.quotes && !preservesReferenceSyntax {
 				processed = SmartQuotes.applyLine(processed)
 			}
 			if features.typography {

@@ -401,11 +401,70 @@ private enum InstantAttributedRenderer {
 			append(inner, to: output, theme: theme, fontSize: fontSize, depth: depth)
 		case .definitionList(let items, _):
 			for item in items {
-				appendPlain(item.term, to: output, font: bodyFont(fontSize, theme).applyingInlineTraits(.bold, family: theme.fontFamily), color: NSColor(theme.textColor))
+				let term = inlineFragment(
+					item.term,
+					linkReferenceDefinitions: item.linkReferenceDefinitions,
+					theme: theme,
+					fontSize: fontSize)
+				if let term {
+					appendInline(
+						term,
+						to: output,
+						font: bodyFont(fontSize, theme).applyingInlineTraits(
+							.bold, family: theme.fontFamily),
+						color: NSColor(theme.textColor),
+						theme: theme,
+						sourceOffsetAdjustment: item.termSourceStart ?? 0)
+				} else {
+					appendPlain(
+						item.term,
+						to: output,
+						font: bodyFont(fontSize, theme).applyingInlineTraits(
+							.bold, family: theme.fontFamily),
+						color: NSColor(theme.textColor))
+				}
 				terminate(output, spacingBefore: 4, spacingAfter: 2)
-				for definition in item.definitions { appendPlaceholder("  \(definition)", to: output, theme: theme, fontSize: fontSize) }
+				for (index, definition) in item.definitions.enumerated() {
+					appendPlain(
+						"  ", to: output, font: bodyFont(fontSize, theme),
+						color: NSColor(theme.secondaryColor))
+					if let inline = inlineFragment(
+						definition,
+						linkReferenceDefinitions: item.linkReferenceDefinitions,
+						theme: theme,
+						fontSize: fontSize)
+					{
+						let sourceStart = item.definitionSourceStarts.indices.contains(index)
+							? item.definitionSourceStarts[index] ?? 0 : 0
+						appendInline(
+							inline,
+							to: output,
+							font: bodyFont(fontSize, theme),
+							color: NSColor(theme.secondaryColor),
+							theme: theme,
+							sourceOffsetAdjustment: sourceStart)
+					} else {
+						appendPlain(
+							definition, to: output, font: bodyFont(fontSize, theme),
+							color: NSColor(theme.secondaryColor))
+					}
+					terminate(output, spacingBefore: 4, spacingAfter: 8)
+				}
 			}
 		}
+	}
+
+	private static func inlineFragment(
+		_ markdown: String,
+		linkReferenceDefinitions: String?,
+		theme: MarkdownTheme,
+		fontSize: CGFloat
+	) -> AttributedString? {
+		let input = linkReferenceDefinitions.map { markdown + "\n\n" + $0 } ?? markdown
+		let blocks = MarkdownBlockParser.parse(
+			input, theme: theme, fontSize: fontSize, trackSourceOffsets: true)
+		guard case .paragraph(let content, _, _) = blocks.first else { return nil }
+		return content
 	}
 
 	private static func appendList(
@@ -435,7 +494,8 @@ private enum InstantAttributedRenderer {
 
 	private static func appendInline(
 		_ inline: AttributedString, to output: NSMutableAttributedString,
-		font: NSFont, color: NSColor, theme: MarkdownTheme
+		font: NSFont, color: NSColor, theme: MarkdownTheme,
+		sourceOffsetAdjustment: Int = 0
 	) {
 		for run in inline.runs {
 			let substring = String(inline[run.range].characters)
@@ -450,7 +510,9 @@ private enum InstantAttributedRenderer {
 			if run.underlineStyle != nil { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
 			if run.strikethroughStyle != nil { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
 			if let baseline = run.baselineOffset { attributes[.baselineOffset] = baseline }
-			if let sourceOffset = run.markdownSourceOffset { attributes[.markdownSourceOffset] = sourceOffset }
+			if let sourceOffset = run.markdownSourceOffset {
+				attributes[.markdownSourceOffset] = sourceOffset + sourceOffsetAdjustment
+			}
 			output.append(NSAttributedString(string: substring, attributes: attributes))
 		}
 	}

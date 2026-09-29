@@ -62,4 +62,18 @@ import Testing
 		#expect(links.count >= 1)
 		#expect(links.first?.url == "https://example.com")
 	}
+
+	@Test func multilineReferenceWithTitle() {
+		let md = """
+		[Click][ref]
+
+		[ref]:
+		  https://example.com
+		  "Example Title"
+		"""
+		let links = parseLinks(md)
+		#expect(links.count == 1)
+		#expect(links.first?.url == "https://example.com")
+		#expect(SmartQuotes.process(md).contains("\"Example Title\""))
+	}
 }

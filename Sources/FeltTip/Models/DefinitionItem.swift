@@ -15,6 +15,9 @@ public struct DefinitionItem: Sendable {
 	/// editable while leaving synthesized runs unstamped.
 	public let termSourceText: String?
 	public let definitionSourceTexts: [String?]
+	/// Document-level link reference definitions needed when this item's
+	/// inline Markdown is reparsed outside the original document context.
+	public let linkReferenceDefinitions: String?
 
 	public init(
 		term: String,
@@ -22,7 +25,8 @@ public struct DefinitionItem: Sendable {
 		termSourceStart: Int? = nil,
 		definitionSourceStarts: [Int?] = [],
 		termSourceText: String? = nil,
-		definitionSourceTexts: [String?] = []
+		definitionSourceTexts: [String?] = [],
+		linkReferenceDefinitions: String? = nil
 	) {
 		self.term = term
 		self.definitions = definitions
@@ -30,5 +34,6 @@ public struct DefinitionItem: Sendable {
 		self.definitionSourceStarts = definitionSourceStarts
 		self.termSourceText = termSourceText
 		self.definitionSourceTexts = definitionSourceTexts
+		self.linkReferenceDefinitions = linkReferenceDefinitions
 	}
 }
