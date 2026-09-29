@@ -68,6 +68,19 @@ import AppKit
 		}
 	}
 
+	@Test func applyingItalicToBoldSelectionPreservesBoldFormatting() throws {
+		let source = "**Bravo**"
+		let selection = (source as NSString).range(of: "Bravo")
+
+		let (formatted, formattedSelection) = try apply(
+			.italic,
+			to: source,
+			selection: selection)
+
+		#expect(formatted == "**_Bravo_**")
+		#expect((formatted as NSString).substring(with: formattedSelection) == "Bravo")
+	}
+
 	@Test(arguments: [
 		(command: MarkdownFormattingCommand.bold, source: "**Bravo charlie**",
 		 selected: "Bravo", expected: "Bravo **charlie**"),

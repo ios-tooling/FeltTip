@@ -320,6 +320,29 @@ enum MarkdownSourceFormatter {
 			let before = text.substring(with: NSRange(location: selection.location - length, length: length))
 			let after = text.substring(with: NSRange(location: selection.upperBound, length: length))
 			if before == candidate, after == candidate {
+				// A single `*` or `_` only represents italic when its surrounding
+				// delimiter run has odd length. The inner characters of `**bold**`
+				// are adjacent to the selection too, but must not be mistaken for
+				// an italic wrapper and stripped when italic is applied.
+				if length == 1,
+				   let unit = candidate.utf16.first,
+				   unit == 0x2A || unit == 0x5F {
+					var openingRunLength = 0
+					var offset = selection.location
+					while offset > 0, text.character(at: offset - 1) == unit {
+						openingRunLength += 1
+						offset -= 1
+					}
+					var closingRunLength = 0
+					offset = selection.upperBound
+					while offset < text.length, text.character(at: offset) == unit {
+						closingRunLength += 1
+						offset += 1
+					}
+					guard openingRunLength % 2 == 1, closingRunLength % 2 == 1 else {
+						continue
+					}
+				}
 				return .init(
 					range: NSRange(
 						location: selection.location - length,
