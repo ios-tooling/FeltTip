@@ -389,7 +389,7 @@ private enum InstantAttributedRenderer {
 			appendPlaceholder("▧ \(caption)", to: output, theme: theme, fontSize: fontSize)
 		case .htmlBlock(let content, _):
 			appendPlaceholder(HTMLAttributeParser.stripTags(content), to: output, theme: theme, fontSize: fontSize)
-		case .details(let summary, let children, _):
+		case .details(let summary, _, let children, _):
 			appendPlaceholder("▸ \(summary)", to: output, theme: theme, fontSize: fontSize)
 			for child in children { append(child, to: output, theme: theme, fontSize: fontSize, depth: depth + 1) }
 		case .alert(let type, let children, _):

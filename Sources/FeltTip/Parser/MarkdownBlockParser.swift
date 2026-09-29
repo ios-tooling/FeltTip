@@ -190,6 +190,7 @@ public enum MarkdownBlockParser {
 
 			// Found <details> opening — extract summary from this HTML block
 			let summary = extractSummary(from: html)
+			let isOpen = detailsIsOpen(html)
 			var children: [MarkdownBlock] = []
 			i += 1
 
@@ -204,9 +205,18 @@ public enum MarkdownBlockParser {
 				i += 1
 			}
 
-			result.append(.details(summary: summary, children: groupDetailsBlocks(children), id: id))
+			result.append(.details(summary: summary, isOpen: isOpen, children: groupDetailsBlocks(children), id: id))
 		}
 		return result
+	}
+
+	private static func detailsIsOpen(_ html: String) -> Bool {
+		guard let tagEnd = html.firstIndex(of: ">") else { return false }
+		let openingTag = String(html[..<tagEnd])
+		return openingTag.range(
+			of: #"\sopen(?:\s|=|$)"#,
+			options: [.regularExpression, .caseInsensitive]
+		) != nil
 	}
 
 	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {

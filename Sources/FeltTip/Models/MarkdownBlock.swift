@@ -75,7 +75,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 	case imageRow(images: [ImageRowItem], id: String)
 	case figure(image: ImageRowItem, caption: String, id: String)
 	case htmlBlock(content: String, id: String)
-	case details(summary: String, children: [MarkdownBlock], id: String)
+	case details(summary: String, isOpen: Bool = false, children: [MarkdownBlock], id: String)
 	case alert(type: AlertType, children: [MarkdownBlock], id: String)
 	case frontmatter(pairs: [(key: String, value: String)], id: String)
 	indirect case aligned(alignment: HorizontalAlignment, block: MarkdownBlock, id: String)
@@ -87,7 +87,7 @@ public enum MarkdownBlock: Identifiable, Sendable {
 			  .blockquote(_, let id), .orderedList(_, _, let id), .unorderedList(_, let id),
 			  .table(_, _, _, let id), .thematicBreak(let id), .image(_, _, _, _, let id),
 			  .imageRow(_, let id), .figure(_, _, let id), .htmlBlock(_, let id),
-			  .details(_, _, let id), .alert(_, _, let id), .frontmatter(_, let id),
+			  .details(_, _, _, let id), .alert(_, _, let id), .frontmatter(_, let id),
 			  .aligned(_, _, let id), .definitionList(_, let id):
 			return id
 		}

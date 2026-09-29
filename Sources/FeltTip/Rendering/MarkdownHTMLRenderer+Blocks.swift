@@ -73,10 +73,11 @@ extension MarkdownHTMLRenderer {
 			// and that page hosts the edit bridge — so it must not carry script.
 			return HTMLPassthroughSanitizer.sanitize(content)
 
-		case .details(let summary, let children, _):
+		case .details(let summary, let isOpen, let children, _):
 			var inner = ""
 			for child in children { inner += renderBlock(child) }
-			return "<details><summary>\(escape(summary))</summary>\(inner)</details>"
+			let openAttribute = isOpen ? " open" : ""
+			return "<details\(openAttribute)><summary>\(escape(summary))</summary>\(inner)</details>"
 
 		case .alert(let type, let children, _):
 			var inner = ""

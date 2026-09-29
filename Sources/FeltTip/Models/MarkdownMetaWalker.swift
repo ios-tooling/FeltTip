@@ -50,7 +50,7 @@ struct MarkdownMetaWalker {
 		case .figure(let item, _, _):
 			images.append(.init(source: item.source, alt: item.alt))
 
-		case .details(_, let children, _), .alert(_, let children, _):
+		case .details(_, _, let children, _), .alert(_, let children, _):
 			walk(children)
 
 		case .frontmatter(let pairs, _):

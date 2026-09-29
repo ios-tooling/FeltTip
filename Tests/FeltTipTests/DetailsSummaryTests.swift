@@ -12,7 +12,7 @@ import Testing
 		</details>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .details(let summary, let children, _) = blocks.first else {
+		guard case .details(let summary, _, let children, _) = blocks.first else {
 			Issue.record("Expected details block, got \(blocks.map { $0.id })"); return
 		}
 		#expect(summary == "Click to expand")
@@ -32,7 +32,7 @@ import Testing
 		</details>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .details(_, let children, _) = blocks.first else {
+		guard case .details(_, _, let children, _) = blocks.first else {
 			Issue.record("Expected details block"); return
 		}
 		#expect(children.count >= 1, "Should have parsed markdown children")
@@ -47,10 +47,24 @@ import Testing
 		</details>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .details(let summary, _, _) = blocks.first else {
+		guard case .details(let summary, _, _, _) = blocks.first else {
 			Issue.record("Expected details block"); return
 		}
 		#expect(summary == "Details", "Default summary should be 'Details'")
+	}
+
+	@Test func openDetailsRendersExpanded() {
+		let markdown = """
+		<details open>
+		<summary>Already expanded</summary>
+
+		Visible content.
+
+		</details>
+		"""
+
+		let html = MarkdownHTMLRenderer.renderBodyFragment(markdown: markdown)
+		#expect(html.contains("<details open>"))
 	}
 
 	@Test func regularHTMLNotDetails() {
