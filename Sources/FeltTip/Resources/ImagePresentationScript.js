@@ -3,6 +3,7 @@
   window.__mdImagePresentationInstalled = true;
 
   var enabled = false;
+  var allowsRemoteResources = false;
   var activePinchImage = null;
   var pinchTriggered = false;
   var sizeObserver = new ResizeObserver(function (entries) {
@@ -17,8 +18,22 @@
     return rect.width >= 320 || rect.height >= 240;
   }
 
+  function canOpen(image) {
+    if (!image) return false;
+    try {
+      var url = new URL(image.currentSrc || image.src || '', document.baseURI);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return allowsRemoteResources;
+      }
+      return url.protocol === 'markerlocalres:' ||
+        url.protocol === 'file:' || url.protocol === 'data:';
+    } catch (_) {
+      return false;
+    }
+  }
+
   function postOpen(image) {
-    if (!enabled || !image || !isLarge(image)) return;
+    if (!enabled || !image || !isLarge(image) || !canOpen(image)) return;
     window.webkit.messageHandlers.mdedit.postMessage({
       type: 'openImage',
       source: image.currentSrc || image.src,
@@ -36,7 +51,7 @@
   function positionButton(image) {
     var button = image && image.__mdImageOpenButton;
     if (!button) return;
-    if (!image.isConnected || !isLarge(image)) {
+    if (!image.isConnected || !isLarge(image) || !canOpen(image)) {
       button.remove();
       delete image.__mdImageOpenButton;
       delete image.dataset.mdImageEnhanced;
@@ -45,7 +60,8 @@
   }
 
   function enhance(image) {
-    if (!enabled || !image || image.dataset.mdImageEnhanced === 'true' || !isLarge(image)) return;
+    if (!enabled || !image || image.dataset.mdImageEnhanced === 'true' ||
+        !isLarge(image) || !canOpen(image)) return;
     image.dataset.mdImageEnhanced = 'true';
 
     var button = document.createElement('button');
@@ -104,10 +120,11 @@
     });
   }
 
-  window.__mdSetImagePresentationEnabled = function (shouldEnable) {
+  window.__mdSetImagePresentationEnabled = function (shouldEnable, shouldAllowRemoteResources) {
     enabled = !!shouldEnable;
+    allowsRemoteResources = !!shouldAllowRemoteResources;
+    removeEnhancements();
     if (!enabled) {
-      removeEnhancements();
       return;
     }
     scan(document);

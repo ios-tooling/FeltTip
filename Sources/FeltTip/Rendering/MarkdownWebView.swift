@@ -360,7 +360,9 @@ public struct MarkdownWebView: UXViewRepresentable {
 			forMainFrameOnly: true))
 		if onOpenImage != nil {
 			config.userContentController.addUserScript(WKUserScript(
-				source: "window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(true);",
+				source: Coordinator.imagePresentationSetupScript(
+					enabled: true,
+					allowsRemoteResources: allowsRemoteResources),
 				injectionTime: .atDocumentEnd,
 				forMainFrameOnly: true))
 		}

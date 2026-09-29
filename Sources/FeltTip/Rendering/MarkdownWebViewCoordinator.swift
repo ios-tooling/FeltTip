@@ -1183,9 +1183,12 @@ extension MarkdownWebView {
 			}
 			lastFocusModeEnabled = nil
 			applyFocusMode(to: webView)
-			let imagePresentationEnabled = parent.onOpenImage != nil ? "true" : "false"
+			let imagePresentationEnabled = parent.onOpenImage != nil
+			let imagePresentationSetup = Self.imagePresentationSetupScript(
+				enabled: imagePresentationEnabled,
+				allowsRemoteResources: parent.allowsRemoteResources)
 			webView.evaluateJavaScript(
-				"window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(\(imagePresentationEnabled));"
+				imagePresentationSetup
 			) { [weak self] _, error in
 				if let error { self?.log("image presentation setup failed: \(error)") }
 				else { self?.log("image presentation enabled: \(imagePresentationEnabled)") }

@@ -12,6 +12,44 @@ import Testing
 		#expect(script.contains("event.scale >= 1.2"))
 		#expect(script.contains("rect.width >= 320"))
 		#expect(script.contains("rect.height >= 240"))
+		#expect(script.contains("var allowsRemoteResources = false"))
+		#expect(script.contains("return allowsRemoteResources"))
+		#expect(script.contains("url.protocol === 'markerlocalres:'"))
+		#expect(script.contains("!canOpen(image)"))
+	}
+
+	@Test @MainActor func imagePresentationSetupMatchesTheRemoteResourcePolicy() {
+		#expect(MarkdownWebView.Coordinator.imagePresentationSetupScript(
+			enabled: true, allowsRemoteResources: false
+		) == "window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(true, false);")
+		#expect(MarkdownWebView.Coordinator.imagePresentationSetupScript(
+			enabled: true, allowsRemoteResources: true
+		) == "window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(true, true);")
+	}
+
+	@Test @MainActor func blockedRemoteImagesDoNotExposeDeadOpenControls() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: #"<img src="https://example.com/image.png" width="400" height="300">"#)
+		try await harness.run(MarkdownWebView.Coordinator.imagePresentationScript)
+		try await harness.run("""
+			window.__testRemoteImage = document.querySelector('img');
+			window.__testRemoteImage.getBoundingClientRect = function () {
+			  return { width: 400, height: 300 };
+			};
+			window.__mdSetImagePresentationEnabled(true, false);
+			window.__testRemoteImage.dispatchEvent(new Event('load'));
+			""")
+		let blockedCount = try await harness.evaluate(
+			"String(document.querySelectorAll('.md-image-open-button').length)")
+		#expect(blockedCount == "0")
+
+		try await harness.run("""
+			window.__mdSetImagePresentationEnabled(true, true);
+			window.__testRemoteImage.dispatchEvent(new Event('load'));
+			""")
+		let allowedCount = try await harness.evaluate(
+			"String(document.querySelectorAll('.md-image-open-button').length)")
+		#expect(allowedCount == "1")
 	}
 
 	@Test @MainActor func imagePresentationIsExplicitlyOptedIn() {

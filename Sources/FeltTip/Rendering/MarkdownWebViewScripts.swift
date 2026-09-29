@@ -32,6 +32,13 @@ extension MarkdownWebView.Coordinator {
 	/// Installed dormant in every view; hosts opt in before it decorates images.
 	static let imagePresentationScript = MarkdownWebViewScripts.load("ImagePresentationScript")
 
+	static func imagePresentationSetupScript(
+		enabled: Bool,
+		allowsRemoteResources: Bool
+	) -> String {
+		"window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(\(enabled), \(allowsRemoteResources));"
+	}
+
 	/// Installed in every rendered page. Dormant until the host enables focus
 	/// mode, then dims all top-level blocks except the caret/selection's block.
 	static let focusModeScript = MarkdownWebViewScripts.load("FocusModeScript")
