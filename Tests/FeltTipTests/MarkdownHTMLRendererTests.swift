@@ -74,6 +74,18 @@ import Testing
 		#expect(html.contains("<del>gone</del>"))
 	}
 
+	@Test func rendersInlineMarkdownInsideDefinitionLists() {
+		let html = MarkdownHTMLRenderer.renderBodyFragment(markdown: """
+			Term
+			: A definition with **strong**, _emphasis_, `code`, and [a link](https://example.com).
+			""")
+
+		#expect(html.contains("<dt>Term</dt>"))
+		#expect(html.contains("<dd>A definition with <strong>strong</strong>, <em>emphasis</em>, <code>code</code>, and <a href=\"https://example.com\">a link</a>.</dd>"))
+		#expect(!html.contains("**strong**"))
+		#expect(!html.contains("_emphasis_"))
+	}
+
 	@Test func rendersFootnotesAsNavigableInPageAnchors() {
 		let html = MarkdownHTMLRenderer.renderDocument(
 			markdown: "See the note.[^release]\n\n[^release]: Deployment details.",

@@ -97,13 +97,26 @@ extension MarkdownHTMLRenderer {
 		case .definitionList(let items, _):
 			var body = ""
 			for item in items {
-				body += "<dt>\(escape(item.term))</dt>"
+				body += "<dt>\(renderInlineMarkdown(item.term))</dt>"
 				for def in item.definitions {
-					body += "<dd>\(escape(def))</dd>"
+					body += "<dd>\(renderInlineMarkdown(def))</dd>"
 				}
 			}
 			return "<dl>\(body)</dl>"
 		}
+	}
+
+	/// Definition-list preprocessing preserves term/body strings so their
+	/// Markdown delimiters survive the block parse. Parse each as a standalone
+	/// inline paragraph before emitting the `<dt>`/`<dd>`; escaping the raw
+	/// strings made emphasis, code, and links appear literally in the preview.
+	static func renderInlineMarkdown(_ markdown: String) -> String {
+		let blocks = MarkdownBlockParser.parse(markdown, preprocessed: true)
+		guard blocks.count == 1,
+			  case .paragraph(let content, _, _) = blocks[0] else {
+			return escape(markdown)
+		}
+		return renderInline(content)
 	}
 
 	static func renderListItems(_ items: [ListItemContent]) -> String {
