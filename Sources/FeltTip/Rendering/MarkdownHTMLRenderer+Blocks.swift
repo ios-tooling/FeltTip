@@ -109,20 +109,33 @@ extension MarkdownHTMLRenderer {
 		var result = ""
 		for item in items {
 			result += "<li>"
+			var checkboxHTML = ""
 			if let state = item.checkbox {
 				let checked = state == .checked ? " checked" : ""
 				if emitInteractiveCheckboxes, let index = item.checkboxIndex {
-					result += "<input type=\"checkbox\" data-cb=\"\(index)\"\(checked)> "
+					checkboxHTML = "<input type=\"checkbox\" data-cb=\"\(index)\"\(checked)> "
 				} else {
-					result += "<input type=\"checkbox\" disabled\(checked)> "
+					checkboxHTML = "<input type=\"checkbox\" disabled\(checked)> "
 				}
 			}
 			// Tight-list heuristic — a lone paragraph child renders without
 			// its `<p>` wrapper so simple bullet lists don't gain stray
 			// vertical whitespace in the exported HTML.
 			if item.blocks.count == 1, case .paragraph(let content, _, _) = item.blocks[0] {
-				result += renderInline(content)
+				result += checkboxHTML + renderInline(content)
+			} else if !checkboxHTML.isEmpty,
+			          let first = item.blocks.first,
+			          case .paragraph(let content, _, _) = first {
+				// A parent task has more than one block because its nested list is
+				// a sibling of the leading paragraph. Keep the checkbox inside that
+				// paragraph; placing it directly under `<li>` leaves it on a blank
+				// line when the paragraph establishes its own block formatting box.
+				result += "<p>\(checkboxHTML)\(renderInline(content))</p>"
+				for block in item.blocks.dropFirst() {
+					result += renderBlock(block)
+				}
 			} else {
+				result += checkboxHTML
 				for block in item.blocks {
 					result += renderBlock(block)
 				}

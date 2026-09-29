@@ -62,4 +62,22 @@ import Testing
 		}
 		#expect(items[0].checkbox == .checked)
 	}
+
+	@MainActor
+	@Test func nestedParentTaskKeepsCheckboxBesideItsText() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "- [ ] Parent task\n  - [x] Child task\n")
+		let alignment = try await harness.evaluate("""
+			(() => {
+			  const item = document.querySelector('li')
+			  const checkbox = item?.querySelector(':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]')
+			  const paragraph = item?.querySelector(':scope > p')
+			  if (!checkbox || !paragraph) return 'missing'
+			  const box = checkbox.getBoundingClientRect()
+			  const text = paragraph.getBoundingClientRect()
+			  return Math.abs((box.top + box.height / 2) - (text.top + text.height / 2)) < 4
+			    ? 'aligned' : 'split'
+			})()
+			""")
+		#expect(alignment == "aligned")
+	}
 }
