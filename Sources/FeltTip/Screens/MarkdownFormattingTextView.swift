@@ -7,6 +7,170 @@
 import AppKit
 
 public class MarkdownFormattingTextView: NSTextView {
+	private var nativeReplaceControlProxy: NativeReplaceControlProxy?
+
+	override public func performTextFinderAction(_ sender: Any?) {
+		let action = (sender as? NSMenuItem).flatMap {
+			NSTextFinder.Action(rawValue: $0.tag)
+		}
+		if action == .replace || action == .replaceAndFind {
+			selectRememberedFindMatchIfNeeded()
+		}
+		super.performTextFinderAction(sender)
+		guard action == .showFindInterface || action == .showReplaceInterface else { return }
+
+		// AppKit remembers a hidden find bar's current result independently of
+		// NSTextView's selection. If a host-driven undo restores the source while
+		// the bar is closed, reopening Find can therefore show a valid result
+		// count with only an insertion point in the editor. Pressing Replace in
+		// that state inserts the replacement before the match ("reviewdraft")
+		// instead of replacing it. Reacquire the remembered query once the native
+		// bar has mounted, but leave a selection AppKit restored on its own alone.
+		reacquireRememberedFindMatch(attempt: 0, navigationAttempts: 0)
+	}
+
+	private func reacquireRememberedFindMatch(
+		attempt: Int,
+		navigationAttempts: Int
+	) {
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+			guard let self else { return }
+			guard self.enclosingScrollView?.isFindBarVisible == true else {
+				if attempt < 20 {
+					self.reacquireRememberedFindMatch(
+						attempt: attempt + 1,
+						navigationAttempts: navigationAttempts)
+				}
+				return
+			}
+			guard self.selectedRange().length == 0 else { return }
+			guard let searchField = Self.findSearchField(in: self.window?.contentView) else {
+				if attempt < 20 {
+					self.reacquireRememberedFindMatch(
+						attempt: attempt + 1,
+						navigationAttempts: navigationAttempts)
+				}
+				return
+			}
+			guard !searchField.stringValue.isEmpty else {
+				if attempt < 20 {
+					self.reacquireRememberedFindMatch(
+						attempt: attempt + 1,
+						navigationAttempts: navigationAttempts)
+				}
+				return
+			}
+			if navigationAttempts == 0 {
+				let previousResponder = self.window?.firstResponder
+				self.window?.makeFirstResponder(self)
+				let next = NSMenuItem()
+				next.tag = NSTextFinder.Action.nextMatch.rawValue
+				self.performTextFinderAction(next)
+				if previousResponder !== self {
+					self.window?.makeFirstResponder(previousResponder)
+				}
+			} else if let navigation = Self.findNavigationControl(
+				in: self.window?.contentView) {
+				navigation.setSelected(true, forSegment: 1)
+				navigation.performClick(nil)
+			}
+			// A stale finder can consume the first navigation solely to refresh
+			// its current-result state. Retry once if no range was established.
+			if navigationAttempts == 0 {
+				self.reacquireRememberedFindMatch(
+					attempt: attempt + 1,
+					navigationAttempts: 1)
+			}
+		}
+		monitorNativeReplaceControl()
+	}
+
+	private func monitorNativeReplaceControl(after delay: TimeInterval = 0.05) {
+		DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+			guard let self else { return }
+			guard self.enclosingScrollView?.isFindBarVisible == true else {
+				self.nativeReplaceControlProxy = nil
+				return
+			}
+			let control = Self.findReplaceControl(in: self.window?.contentView)
+			if self.nativeReplaceControlProxy?.control !== control {
+				self.nativeReplaceControlProxy = nil
+			}
+			if self.nativeReplaceControlProxy == nil, let control {
+				let proxy = NativeReplaceControlProxy(
+					editor: self,
+					control: control,
+					originalTarget: control.target,
+					originalAction: control.action)
+				self.nativeReplaceControlProxy = proxy
+				control.target = proxy
+				control.action = #selector(NativeReplaceControlProxy.performAction(_:))
+			}
+			self.monitorNativeReplaceControl(after: 0.25)
+		}
+	}
+
+	private static func findSearchField(in view: NSView?) -> NSSearchField? {
+		guard let view else { return nil }
+		if let field = view as? NSSearchField { return field }
+		return view.subviews.lazy.compactMap(findSearchField(in:)).first
+	}
+
+	fileprivate func selectRememberedFindMatchIfNeeded() {
+		guard selectedRange().length == 0,
+		      let query = Self.findSearchField(in: window?.contentView)?.stringValue,
+		      !query.isEmpty else { return }
+		let source = string as NSString
+		let start = min(selectedRange().location, source.length)
+		let tail = NSRange(location: start, length: source.length - start)
+		var match = source.range(of: query, options: [], range: tail)
+		if match.location == NSNotFound, start > 0 {
+			match = source.range(of: query, options: [], range: NSRange(location: 0, length: start))
+		}
+		if match.location == NSNotFound {
+			match = source.range(of: query, options: [.caseInsensitive])
+		}
+		guard match.location != NSNotFound else { return }
+		setSelectedRange(match)
+	}
+
+	fileprivate static func findReplaceField(in view: NSView?) -> NSTextField? {
+		guard let view else { return nil }
+		if let field = view as? NSTextField,
+		   !(field is NSSearchField),
+		   field.isEditable {
+			return field
+		}
+		return view.subviews.lazy.compactMap(findReplaceField(in:)).first
+	}
+
+	private static func findReplaceControl(in view: NSView?) -> NSSegmentedControl? {
+		guard let view, let field = findReplaceField(in: view) else { return nil }
+		let fieldMidY = field.convert(field.bounds, to: nil).midY
+		return segmentedControls(in: view).min {
+			abs($0.convert($0.bounds, to: nil).midY - fieldMidY) <
+				abs($1.convert($1.bounds, to: nil).midY - fieldMidY)
+		}
+	}
+
+	private static func segmentedControls(in view: NSView) -> [NSSegmentedControl] {
+		var matches = view.subviews.flatMap(segmentedControls(in:))
+		if let control = view as? NSSegmentedControl, control.segmentCount == 2 {
+			matches.insert(control, at: 0)
+		}
+		return matches
+	}
+
+	private static func findNavigationControl(in view: NSView?) -> NSSegmentedControl? {
+		guard let view else { return nil }
+		if let control = view as? NSSegmentedControl,
+		   control.segmentCount == 2,
+		   control.label(forSegment: 0) == nil,
+		   control.label(forSegment: 1) == nil {
+			return control
+		}
+		return view.subviews.lazy.compactMap(findNavigationControl(in:)).first
+	}
 
 	override public func becomeFirstResponder() -> Bool {
 		let accepted = super.becomeFirstResponder()
@@ -70,6 +234,52 @@ public class MarkdownFormattingTextView: NSTextView {
 		textStorage?.replaceCharacters(in: range, with: text)
 		didChangeText()
 		setSelectedRange(cursor)
+	}
+}
+
+@MainActor
+private final class NativeReplaceControlProxy: NSObject {
+	private weak var editor: MarkdownFormattingTextView?
+	fileprivate weak var control: NSSegmentedControl?
+	private var originalTarget: AnyObject?
+	private let originalAction: Selector?
+
+	init(
+		editor: MarkdownFormattingTextView,
+		control: NSSegmentedControl,
+		originalTarget: AnyObject?,
+		originalAction: Selector?
+	) {
+		self.editor = editor
+		self.control = control
+		self.originalTarget = originalTarget
+		self.originalAction = originalAction
+	}
+
+	@objc func performAction(_ sender: Any?) {
+		guard control?.selectedSegment != 1 else {
+			forwardOriginalAction()
+			return
+		}
+		guard let editor,
+		      let replacement = MarkdownFormattingTextView.findReplaceField(
+			in: editor.window?.contentView)?.stringValue else {
+			forwardOriginalAction()
+			return
+		}
+		editor.selectRememberedFindMatchIfNeeded()
+		let match = editor.selectedRange()
+		guard match.length > 0 else {
+			forwardOriginalAction()
+			return
+		}
+		editor.insertText(replacement, replacementRange: match)
+		editor.selectRememberedFindMatchIfNeeded()
+	}
+
+	private func forwardOriginalAction() {
+		guard let originalAction else { return }
+		NSApp.sendAction(originalAction, to: originalTarget, from: nil)
 	}
 }
 #endif

@@ -13,6 +13,88 @@ import WebKit
 @Suite(.serialized)
 struct MarkdownTextEditorFindTests {
 	@Test
+	func findReopenAfterHostUndoSelectsTheRestoredMatchForReplacement() async throws {
+		let original = "- [ ] draft item\n"
+		let replacement = "- [ ] review item\n"
+		let model = MarkdownTextEditorFindModel(text: original)
+		let hostingView = NSHostingView(rootView: MarkdownTextEditorFindHost(model: model))
+		hostingView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hostingView.frame,
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		window.contentView = hostingView
+		window.orderFront(nil)
+
+		let rawEditor = try await waitForTextView(in: hostingView)
+		let findPasteboard = NSPasteboard(name: .find)
+		let previousFindString = findPasteboard.string(forType: .string)
+		defer {
+			findPasteboard.clearContents()
+			if let previousFindString {
+				findPasteboard.setString(previousFindString, forType: .string)
+			}
+		}
+		findPasteboard.clearContents()
+		findPasteboard.setString("draft", forType: .string)
+
+		window.makeFirstResponder(rawEditor)
+		perform(.showReplaceInterface, on: rawEditor)
+		let replaceField = try await waitForReplaceField(in: hostingView)
+		replaceField.stringValue = "review"
+		perform(.nextMatch, on: rawEditor)
+		let match = (original as NSString).range(of: "draft")
+		try await waitUntil("find selects the original match") {
+			rawEditor.selectedRange() == match
+		}
+		perform(.replaceAndFind, on: rawEditor)
+		try await waitUntil("first replacement reaches the host") {
+			model.text == replacement
+		}
+
+		perform(.hideFindInterface, on: rawEditor)
+		try await waitUntil("find bar closes") {
+			rawEditor.enclosingScrollView?.isFindBarVisible == false
+		}
+		try await Task.sleep(for: .milliseconds(100))
+		model.text = original
+		try await waitUntil("host undo reaches the raw editor") {
+			rawEditor.string == original
+		}
+		try await Task.sleep(for: .milliseconds(100))
+		rawEditor.setSelectedRange(NSRange(location: (original as NSString).length, length: 0))
+
+		window.makeFirstResponder(rawEditor)
+		perform(.showFindInterface, on: rawEditor)
+		let reopenedSearchField = try await waitForSearchField(in: hostingView)
+		try await waitUntil("find bar reopens") {
+			rawEditor.enclosingScrollView?.isFindBarVisible == true
+		}
+		#expect(reopenedSearchField.stringValue == "draft")
+		try await waitUntil("reopened replace bar selects the restored match") {
+			rawEditor.selectedRange() == match
+		}
+		#expect((rawEditor.string as NSString).substring(with: rawEditor.selectedRange()) == "draft")
+
+		// The native Replace button can still arrive with only a caret even
+		// though its count says there is a match. Verify the action itself is
+		// guarded, including the wrap from end-of-file used by the live repro.
+		rawEditor.setSelectedRange(NSRange(location: (original as NSString).length, length: 0))
+		perform(.showReplaceInterface, on: rawEditor)
+		let reopenedReplaceField = try await waitForReplaceField(in: hostingView)
+		reopenedReplaceField.stringValue = "review"
+		let replaceControl = try await waitForReplaceControl(in: hostingView)
+		replaceControl.setSelected(true, forSegment: 0)
+		replaceControl.performClick(nil)
+		try await waitUntil("replacement after undo reaches the host") {
+			model.text != original
+		}
+		#expect(model.text == replacement)
+	}
+
+	@Test
 	func hostDrivenTextChangesRefreshAnOpenIncrementalFindBar() async throws {
 		let model = MarkdownTextEditorFindModel(text: "After palette switch")
 		let hostingView = NSHostingView(rootView: MarkdownTextEditorFindHost(model: model))
@@ -211,6 +293,56 @@ struct MarkdownTextEditorFindTests {
 		}
 		Issue.record("Timed out waiting for the native find bar")
 		throw CancellationError()
+	}
+
+	private func waitForTextView(in view: NSView) async throws -> NSTextView {
+		for _ in 0..<160 {
+			if let textView = findTextView(in: view) {
+				return textView
+			}
+			try await Task.sleep(for: .milliseconds(25))
+		}
+		Issue.record("Timed out waiting for the raw editor")
+		throw CancellationError()
+	}
+
+	private func waitForReplaceField(in view: NSView) async throws -> NSTextField {
+		for _ in 0..<100 {
+			if let field = findReplaceField(in: view) {
+				return field
+			}
+			try await Task.sleep(for: .milliseconds(10))
+		}
+		Issue.record("Timed out waiting for the native replace field")
+		throw CancellationError()
+	}
+
+	private func waitForReplaceControl(in view: NSView) async throws -> NSSegmentedControl {
+		for _ in 0..<100 {
+			if let control = findReplaceControl(in: view) {
+				return control
+			}
+			try await Task.sleep(for: .milliseconds(10))
+		}
+		Issue.record("Timed out waiting for the native Replace/All control")
+		throw CancellationError()
+	}
+
+	private func findReplaceControl(in view: NSView) -> NSSegmentedControl? {
+		guard let field = findReplaceField(in: view) else { return nil }
+		let fieldMidY = field.convert(field.bounds, to: nil).midY
+		return segmentedControls(in: view).min {
+			abs($0.convert($0.bounds, to: nil).midY - fieldMidY) <
+				abs($1.convert($1.bounds, to: nil).midY - fieldMidY)
+		}
+	}
+
+	private func segmentedControls(in view: NSView) -> [NSSegmentedControl] {
+		var matches = view.subviews.flatMap(segmentedControls(in:))
+		if let control = view as? NSSegmentedControl, control.segmentCount == 2 {
+			matches.insert(control, at: 0)
+		}
+		return matches
 	}
 
 	private func waitUntil(
