@@ -9,7 +9,7 @@ import Testing
 		</div>
 		"""
 		let blocks = MarkdownBlockParser.parse(md)
-		guard case .htmlBlock(let content, _) = blocks.first else {
+		guard case .htmlBlock(let content, _, _) = blocks.first else {
 			Issue.record("Expected htmlBlock, got \(blocks.first.debugDescription)")
 			return
 		}

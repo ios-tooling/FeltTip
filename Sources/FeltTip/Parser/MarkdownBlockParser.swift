@@ -44,6 +44,8 @@ public enum MarkdownBlockParser {
 		let collectMetrics = MarkdownPreprocessor.recordsPerformanceMetrics
 		let markdown = content.resolveMarkdown()
 		let (frontmatter, body, bodyOffset, _) = extractFrontmatter(markdown)
+		let definitionSourceGroups = DefinitionListProcessor.sourceGroups(
+			in: body, baseOffset: bodyOffset)
 		let tPre0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
 		if collectMetrics {
 			MarkdownPreprocessor.recordedTimings = [:]
@@ -92,7 +94,7 @@ public enum MarkdownBlockParser {
 			blocks.insert(fm, at: 0)
 		}
 		let tPost0 = collectMetrics ? CFAbsoluteTimeGetCurrent() : 0
-		let result = postProcess(blocks)
+		let result = postProcess(blocks, definitionSourceGroups: definitionSourceGroups)
 		guard !Task.isCancelled else { return [] }
 		if collectMetrics {
 			let tEnd = CFAbsoluteTimeGetCurrent()
@@ -181,7 +183,7 @@ public enum MarkdownBlockParser {
 		var i = 0
 
 		while i < blocks.count {
-			guard case .htmlBlock(let html, let id) = blocks[i],
+			guard case .htmlBlock(let html, _, let id) = blocks[i],
 					html.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("<details") else {
 				result.append(blocks[i])
 				i += 1
@@ -196,7 +198,7 @@ public enum MarkdownBlockParser {
 
 			// Collect blocks until we find </details>
 			while i < blocks.count {
-				if case .htmlBlock(let closeHTML, _) = blocks[i],
+				if case .htmlBlock(let closeHTML, _, _) = blocks[i],
 					closeHTML.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().contains("</details>") {
 					i += 1
 					break
@@ -219,8 +221,11 @@ public enum MarkdownBlockParser {
 		) != nil
 	}
 
-	private static func postProcess(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-		removeCommentOnlyHTMLBlocks(convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLHeadings(convertHTMLTables(convertDefinitionLists(blocks))))))))
+	private static func postProcess(
+		_ blocks: [MarkdownBlock],
+		definitionSourceGroups: [[DefinitionListProcessor.SourceItem]]
+	) -> [MarkdownBlock] {
+		removeCommentOnlyHTMLBlocks(convertAlerts(groupDetailsBlocks(convertPreBlocks(convertHTMLInlines(convertHTMLHeadings(convertHTMLTables(convertDefinitionLists(blocks, sourceGroups: definitionSourceGroups))))))))
 	}
 
 	/// Drop HTML blocks that contain nothing but HTML comments — they'd
@@ -230,7 +235,7 @@ public enum MarkdownBlockParser {
 	/// meant to be visible.
 	private static func removeCommentOnlyHTMLBlocks(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
 		blocks.filter { block in
-			guard case .htmlBlock(let html, _) = block else { return true }
+			guard case .htmlBlock(let html, _, _) = block else { return true }
 			let stripped = html.replacingOccurrences(
 				of: "<!--[\\s\\S]*?-->",
 				with: "",
@@ -246,7 +251,7 @@ public enum MarkdownBlockParser {
 	/// renderer, which strips heading-level styling and reads as plain text.
 	private static func convertHTMLHeadings(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
 		blocks.map { block in
-			guard case .htmlBlock(let html, let id) = block,
+			guard case .htmlBlock(let html, _, let id) = block,
 				  let parsed = HTMLHeadingParser.parse(html: html, id: id)
 			else { return block }
 			return parsed
@@ -254,13 +259,40 @@ public enum MarkdownBlockParser {
 	}
 
 	/// Convert `<dl>` HTML blocks into `.definitionList` blocks.
-	private static func convertDefinitionLists(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+	private static func convertDefinitionLists(
+		_ blocks: [MarkdownBlock],
+		sourceGroups: [[DefinitionListProcessor.SourceItem]]
+	) -> [MarkdownBlock] {
 		blocks.map { block in
-			guard case .htmlBlock(let html, let id) = block,
+			guard case .htmlBlock(let html, let blockSourceOffset, let id) = block,
 				  html.lowercased().contains("<dl") else { return block }
-			let items = parseDefinitionListHTML(html)
+			let parsedItems = parseDefinitionListHTML(html)
+			let items: [DefinitionItem]
+			if let index = generatedDefinitionListIndex(in: html),
+			   sourceGroups.indices.contains(index),
+			   sourceGroups[index].count == parsedItems.count,
+			   blockSourceOffset == sourceGroups[index].first?.termStart {
+				items = sourceGroups[index].map {
+					DefinitionItem(
+						term: $0.term, definitions: $0.definitions,
+						termSourceStart: $0.termStart,
+						definitionSourceStarts: $0.definitionStarts.map(Optional.some))
+				}
+			} else {
+				items = parsedItems
+			}
 			guard !items.isEmpty else { return block }
 			return .definitionList(items: items, id: id)
+		}
+	}
+
+	private static func generatedDefinitionListIndex(in html: String) -> Int? {
+		guard let range = html.range(
+			of: #"data-feltip-definition-list=[\"']?(\d+)"#,
+			options: .regularExpression) else { return nil }
+		let match = String(html[range])
+		return match.split(separator: "=").last.flatMap {
+			Int($0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'")))
 		}
 	}
 
@@ -303,7 +335,7 @@ public enum MarkdownBlockParser {
 
 	private static func convertHTMLTables(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
 		blocks.map { block in
-			guard case .htmlBlock(let html, let id) = block,
+			guard case .htmlBlock(let html, _, let id) = block,
 				  html.lowercased().contains("<table"),
 				  let parsed = HTMLTableParser.parse(html: html)
 			else { return block }
@@ -314,7 +346,7 @@ public enum MarkdownBlockParser {
 
 	private static func convertHTMLInlines(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
 		blocks.flatMap { block -> [MarkdownBlock] in
-			guard case .htmlBlock(let html, let id) = block,
+			guard case .htmlBlock(let html, _, let id) = block,
 				  let converted = HTMLInlineConverter.convert(html: html, id: id)
 			else { return [block] }
 			return converted
@@ -324,7 +356,7 @@ public enum MarkdownBlockParser {
 	/// Convert `<pre>` HTML blocks into code blocks for consistent styling.
 	private static func convertPreBlocks(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
 		blocks.map { block in
-			guard case .htmlBlock(let html, let id) = block else { return block }
+			guard case .htmlBlock(let html, _, let id) = block else { return block }
 			let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
 			let lower = trimmed.lowercased()
 			guard lower.hasPrefix("<pre") else { return block }

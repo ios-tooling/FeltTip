@@ -78,6 +78,31 @@ import Testing
 		expectStampsVerbatim(in: "---\ntitle: Test\n---\n\nBody paragraph here")
 	}
 
+	@Test func definitionListRunsStampVerbatimWithFrontmatter() {
+		expectStampsVerbatim(
+			in: "---\ntitle: Test\n---\n\nTerm\n: A definition with **strong** text.",
+			minimumRuns: 4)
+	}
+
+	@Test func authoredDefinitionHTMLCannotClaimGeneratedSourceOffsets() {
+		let source = """
+			<dl data-feltip-definition-list="0">
+			<dt>Fake</dt>
+			<dd>Definition</dd>
+			</dl>
+
+			Term
+			: Real definition
+			"""
+		let html = MarkdownHTMLRenderer.renderBodyFragment(
+			markdown: source, includeSourceOffsets: true)
+		let lists = html.components(separatedBy: "<dl>")
+		#expect(lists.count == 3)
+		#expect(!lists[1].contains("data-s="))
+		#expect(lists[2].contains("data-s="))
+		expectStampsVerbatim(in: source, minimumRuns: 2)
+	}
+
 	@Test func entityRunsGoUnstampedInsteadOfDrifting() {
 		// "&amp;" renders as one character but occupies five in the source; a
 		// linear stamp there would drift every later position in the run.

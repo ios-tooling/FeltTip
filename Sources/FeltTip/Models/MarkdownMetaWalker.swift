@@ -65,7 +65,7 @@ struct MarkdownMetaWalker {
 				collectLinks(inPlainText: combined)
 			}
 
-		case .htmlBlock(let html, _):
+		case .htmlBlock(let html, _, _):
 			collectLinks(inPlainText: html)
 
 		case .thematicBreak:

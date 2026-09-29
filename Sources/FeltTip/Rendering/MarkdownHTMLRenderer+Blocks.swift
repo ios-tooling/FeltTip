@@ -68,7 +68,7 @@ extension MarkdownHTMLRenderer {
 			let img = renderImage(source: item.source, alt: item.alt, width: item.width, height: item.height, link: item.link)
 			return "<figure>\(img)<figcaption>\(escape(caption))</figcaption></figure>"
 
-		case .htmlBlock(let content, _):
+		case .htmlBlock(let content, _, _):
 			// The one place a document's own markup reaches the page verbatim,
 			// and that page hosts the edit bridge — so it must not carry script.
 			return HTMLPassthroughSanitizer.sanitize(content)
@@ -97,9 +97,11 @@ extension MarkdownHTMLRenderer {
 		case .definitionList(let items, _):
 			var body = ""
 			for item in items {
-				body += "<dt>\(renderInlineMarkdown(item.term))</dt>"
-				for def in item.definitions {
-					body += "<dd>\(renderInlineMarkdown(def))</dd>"
+				body += "<dt>\(renderInlineMarkdown(item.term, sourceStart: item.termSourceStart))</dt>"
+				for (index, def) in item.definitions.enumerated() {
+					let sourceStart = item.definitionSourceStarts.indices.contains(index)
+						? item.definitionSourceStarts[index] : nil
+					body += "<dd>\(renderInlineMarkdown(def, sourceStart: sourceStart))</dd>"
 				}
 			}
 			return "<dl>\(body)</dl>"
@@ -110,13 +112,22 @@ extension MarkdownHTMLRenderer {
 	/// Markdown delimiters survive the block parse. Parse each as a standalone
 	/// inline paragraph before emitting the `<dt>`/`<dd>`; escaping the raw
 	/// strings made emphasis, code, and links appear literally in the preview.
-	static func renderInlineMarkdown(_ markdown: String) -> String {
-		let blocks = MarkdownBlockParser.parse(markdown, preprocessed: true)
+	static func renderInlineMarkdown(_ markdown: String, sourceStart: Int?) -> String {
+		let shouldTrack = emitSourceOffsets && sourceStart != nil
+		let blocks = MarkdownBlockParser.parse(markdown, trackSourceOffsets: shouldTrack)
 		guard blocks.count == 1,
 			  case .paragraph(let content, _, _) = blocks[0] else {
 			return escape(markdown)
 		}
-		return renderInline(content)
+		guard let sourceStart, shouldTrack else { return renderInline(content) }
+		var shifted = content
+		let offsets = content.runs.compactMap { run in
+			run.markdownSourceOffset.map { (run.range, $0 + sourceStart) }
+		}
+		for (range, offset) in offsets {
+			shifted[range].markdownSourceOffset = offset
+		}
+		return renderInline(shifted)
 	}
 
 	static func renderListItems(_ items: [ListItemContent]) -> String {

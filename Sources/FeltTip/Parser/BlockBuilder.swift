@@ -360,7 +360,12 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitHTMLBlock(_ html: HTMLBlock) {
-		blocks.append(.htmlBlock(content: html.rawHTML, id: nextID()))
+		let sourceOffset = html.range.flatMap { range in
+			sourceConverter?.utf16Offset(
+				line: range.lowerBound.line, column: range.lowerBound.column)
+		}
+		blocks.append(.htmlBlock(
+			content: html.rawHTML, sourceOffset: sourceOffset, id: nextID()))
 	}
 
 	private mutating func nextID() -> String {
