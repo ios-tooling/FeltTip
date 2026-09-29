@@ -18,6 +18,14 @@ public class MarkdownFormattingTextView: NSTextView {
 		return accepted
 	}
 
+	override public func resignFirstResponder() -> Bool {
+		let resigned = super.resignFirstResponder()
+		if resigned, let coordinator = delegate as? MarkdownTextEditor.Coordinator {
+			coordinator.reportFocusLoss(self)
+		}
+		return resigned
+	}
+
 	override public func performKeyEquivalent(with event: NSEvent) -> Bool {
 		// Only when this editor is focused: performKeyEquivalent visits every
 		// view in the window, and in a split the raw pane was consuming the

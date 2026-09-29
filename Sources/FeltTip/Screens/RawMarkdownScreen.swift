@@ -14,6 +14,7 @@ public struct RawMarkdownScreen: View {
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
 	var typewriterMode: Bool = false
+	var focusModeEnabled: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	var onSourceEdit: ((String, Int) -> Void)?
@@ -32,6 +33,7 @@ public struct RawMarkdownScreen: View {
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
+		focusModeEnabled: Bool = false,
 		theme: MarkdownTheme? = nil,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
 		onSourceEdit: ((String, Int) -> Void)? = nil,
@@ -49,6 +51,7 @@ public struct RawMarkdownScreen: View {
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.syncScrollFraction = syncScrollFraction
 		self.typewriterMode = typewriterMode
+		self.focusModeEnabled = focusModeEnabled
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.onSourceEdit = onSourceEdit
@@ -70,6 +73,7 @@ public struct RawMarkdownScreen: View {
 			onScrollFractionChanged: onScrollFractionChanged,
 			syncScrollFraction: syncScrollFraction,
 			typewriterMode: typewriterMode,
+			focusModeEnabled: focusModeEnabled,
 			theme: theme,
 			onCursorPositionChanged: onCursorPositionChanged,
 			onSourceEdit: onSourceEdit,
@@ -86,6 +90,7 @@ public struct RawMarkdownScreen: View {
 			fontSize: fontSize,
 			theme: theme,
 			typewriterMode: typewriterMode,
+			focusModeEnabled: focusModeEnabled,
 			syntaxHighlightingEnabled: syntaxHighlightingEnabled,
 			onScrollFractionChanged: onScrollFractionChanged,
 			syncScrollFraction: syncScrollFraction,

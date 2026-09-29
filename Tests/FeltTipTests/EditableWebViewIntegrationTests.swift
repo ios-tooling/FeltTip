@@ -166,6 +166,34 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		#expect(cleared == "no")
 	}
 
+	@Test func focusModeTracksTheBlockContainingTheCaret() async throws {
+		let harness = EditBridgeHarness(source: "Alpha\n\nBeta")
+		let webView = try await makeEditableWebView(harness: harness)
+		try await run(webView, MarkdownWebView.Coordinator.focusModeScript)
+		try await run(webView, "window.__mdSetFocusMode(true)")
+		let inactive = try await evaluate(webView, "document.body.classList.contains('md-focus-mode') ? 'dimmed' : 'normal'")
+		#expect(inactive == "normal", "an inactive split pane must not be dimmed wholesale")
+
+		#if os(macOS)
+			webView.window?.makeKey()
+		#endif
+		try await run(webView, "window.__mdPlaceCaret(8);")
+		try await Task.sleep(for: .milliseconds(50))
+
+		let state = try await evaluate(webView, """
+			(document.body.classList.contains('md-focus-mode') ? 'on:' : 'off:') +
+			Array.from(document.body.children)
+			  .filter(e => e.matches('p'))
+			  .map(e => e.classList.contains('md-focus-active') ? 'active' : 'inactive')
+			  .join(',')
+			""")
+		#expect(state == "on:inactive,active")
+
+		try await run(webView, "window.__mdSetFocusMode(false)")
+		let restored = try await evaluate(webView, "document.body.classList.contains('md-focus-mode') ? 'on' : 'off'")
+		#expect(restored == "off")
+	}
+
 	@Test func footnoteLinksNavigateInsideEditableDocument() async throws {
 		let filler = (1...80)
 			.map { "Paragraph \($0): enough text to require scrolling." }

@@ -38,6 +38,7 @@ let package = Package(
 			resources: [
 				.copy("Resources/CheckboxScript.js"),
 				.copy("Resources/EditorScript.js"),
+				.copy("Resources/FocusModeScript.js"),
 				.copy("Resources/ImagePresentationScript.js"),
 				.copy("Resources/LinkPreviewScript.js"),
 				.copy("Resources/ScrollSyncScript.js"),

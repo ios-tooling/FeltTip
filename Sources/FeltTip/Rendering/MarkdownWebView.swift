@@ -46,6 +46,8 @@ public struct MarkdownWebView: UXViewRepresentable {
 	let fontSize: CGFloat
 	var baseURL: URL?
 	var isEditable = false
+	/// Dim rendered blocks other than the one containing the caret/selection.
+	var isFocusModeEnabled = false
 	var onSourceEdit: ((String, Int?) -> Void)?
 	var onCheckboxToggle: ((Int, Bool) -> Void)?
 	/// Called when the user asks to inspect a sufficiently large rendered image.
@@ -137,6 +139,13 @@ public struct MarkdownWebView: UXViewRepresentable {
 	public func editable(_ flag: Bool) -> Self {
 		var copy = self
 		copy.isEditable = flag
+		return copy
+	}
+
+	/// Keep the current rendered block prominent while dimming its neighbors.
+	public func focusMode(_ flag: Bool) -> Self {
+		var copy = self
+		copy.isFocusModeEnabled = flag
 		return copy
 	}
 
@@ -346,6 +355,9 @@ public struct MarkdownWebView: UXViewRepresentable {
 		config.userContentController.addUserScript(WKUserScript(
 			source: Coordinator.imagePresentationScript, injectionTime: .atDocumentEnd,
 			forMainFrameOnly: true))
+		config.userContentController.addUserScript(WKUserScript(
+			source: Coordinator.focusModeScript, injectionTime: .atDocumentEnd,
+			forMainFrameOnly: true))
 		if onOpenImage != nil {
 			config.userContentController.addUserScript(WKUserScript(
 				source: "window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(true);",
@@ -401,6 +413,7 @@ public struct MarkdownWebView: UXViewRepresentable {
 		context.coordinator.applyCaretTarget()
 		context.coordinator.applySelectionTarget(to: webView)
 		context.coordinator.load(into: webView)
+		context.coordinator.applyFocusMode(to: webView)
 		context.coordinator.applyScrollControls(to: webView)
 		context.coordinator.applyMirroredSelection(to: webView)
 		#if os(iOS)

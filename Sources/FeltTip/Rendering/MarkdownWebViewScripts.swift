@@ -32,6 +32,10 @@ extension MarkdownWebView.Coordinator {
 	/// Installed dormant in every view; hosts opt in before it decorates images.
 	static let imagePresentationScript = MarkdownWebViewScripts.load("ImagePresentationScript")
 
+	/// Installed in every rendered page. Dormant until the host enables focus
+	/// mode, then dims all top-level blocks except the caret/selection's block.
+	static let focusModeScript = MarkdownWebViewScripts.load("FocusModeScript")
+
 	/// Injected after each editable load. Maps contentEditable edits to source
 	/// splices via `data-s` offsets, vetoing anything it can't map.
 	static var editorScript: String { MarkdownWebViewScripts.editorScript }

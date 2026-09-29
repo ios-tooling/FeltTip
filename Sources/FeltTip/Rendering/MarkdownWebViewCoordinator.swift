@@ -100,6 +100,7 @@ extension MarkdownWebView {
 		private var lastCaretToken: Int?
 		/// Selection-handoff token already applied.
 		private var lastSelectionTargetToken: Int?
+		private var lastFocusModeEnabled: Bool?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
 		private var didStartInitialRender = false
@@ -1167,10 +1168,13 @@ extension MarkdownWebView {
 					webView.evaluateJavaScript(Self.checkboxScript, completionHandler: nil)
 				}
 				webView.evaluateJavaScript(Self.imagePresentationScript, completionHandler: nil)
+				webView.evaluateJavaScript(Self.focusModeScript, completionHandler: nil)
 				// Always install scroll reporting / control, even for a read-only
 				// preview, so a host can sync its scroll position to this view.
 				webView.evaluateJavaScript(Self.scrollSyncScript, completionHandler: nil)
 			}
+			lastFocusModeEnabled = nil
+			applyFocusMode(to: webView)
 			let imagePresentationEnabled = parent.onOpenImage != nil ? "true" : "false"
 			webView.evaluateJavaScript(
 				"window.__mdSetImagePresentationEnabled && window.__mdSetImagePresentationEnabled(\(imagePresentationEnabled));"
@@ -1338,6 +1342,15 @@ extension MarkdownWebView {
 		}
 
 		private var lastMirroredSelection: NSRange?
+
+		func applyFocusMode(to webView: WKWebView) {
+			guard lastFocusModeEnabled != parent.isFocusModeEnabled else { return }
+			lastFocusModeEnabled = parent.isFocusModeEnabled
+			let enabled = parent.isFocusModeEnabled ? "true" : "false"
+			webView.evaluateJavaScript(
+				"window.__mdSetFocusMode && window.__mdSetFocusMode(\(enabled));",
+				completionHandler: nil)
+		}
 
 		/// Show (or clear) the other pane's selection as a highlight overlay.
 		func applyMirroredSelection(to webView: WKWebView) {

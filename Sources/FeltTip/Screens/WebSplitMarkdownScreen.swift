@@ -149,6 +149,7 @@ public struct WebSplitMarkdownScreen: View {
 				onScrollFractionChanged: { didScroll(.raw, fraction: $0) },
 				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
 				typewriterMode: typewriterMode,
+				focusModeEnabled: focusModeEnabled,
 				theme: theme,
 				onCursorPositionChanged: { line, col, sel, offset in onCursorPositionChanged?(line, col, sel, offset) },
 				onSourceEdit: { new, caret in relaySourceEdit(new, caret: caret) },
@@ -205,6 +206,7 @@ public struct WebSplitMarkdownScreen: View {
 	private var preview: MarkdownWebView {
 		var view = MarkdownWebView(text: text, theme: theme, fontSize: fontSize, baseURL: baseURL)
 			.renderMermaid(true)
+			.focusMode(focusModeEnabled)
 			.initialScrollFraction(initialScrollFraction)
 			.scrollTarget(scrollSource == .raw
 				? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)

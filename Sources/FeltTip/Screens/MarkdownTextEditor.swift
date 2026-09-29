@@ -19,6 +19,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
 	var typewriterMode: Bool = false
+	var focusModeEnabled: Bool = false
 	var theme: MarkdownTheme?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	/// When set, edits are reported here — with the post-edit caret offset —
@@ -52,6 +53,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		syncScrollFraction: Double? = nil,
 		typewriterMode: Bool = false,
+		focusModeEnabled: Bool = false,
 		theme: MarkdownTheme? = nil,
 		onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)? = nil,
 		onSourceEdit: ((String, Int) -> Void)? = nil,
@@ -69,6 +71,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.syncScrollFraction = syncScrollFraction
 		self.typewriterMode = typewriterMode
+		self.focusModeEnabled = focusModeEnabled
 		self.theme = theme
 		self.onCursorPositionChanged = onCursorPositionChanged
 		self.onSourceEdit = onSourceEdit
@@ -157,6 +160,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		context.coordinator.scheduleHeadingIndex(for: text, debounce: false)
 		updateHighlighting(textView: textView, coordinator: context.coordinator)
 		context.coordinator.recordCurrentHighlightState()
+		applyFocusMode(to: textView, coordinator: context.coordinator)
 
 		context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
 			forName: NSView.boundsDidChangeNotification,
@@ -326,6 +330,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 
 		applyMirroredSelection(to: textView, coordinator: context.coordinator)
+		applyFocusMode(to: textView, coordinator: context.coordinator)
 
 		if let raw = selectedHeadingID, raw != context.coordinator.lastScrolledID {
 			context.coordinator.lastScrolledID = raw
@@ -476,6 +481,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 		coordinator.recordCurrentHighlightState()
 		updateHighlighting(textView: textView, coordinator: coordinator)
+		coordinator.lastFocusRange = nil
 	}
 
 	/// Show (or clear) the other pane's selection as an inactive-selection
@@ -499,6 +505,33 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				value: theme.map { NSColor($0.mirrorHighlightColor) } ?? .unemphasizedSelectedTextBackgroundColor,
 				forCharacterRange: range)
 		}
+	}
+
+	private func applyFocusMode(to textView: NSTextView, coordinator: Coordinator) {
+		let isActive = textView.window?.firstResponder === textView
+		let nextRange = focusModeEnabled && isActive
+			? MarkdownFocusMode.focusedRange(in: textView.string, selection: textView.selectedRange())
+			: nil
+		let shouldFocus = focusModeEnabled && isActive
+		guard coordinator.lastFocusRange != nextRange || coordinator.lastFocusModeEnabled != shouldFocus else { return }
+		let full = NSRange(location: 0, length: (textView.string as NSString).length)
+		if coordinator.lastFocusModeEnabled, full.length > 0 {
+			updateHighlighting(textView: textView, coordinator: coordinator)
+		}
+		coordinator.lastFocusModeEnabled = shouldFocus
+		coordinator.lastFocusRange = nextRange
+		guard shouldFocus, let nextRange, full.length > 0 else { return }
+		let dim = NSColor(theme?.textColor ?? .primary).withAlphaComponent(0.3)
+		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: dim, forCharacterRange: full)
+		let active = NSColor(theme?.textColor ?? .primary)
+		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: active, forCharacterRange: nextRange)
+	}
+
+	private func clearFocusMode(from textView: NSTextView, coordinator: Coordinator) {
+		guard coordinator.lastFocusModeEnabled else { return }
+		updateHighlighting(textView: textView, coordinator: coordinator)
+		coordinator.lastFocusModeEnabled = false
+		coordinator.lastFocusRange = nil
 	}
 
 	private func applyTheme(to textView: NSTextView, scrollView: NSScrollView, coordinator: Coordinator) {
@@ -636,6 +669,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastHighlightedThemeSignature: String?
 		var lastAppliedThemeSignature: String?
 		var lastMirroredSelection: NSRange?
+		var lastFocusRange: NSRange?
+		var lastFocusModeEnabled = false
 		var lastHighlightedOptions: MarkdownOptions?
 		var headingDebounceTimer: Timer?
 		var highlightDebounceTimer: Timer?
@@ -838,19 +873,35 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
 			}
 			let range = textView.selectedRange()
+			parent.applyFocusMode(to: textView, coordinator: self)
 			parent.onSourceSelectionChanged?(range)
 			parent.onSelectionChanged?(range.length > 0 ? range : nil)
+		}
+
+		func reportFocusLoss(_ textView: NSTextView) {
+			parent.clearFocusMode(from: textView, coordinator: self)
 		}
 
 		public func textViewDidChangeSelection(_ notification: Notification) {
 			guard !isUpdatingFromSwiftUI, let tv = notification.object as? NSTextView else { return }
 			if parent.typewriterMode { centerCursor(in: tv) }
+			parent.applyFocusMode(to: tv, coordinator: self)
 			reportCursorPosition(in: tv)
 			if tv.window?.firstResponder === tv {
 				let range = tv.selectedRange()
 				parent.onSourceSelectionChanged?(range)
 				parent.onSelectionChanged?(range.length > 0 ? range : nil)
 			}
+		}
+
+		public func textDidBeginEditing(_ notification: Notification) {
+			guard let textView = notification.object as? NSTextView else { return }
+			parent.applyFocusMode(to: textView, coordinator: self)
+		}
+
+		public func textDidEndEditing(_ notification: Notification) {
+			guard let textView = notification.object as? NSTextView else { return }
+			parent.clearFocusMode(from: textView, coordinator: self)
 		}
 
 		func reportCursorPosition(in textView: NSTextView) {

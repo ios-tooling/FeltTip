@@ -25,6 +25,7 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 	var fontSize: CGFloat
 	var theme: MarkdownTheme?
 	var typewriterMode: Bool = false
+	var focusModeEnabled: Bool = false
 	var syntaxHighlightingEnabled: Bool = true
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
@@ -77,6 +78,7 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 		coordinator.applyMirroredSelection(to: textView)
 		coordinator.applySyncScrollFraction(to: textView)
 		coordinator.highlightIfNeeded(textView, theme: theme, enabled: syntaxHighlightingEnabled)
+		coordinator.applyFocusMode(to: textView)
 	}
 
 	func makeCoordinator() -> Coordinator { Coordinator(parent: self) }

@@ -25,6 +25,8 @@ extension MarkdownUITextEditor {
 		private var lastSyncedFraction: Double?
 		private var lastThemeSignature: Int?
 		private var needsFullHighlight = true
+		private var lastFocusRange: NSRange?
+		private var lastFocusModeEnabled = false
 		private var codeFenceRanges: [NSRange]?
 
 		init(parent: MarkdownUITextEditor) {
@@ -44,6 +46,7 @@ extension MarkdownUITextEditor {
 				location: min(selected.location, length), length: 0)
 			invalidateHighlighting()
 			highlight(textView, theme: parent.theme, enabled: parent.syntaxHighlightingEnabled)
+			lastFocusRange = nil
 		}
 
 		// MARK: - UITextViewDelegate
@@ -71,6 +74,15 @@ extension MarkdownUITextEditor {
 			parent.onSelectionChanged?(reported)
 			parent.onSourceSelectionChanged?(reported)
 			if parent.typewriterMode { centerCaret(in: textView) }
+			applyFocusMode(to: textView)
+		}
+
+		func textViewDidBeginEditing(_ textView: UITextView) {
+			applyFocusMode(to: textView)
+		}
+
+		func textViewDidEndEditing(_ textView: UITextView) {
+			applyFocusMode(to: textView)
 		}
 
 		func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -162,6 +174,22 @@ extension MarkdownUITextEditor {
 				return
 			}
 			MarkdownSyntaxHighlighter.highlight(textView: textView, theme: theme)
+		}
+
+		func applyFocusMode(to textView: UITextView) {
+			let shouldFocus = parent.focusModeEnabled && textView.isFirstResponder
+			let nextRange = shouldFocus
+				? MarkdownFocusMode.focusedRange(in: textView.sourceString, selection: textView.selectedRange)
+				: nil
+			guard lastFocusRange != nextRange || lastFocusModeEnabled != shouldFocus else { return }
+			highlight(textView, theme: parent.theme, enabled: parent.syntaxHighlightingEnabled)
+			lastFocusRange = nextRange
+			lastFocusModeEnabled = shouldFocus
+			guard shouldFocus, let nextRange, let sink = textView.highlightSink else { return }
+			let full = NSRange(location: 0, length: (textView.sourceString as NSString).length)
+			guard full.length > 0 else { return }
+			sink.setColor(UXColor(parent.theme?.textColor ?? .primary).withAlphaComponent(0.3), in: full)
+			sink.setColor(UXColor(parent.theme?.textColor ?? .primary), in: nextRange)
 		}
 
 		// MARK: - Reporting
