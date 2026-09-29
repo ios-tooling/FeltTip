@@ -550,8 +550,16 @@ extension MarkdownWebView {
 			let snapHiddenSyntax: Bool
 			if offset < source.length {
 				let character = source.character(at: offset)
-				snapHiddenSyntax = character != 0x09 && character != 0x0A &&
-					character != 0x0D && character != 0x20
+				// The unchecked state inside `[ ]` is whitespace in the source,
+				// but it is still hidden Markdown syntax. Treating it like ordinary
+				// indentation makes a host-restored caret synthesize a paragraph
+				// between task items, producing a large styled-only list gap.
+				let isTaskBoxState = character == 0x20 && offset > lineStart &&
+					offset + 1 < lineEnd && source.character(at: offset - 1) == 0x5B &&
+					source.character(at: offset + 1) == 0x5D
+				snapHiddenSyntax = isTaskBoxState ||
+					(character != 0x09 && character != 0x0A &&
+					 character != 0x0D && character != 0x20)
 			} else {
 				snapHiddenSyntax = false
 			}

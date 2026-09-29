@@ -81,6 +81,30 @@ import WebKit
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func restoringCaretInsideTaskMarkerDoesNotInsertAListGap() async throws {
+		let source = "- [x] existing task\n- [ ] pending task\n"
+		let checkbox = (source as NSString).range(of: "[ ]")
+		let caret = checkbox.location + 1
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		restore(source, caret: caret, token: 1, in: harness)
+		try await harness.waitQuiescent()
+
+		let syntheticParagraphs = try await harness.evaluate(
+			"String(document.querySelectorAll('ul > p, ol > p').length)")
+		#expect(syntheticParagraphs == "0")
+		let caretItem = try await harness.evaluate("""
+			(() => {
+			  const selection = window.getSelection();
+			  const node = selection && selection.anchorNode;
+			  const element = node && node.nodeType === 1 ? node : node && node.parentElement;
+			  const item = element && element.closest ? element.closest('li') : null;
+			  return item ? item.textContent.trim() : '';
+			})()
+			""")
+		#expect(caretItem == "pending task")
+	}
+
 	@Test(arguments: [
 		("Plain alpha omega", "alpha", "alpha"),
 		("Before **bold** after", "bold", "bold"),
