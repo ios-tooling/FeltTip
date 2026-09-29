@@ -4272,6 +4272,41 @@ import Testing
 		#expect(try await harness.stampMismatches() == [])
 	}
 
+	@Test func pastingAPipeOverPartOfAMiddleTableCellKeepsColumnGeometry() async throws {
+		let table = "| Locale | Greeting | Status |\n| --- | --- | ---: |\n| Greek | Καλημέρα κόσμε | 1 |\n"
+		let harness = try await CoordinatorBridgeHarness(source: table)
+		#expect(try await harness.evaluate("String(document.querySelectorAll('table').length)") == "1")
+		let selection = (table as NSString).range(of: "κόσμε")
+		try await select(harness, start: selection.location, length: selection.length)
+		try await withPasteboard("κόσμε | 🌍") {
+			try await harness.clipboardCommand(.paste)
+			try await harness.waitForSourceEdits(1)
+		}
+		#expect(harness.source == "| Locale | Greeting | Status |\n| --- | --- | ---: |\n| Greek | Καλημέρα κόσμε \\| 🌍 | 1 |\n")
+		try await harness.waitQuiescent()
+		let cellCount = try await harness.evaluate("String(document.querySelectorAll('tbody tr:first-child td').length)")
+		let middleText = try await harness.evaluate("document.querySelector('tbody tr:first-child td:nth-child(2)')?.textContent ?? 'missing'")
+		let childTags = try await harness.evaluate("Array.from(document.querySelector('tbody tr:first-child').children).map(element => element.tagName).join(',')")
+		let geometry = try await harness.evaluate("""
+			(() => {
+			  const header = document.querySelector('thead tr')
+			  const row = document.querySelector('tbody tr:first-child')
+			  if (!header || !row) return 'missing'
+			  return Array.from(row.cells).every((cell, index) => {
+			    const expected = header.cells[index].getBoundingClientRect()
+			    const actual = cell.getBoundingClientRect()
+			    return Math.abs(actual.left - expected.left) < 0.5
+			      && Math.abs(actual.right - expected.right) < 0.5
+			  }) ? 'aligned' : 'misaligned'
+			})()
+			""")
+		#expect(cellCount == "3")
+		#expect(childTags == "TD,TD,TD")
+		#expect(middleText == "Καλημέρα κόσμε | 🌍")
+		#expect(geometry == "aligned")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	@Test func tablePipeEscapingPreservesAlreadyEscapedPipes() {
 		#expect(MarkdownWebView.Coordinator.escapingTablePipes(
 			in: #"a \| b | c"#, source: "", insertion: 0) == #"a \| b \| c"#)

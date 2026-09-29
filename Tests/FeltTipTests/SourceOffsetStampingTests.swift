@@ -98,6 +98,16 @@ import Testing
 			minimumRuns: 6)
 	}
 
+	@Test func unicodeTableCellAroundEscapedPipeKeepsEditableStamps() {
+		let source = "| Locale | Greeting | Status |\n| --- | --- | ---: |\n| Greek | Καλημέρα κόσμε \\| 🌍 | 1 |"
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: source, includeSourceOffsets: true)
+		#expect(html.contains("<span data-s=\"62\">Καλημέρα κόσμε </span>"))
+		#expect(html.contains("<span data-md-escaped-pipe-s=\"77\">|</span>"))
+		#expect(html.contains("<span data-s=\"79\"> 🌍</span>"))
+		expectStampsVerbatim(in: source, minimumRuns: 7)
+	}
+
 	@Test func fencedCodeContentStampsVerbatim() {
 		expectStampsVerbatim(
 			in: "before\n\n```swift\nlet value = 42\nprint(value)\n```\n\nafter",

@@ -149,46 +149,74 @@ struct SourceOffsetConverter {
 			  let lineEnd = processedLineEnd(upperLine),
 			  lower <= upper else { return nil }
 		let visible = Array(rendered.utf16)
+		let string = rendered as NSString
+		func match(start: Int, limit: Int, minimumEnd: Int?) -> [VerbatimFragment]? {
+			var sourceIndex = start, visibleIndex = 0
+			var sourceStart = start, visibleStart = 0
+			var fragments: [VerbatimFragment] = []
+			var foundEscape = false
+			func appendVerbatim(until sourceEnd: Int, visibleEnd: Int) -> Bool {
+				let length = visibleEnd - visibleStart
+				guard length == sourceEnd - sourceStart else { return false }
+				guard length > 0 else { return true }
+				guard let offset = verbatimSourceOffset(
+					processedOffset: sourceStart, length: length) else { return false }
+				fragments.append(.init(
+					text: string.substring(with: NSRange(location: visibleStart, length: length)),
+					sourceOffset: offset, escapedPipeSourceOffset: nil))
+				return true
+			}
+			while sourceIndex < limit, visibleIndex < visible.count {
+				if sourceIndex + 1 < limit,
+				   processedUTF16[sourceIndex] == 0x5C,
+				   processedUTF16[sourceIndex + 1] == 0x7C,
+				   visible[visibleIndex] == 0x7C {
+					guard appendVerbatim(until: sourceIndex, visibleEnd: visibleIndex),
+					      let escapeOffset = verbatimSourceOffset(
+						processedOffset: sourceIndex, length: 2) else { return nil }
+					fragments.append(.init(
+						text: "|", sourceOffset: nil,
+						escapedPipeSourceOffset: escapeOffset))
+					foundEscape = true
+					sourceIndex += 2
+					visibleIndex += 1
+					sourceStart = sourceIndex
+					visibleStart = visibleIndex
+				} else {
+					guard processedUTF16[sourceIndex] == visible[visibleIndex] else { return nil }
+					sourceIndex += 1
+					visibleIndex += 1
+				}
+			}
+			guard foundEscape, visibleIndex == visible.count,
+			      minimumEnd.map({ sourceIndex >= $0 }) ?? true,
+			      appendVerbatim(until: sourceIndex, visibleEnd: visible.count)
+			else { return nil }
+			return fragments
+		}
+
 		// swift-markdown's Text end column can count rendered characters at
 		// an escape (Al\|ice reports a six-unit range for seven source units).
 		// Extend only by the number of visible pipes, never past this line,
 		// then verify every source unit before stamping any fragment.
 		let maxUpper = min(lineEnd, upper + visible.filter { $0 == 0x7C }.count)
-		let string = rendered as NSString
-		var sourceIndex = lower, visibleIndex = 0
-		var sourceStart = lower, visibleStart = 0
-		var fragments: [VerbatimFragment] = []
-		var foundEscape = false
-		func appendVerbatim(until sourceEnd: Int, visibleEnd: Int) -> Bool {
-			let length = visibleEnd - visibleStart
-			guard length == sourceEnd - sourceStart else { return false }
-			guard length > 0 else { return true }
-			guard let offset = verbatimSourceOffset(processedOffset: sourceStart, length: length) else { return false }
-			fragments.append(.init(text: string.substring(with: NSRange(location: visibleStart, length: length)), sourceOffset: offset, escapedPipeSourceOffset: nil))
-			return true
+		if let fragments = match(start: lower, limit: maxUpper, minimumEnd: upper) {
+			return fragments
 		}
-		while sourceIndex < maxUpper, visibleIndex < visible.count {
-			if sourceIndex + 1 < maxUpper,
-			   processedUTF16[sourceIndex] == 0x5C,
-			   processedUTF16[sourceIndex + 1] == 0x7C,
-			   visible[visibleIndex] == 0x7C {
-				guard appendVerbatim(until: sourceIndex, visibleEnd: visibleIndex) else { return nil }
-				guard let escapeOffset = verbatimSourceOffset(processedOffset: sourceIndex, length: 2) else { return nil }
-				fragments.append(.init(text: "|", sourceOffset: nil, escapedPipeSourceOffset: escapeOffset))
-				foundEscape = true
-				sourceIndex += 2
-				visibleIndex += 1
-				sourceStart = sourceIndex
-				visibleStart = visibleIndex
-			} else {
-				guard processedUTF16[sourceIndex] == visible[visibleIndex] else { return nil }
-				sourceIndex += 1
-				visibleIndex += 1
-			}
+
+		// swift-markdown can report a Unicode table cell's range at the
+		// virtual byte column produced after unescaping its pipe. Recover only
+		// when the escaped spelling of the rendered text occurs exactly once on
+		// that same source line; ambiguity remains deliberately unstamped.
+		guard lowerLine == upperLine,
+		      let lineStart = processedLineStart(lowerLine), lineStart < lineEnd else { return nil }
+		var recovered: [VerbatimFragment]?
+		for candidate in lineStart..<lineEnd {
+			guard let fragments = match(start: candidate, limit: lineEnd, minimumEnd: nil) else { continue }
+			if recovered != nil { return nil }
+			recovered = fragments
 		}
-		guard foundEscape, sourceIndex >= upper, visibleIndex == visible.count,
-			  appendVerbatim(until: sourceIndex, visibleEnd: visible.count) else { return nil }
-		return fragments
+		return recovered
 	}
 
 	/// Inline-code nodes have no child `Text` range: swift-markdown reports the
