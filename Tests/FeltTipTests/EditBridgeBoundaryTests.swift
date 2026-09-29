@@ -6,10 +6,24 @@
 //  the collapsed cross-run delete veto, and unmappable (unstamped) runs.
 //
 
+#if os(macOS)
+	import AppKit
+#else
+	import UIKit
+#endif
+import Foundation
 import Testing
 @testable import FeltTip
 
 @Suite(.serialized) @MainActor struct EditBridgeBoundaryTests {
+	private func performResponderCommand(
+		_ selector: String,
+		in harness: CoordinatorBridgeHarness
+	) {
+		harness.focusWebView()
+		harness.webView.perform(NSSelectorFromString("\(selector):"), with: nil)
+	}
+
 	@Test func enterAtDocumentStartAndEnd() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "Alpha\n\nBeta")
 		try await harness.batch(["window.__mdPlaceCaret(0)", "document.execCommand('insertParagraph')"])
@@ -48,6 +62,28 @@ import Testing
 		#expect(harness.source == expected)
 		#expect(harness.coordinator.hardRejections == 0)
 		#expect(try await harness.stampMismatches() == [])
+	}
+
+	@Test(arguments: [
+		("**Bold**", "**Bold**\n\nX"),
+		("_Italic_", "_Italic_\n\nX"),
+		("[Link](https://example.com)", "[Link](https://example.com)\n\nX"),
+	])
+	func physicalRightArrowThenReturnExitsTerminalInlineSyntax(
+		source: String,
+		expected: String
+	) async throws {
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"document.execCommand('selectAll')",
+			"window.getSelection().modify('move', 'forward', 'character')",
+		])
+		performResponderCommand("insertNewline", in: harness)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("X", at: (harness.source as NSString).length)
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == expected)
 	}
 
 	@Test func returnAtAnInternalPlainBlockStartRestampsTheMovedBlock() async throws {

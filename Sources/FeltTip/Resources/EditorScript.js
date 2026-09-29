@@ -268,6 +268,15 @@
     }
     return first && last ? { start: first, end: last } : null;
   }
+  function sharedInlineSyntaxAncestor(startNode, endNode) {
+    var element = startNode && startNode.nodeType === 1
+      ? startNode : startNode && startNode.parentElement;
+    while (element && element !== document.body) {
+      if (isInlineSyntaxElement(element) && element.contains(endNode)) return element;
+      element = element.parentElement;
+    }
+    return null;
+  }
   // Source offset for a DOM position, or null if it isn't inside a run.
   function sourceOffsetOf(node, offset) {
     var span = spanOf(node, offset);
@@ -2773,16 +2782,25 @@
       (e.inputType === 'insertText' || e.inputType === 'insertReplacementText')
         ? selectedStampedTextEndpoints(range) : null;
     if (selectedTextEndpoints) {
+      // Normalize a zero-width native endpoint across hidden syntax only when
+      // the selected visible text stays inside one inline wrapper. A physical
+      // character selection spanning separate styled runs deliberately owns
+      // the delimiters between its visible endpoints; snapping that range to
+      // the first stamped character leaves an unmatched opener behind.
+      var sharedInlineOwner = sharedInlineSyntaxAncestor(
+        selectedTextEndpoints.start.node, selectedTextEndpoints.end.node);
       var mappedStart = sourceOffsetOf(startPos.node, startPos.offset);
       var visibleStart = sourceOffsetOf(
         selectedTextEndpoints.start.node, selectedTextEndpoints.start.offset);
-      if (mappedStart != null && visibleStart != null && visibleStart > mappedStart) {
+      if (sharedInlineOwner && mappedStart != null && visibleStart != null &&
+          visibleStart > mappedStart) {
         startPos = selectedTextEndpoints.start;
       }
       var mappedEnd = sourceOffsetOf(endPos.node, endPos.offset);
       var visibleEnd = sourceOffsetOf(
         selectedTextEndpoints.end.node, selectedTextEndpoints.end.offset);
-      if (mappedEnd != null && visibleEnd != null && visibleEnd < mappedEnd) {
+      if (sharedInlineOwner && mappedEnd != null && visibleEnd != null &&
+          visibleEnd < mappedEnd) {
         endPos = selectedTextEndpoints.end;
       }
     }

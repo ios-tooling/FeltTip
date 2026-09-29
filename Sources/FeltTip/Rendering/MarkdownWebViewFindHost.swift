@@ -48,12 +48,23 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	private let barInset: CGFloat = 8
 	private let barSpacing: CGFloat = 6
 	private let searchFieldMaxWidth: CGFloat = 320
+	nonisolated(unsafe) private var paragraphKeyMonitor: Any?
 
 	public init(webView: WKWebView) {
 		self.webView = webView
 		super.init(frame: .zero)
 		addSubview(webView)
 		buildBar()
+		paragraphKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+			[weak self] event in
+			guard let self, self.shouldRouteParagraphKey(event) else { return event }
+			self.webView.perform(NSSelectorFromString("insertNewline:"), with: nil)
+			return nil
+		}
+	}
+
+	deinit {
+		if let paragraphKeyMonitor { NSEvent.removeMonitor(paragraphKeyMonitor) }
 	}
 
 	@available(*, unavailable)
@@ -99,6 +110,30 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	private var webViewIsFocused: Bool {
 		guard let responder = window?.firstResponder as? NSView else { return false }
 		return responder === webView || responder.isDescendant(of: webView)
+	}
+
+	private func shouldRouteParagraphKey(_ event: NSEvent) -> Bool {
+		Self.shouldRouteParagraphKey(
+			keyCode: event.keyCode,
+			characters: event.charactersIgnoringModifiers ?? "",
+			modifiers: event.modifierFlags,
+			isFocused: webViewIsFocused,
+			isInactive: isInactive)
+	}
+
+	static func shouldRouteParagraphKey(
+		keyCode: UInt16,
+		characters: String,
+		modifiers: NSEvent.ModifierFlags,
+		isFocused: Bool,
+		isInactive: Bool
+	) -> Bool {
+		guard !isInactive, isFocused else { return false }
+		let editingModifiers = modifiers.intersection([.command, .shift, .option, .control])
+		return editingModifiers.isEmpty && (
+			characters == "\r" || characters == "\n" ||
+			keyCode == 36 || keyCode == 76
+		)
 	}
 
 	/// Paste only the clipboard's visible text, deliberately ignoring Marker's

@@ -11,6 +11,18 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct MarkdownWebViewFindHostTests {
+	@Test func bareReturnRoutesThroughTheParagraphResponderCommand() {
+		#expect(MarkdownWebViewFindHost.shouldRouteParagraphKey(
+			keyCode: 36, characters: "\r", modifiers: [],
+			isFocused: true, isInactive: false))
+		#expect(!MarkdownWebViewFindHost.shouldRouteParagraphKey(
+			keyCode: 36, characters: "\r", modifiers: .shift,
+			isFocused: true, isInactive: false))
+		#expect(!MarkdownWebViewFindHost.shouldRouteParagraphKey(
+			keyCode: 36, characters: "\r", modifiers: [],
+			isFocused: false, isInactive: false))
+	}
+
 	@Test
 	func findFieldSearchesAsItsQueryChanges() throws {
 		let webView = WKWebView()

@@ -329,6 +329,23 @@ import Testing
 		}
 	}
 
+	@Test func physicalArrowSelectionAcrossStyledRunsConsumesOwnedHiddenSyntax() async throws {
+		let source = "Before **Alpha** and _Beta_ after"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.batch([
+			"document.execCommand('selectAll')",
+			"window.getSelection().modify('move', 'backward', 'character')",
+			"for (var i = 0; i < 7; i++) window.getSelection().modify('move', 'forward', 'character')",
+			"for (var i = 0; i < 14; i++) window.getSelection().modify('extend', 'forward', 'character')",
+		])
+		try await harness.run("document.execCommand('insertText', false, 'X')")
+		try await harness.waitForSourceEdits(1)
+		try await harness.type("!")
+		try await harness.waitForSourceEdits(2)
+		#expect(harness.source == "Before X! after")
+		try await assertHealthy(harness)
+	}
+
 	@Test func typingAcrossNestedStyledEndpointsConsumesEveryOwnedDelimiter() async throws {
 		let cases = [
 			(source: "[**Alpha**](https://example.com) and ~~Beta~~ Tail", expected: "X Tail"),
