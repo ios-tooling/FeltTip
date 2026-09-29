@@ -44,6 +44,54 @@ public enum MarkdownPDFRenderer {
 			injectingPrintCSS(into: securedHTML, fontSize: fontSize),
 			baseURL: nil)
 		do { try await loader.wait() } catch { return nil }
+		// WebKit's system-font PDF maps alias Greek mu to the micro sign and emit
+		// Arabic presentation forms. Route only those runs through a face whose
+		// character map preserves source Unicode, and isolate right-to-left runs so
+		// a page wrap cannot split a searchable phrase. Other text keeps its font.
+		_ = try? await webView.evaluateJavaScript(#"""
+		(() => {
+		  const greek = '[\\u0370-\\u03ff\\u1f00-\\u1fff]';
+		  const arabic = '[\\u0600-\\u06ff\\u0750-\\u077f\\u08a0-\\u08ff\\ufb50-\\ufdff\\ufe70-\\ufeff]';
+		  const hebrew = '[\\u0590-\\u05ff\\ufb1d-\\ufb4f]';
+		  const affectedRuns = new RegExp(
+		    greek + '(?:' + greek + '|\\p{M}|[ \\t](?=' + greek + '))*|' +
+		    arabic + '(?:' + arabic + '|\\p{M}|[ \\t](?=' + arabic + '))*|' +
+		    hebrew + '(?:' + hebrew + '|\\p{M}|[ \\t](?=' + hebrew + '))*', 'gu');
+		  const needsSafeFont = new RegExp(greek + '|' + arabic, 'u');
+		  const isRightToLeft = new RegExp(arabic + '|' + hebrew, 'u');
+		  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+		  const nodes = [];
+		  while (walker.nextNode()) {
+		    const node = walker.currentNode;
+		    const parent = node.parentElement;
+		    if (parent && !parent.closest('script, style')) nodes.push(node);
+		  }
+		  for (const node of nodes) {
+		    const text = node.nodeValue || '';
+		    const matches = Array.from(text.matchAll(affectedRuns));
+		    if (!matches.length) continue;
+		    const fragment = document.createDocumentFragment();
+		    let cursor = 0;
+		    for (const match of matches) {
+		      if (match.index > cursor) fragment.append(text.slice(cursor, match.index));
+		      const span = document.createElement('span');
+		      if (needsSafeFont.test(match[0])) {
+		        span.style.fontFamily = 'Tahoma, "Noto Sans", "Geeza Pro", sans-serif';
+		      }
+		      if (isRightToLeft.test(match[0])) {
+		        span.dir = 'rtl';
+		        span.style.unicodeBidi = 'isolate';
+		        span.style.whiteSpace = 'nowrap';
+		      }
+		      span.textContent = match[0];
+		      fragment.append(span);
+		      cursor = match.index + match[0].length;
+		    }
+		    if (cursor < text.length) fragment.append(text.slice(cursor));
+		    node.replaceWith(fragment);
+		  }
+		})()
+		"""#)
 
 		// Measure from the document origin through the body's content. The
 		// documentElement's scrollHeight is at least the initial viewport height

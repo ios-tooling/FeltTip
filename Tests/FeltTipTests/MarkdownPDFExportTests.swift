@@ -28,4 +28,22 @@ import Testing
 		let searchable = try #require(PDFDocument(data: data)?.string)
 		#expect(searchable.contains("Second"), "The final list item must not be clipped")
 	}
+
+	@Test("PDF searchable text preserves exact Unicode")
+	func searchableTextPreservesExactUnicode() async throws {
+		let unicodeLines = [
+			"Καλημέρα κόσμε",
+			"مرحبا بالعالم",
+			"שלום עולם",
+			"こんにちは世界",
+		]
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "Unicode long target: Καλημέρα κόσμε, Привет мир, こんにちは世界, مرحبا بالعالم, שלום עולם, café, résumé, coöperate, emoji 😀, math-ish x <= y >= z.")
+		let data = try #require(await MarkdownPDFRenderer.pdfData(html: html))
+		let searchable = try #require(PDFDocument(data: data)?.string)
+
+		for line in unicodeLines {
+			#expect(searchable.contains(line), "PDF searchable text must preserve \(line.debugDescription); extracted \(searchable.debugDescription)")
+		}
+	}
 }
