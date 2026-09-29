@@ -18,6 +18,11 @@ public class MarkdownFormattingTextView: NSTextView {
 		}
 		super.performTextFinderAction(sender)
 		guard action == .showFindInterface || action == .showReplaceInterface else { return }
+		// AppKit often mounts the native find bar synchronously. Install the
+		// replacement guard before returning so an immediately clicked Replace
+		// button cannot beat the asynchronous monitor below and insert at a stale
+		// caret instead of the remembered match.
+		installNativeReplaceControlProxyIfAvailable()
 
 		// AppKit remembers a hidden find bar's current result independently of
 		// NSTextView's selection. If a host-driven undo restores the source while
@@ -92,22 +97,25 @@ public class MarkdownFormattingTextView: NSTextView {
 				self.nativeReplaceControlProxy = nil
 				return
 			}
-			let control = Self.findReplaceControl(in: self.window?.contentView)
-			if self.nativeReplaceControlProxy?.control !== control {
-				self.nativeReplaceControlProxy = nil
-			}
-			if self.nativeReplaceControlProxy == nil, let control {
-				let proxy = NativeReplaceControlProxy(
-					editor: self,
-					control: control,
-					originalTarget: control.target,
-					originalAction: control.action)
-				self.nativeReplaceControlProxy = proxy
-				control.target = proxy
-				control.action = #selector(NativeReplaceControlProxy.performAction(_:))
-			}
+			self.installNativeReplaceControlProxyIfAvailable()
 			self.monitorNativeReplaceControl(after: 0.25)
 		}
+	}
+
+	private func installNativeReplaceControlProxyIfAvailable() {
+		let control = Self.findReplaceControl(in: window?.contentView)
+		if nativeReplaceControlProxy?.control !== control {
+			nativeReplaceControlProxy = nil
+		}
+		guard nativeReplaceControlProxy == nil, let control else { return }
+		let proxy = NativeReplaceControlProxy(
+			editor: self,
+			control: control,
+			originalTarget: control.target,
+			originalAction: control.action)
+		nativeReplaceControlProxy = proxy
+		control.target = proxy
+		control.action = #selector(NativeReplaceControlProxy.performAction(_:))
 	}
 
 	private static func findSearchField(in view: NSView?) -> NSSearchField? {
