@@ -143,6 +143,11 @@ extension MarkdownHTMLRenderer {
 					checkboxHTML = "<input type=\"checkbox\" disabled\(checked)> "
 				}
 			}
+			if item.blocks.isEmpty, emitSourceOffsets, let sourceStart = item.sourceStart {
+				result += checkboxHTML + "<span data-s=\"\(sourceStart)\"><br></span>"
+				result += "</li>"
+				continue
+			}
 			// Tight-list heuristic — a lone paragraph child renders without
 			// its `<p>` wrapper so simple bullet lists don't gain stray
 			// vertical whitespace in the exported HTML.

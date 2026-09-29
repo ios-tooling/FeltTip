@@ -14,11 +14,18 @@ public struct ListItemContent: Sendable {
 	public let blocks: [MarkdownBlock]
 	public let checkbox: CheckboxState?
 	public let checkboxIndex: Int?
+	/// Source insertion point for an item with no visible content. The editable
+	/// renderer uses this to keep template placeholders such as `- ` focusable.
+	public let sourceStart: Int?
 
-	public init(blocks: [MarkdownBlock], checkbox: CheckboxState? = nil, checkboxIndex: Int? = nil) {
+	public init(
+		blocks: [MarkdownBlock], checkbox: CheckboxState? = nil,
+		checkboxIndex: Int? = nil, sourceStart: Int? = nil
+	) {
 		self.blocks = blocks
 		self.checkbox = checkbox
 		self.checkboxIndex = checkboxIndex
+		self.sourceStart = sourceStart
 	}
 }
 

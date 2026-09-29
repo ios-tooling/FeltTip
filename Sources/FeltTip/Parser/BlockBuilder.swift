@@ -259,7 +259,9 @@ struct BlockBuilder: MarkupWalker {
 			inner.linkifyURLs = linkifyURLs
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
-			return ListItemContent(blocks: inner.build(from: item as Markup), checkbox: checkbox, checkboxIndex: index)
+			return ListItemContent(
+				blocks: inner.build(from: item as Markup), checkbox: checkbox,
+				checkboxIndex: index, sourceStart: emptyListItemSourceStart(item))
 		}
 		blocks.append(.orderedList(items: items, start: Int(list.startIndex), id: nextID()))
 	}
@@ -270,9 +272,22 @@ struct BlockBuilder: MarkupWalker {
 			inner.linkifyURLs = linkifyURLs
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
-			return ListItemContent(blocks: inner.build(from: item as Markup), checkbox: checkbox, checkboxIndex: index)
+			return ListItemContent(
+				blocks: inner.build(from: item as Markup), checkbox: checkbox,
+				checkboxIndex: index, sourceStart: emptyListItemSourceStart(item))
 		}
 		blocks.append(.unorderedList(items: items, id: nextID()))
+	}
+
+	/// Empty list items have no inline run to carry a source stamp. Their range
+	/// ends immediately after the marker and authored padding, which is exactly
+	/// where typed placeholder content belongs.
+	private func emptyListItemSourceStart(_ item: ListItem) -> Int? {
+		guard item.childCount == 0, let range = item.range,
+		      range.lowerBound.line == range.upperBound.line,
+		      let sourceConverter else { return nil }
+		return sourceConverter.utf16Offset(
+			line: range.upperBound.line, column: range.upperBound.column)
 	}
 
 	mutating func visitTable(_ table: Markdown.Table) {

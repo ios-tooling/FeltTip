@@ -190,6 +190,23 @@ import Testing
 		#expect(buttons.allSatisfy { (0...4).contains($0.bottomInset) })
 	}
 
+	@Test func blankListPlaceholderStaysEditableAndGetsAnAddButton() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "- \n")
+		let inspection = try await harness.evaluate("""
+			String(document.querySelectorAll('li > [data-s]').length)
+			  + '|' + String(document.querySelectorAll('.md-list-add-button').length)
+			""")
+
+		#expect(inspection == "1|1")
+		try await harness.batch([
+			"window.__mdPlaceCaret(2)",
+			"document.execCommand('insertText', false, 'Filled')",
+		])
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "- Filled\n")
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func readOnlyDetailsListDoesNotAdvertiseAnAddButton() async throws {
 		let source = """
 			<details>
