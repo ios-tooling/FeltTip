@@ -22,7 +22,7 @@
   // NOT among them: cell runs carry data-s stamps like any paragraph, so
   // in-place cell edits splice normally — only the structural hazards
   // (Enter mid-row; deletes that would eat a pipe) are vetoed downstream.
-  document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+  document.querySelectorAll('pre, .alert, details, .frontmatter, .mermaid, img, hr').forEach(function (el) {
     if (el.tagName === 'PRE' && el.querySelector('[data-s]')) return;
     el.contentEditable = 'false';
   });
@@ -354,7 +354,8 @@
     frozen = null;
     composing = null;
     if (typeof rev === 'number') { stampRev = rev; }
-    document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr').forEach(function (el) {
+    if (window.__mdRenderMermaid) { window.__mdRenderMermaid(); }
+    document.querySelectorAll('pre, .alert, details, .frontmatter, .mermaid, img, hr').forEach(function (el) {
       el.contentEditable = 'false';
     });
     installLinkOpenButtons();
@@ -1555,7 +1556,7 @@
   function readOnlyIslandOf(node) {
     var el = node && node.nodeType === 3 ? node.parentNode : node;
     var island = el && el.closest
-      ? el.closest('pre, .alert, details, .frontmatter, img, hr') : null;
+      ? el.closest('pre, .alert, details, .frontmatter, .mermaid, img, hr') : null;
     return island && island.tagName === 'PRE' && island.querySelector('[data-s]')
       ? null : island;
   }
@@ -1563,7 +1564,7 @@
     var selection = window.getSelection();
     if (!selection || !selection.rangeCount || selection.isCollapsed) return false;
     var range = selection.getRangeAt(0);
-    var islands = document.querySelectorAll('pre, .alert, details, .frontmatter, img, hr');
+    var islands = document.querySelectorAll('pre, .alert, details, .frontmatter, .mermaid, img, hr');
     for (var i = 0; i < islands.length; i++) {
       if (islands[i].tagName === 'PRE' && islands[i].querySelector('[data-s]')) {
         // A stamped code block is editable internally, but its hidden fences

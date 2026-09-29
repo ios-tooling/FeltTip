@@ -45,6 +45,7 @@ final class CoordinatorBridgeHarness {
 	private let openImage: ((MarkdownImageRequest) -> Void)?
 	private let initialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
 	private let preparedInitialRender: MarkdownPreparedWebRender?
+	private let renderMermaid: Bool
 	/// When true, the emulated SwiftUI round-trip is suppressed — the page
 	/// never gets the re-render a structural edit expects, which is exactly
 	/// the stuck-freeze condition the frozenTimeout safety net exists for.
@@ -55,14 +56,18 @@ final class CoordinatorBridgeHarness {
 		onCheckboxToggle: ((Int, Bool) -> Void)? = nil,
 		onOpenImage: ((MarkdownImageRequest) -> Void)? = nil,
 		preparedInitialRender: MarkdownPreparedWebRender? = nil,
-		onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)? = nil
+		onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)? = nil,
+		renderMermaid: Bool = false
 	) async throws {
 		self.source = source
 		self.checkboxToggle = onCheckboxToggle
 		self.openImage = onOpenImage
 		self.preparedInitialRender = preparedInitialRender
 		self.initialRenderProgress = onInitialRenderProgress
-		var view = MarkdownWebView(text: source, theme: .default, fontSize: 14).editable(true)
+		self.renderMermaid = renderMermaid
+		var view = MarkdownWebView(text: source, theme: .default, fontSize: 14)
+			.editable(true)
+			.renderMermaid(renderMermaid)
 		if let onCheckboxToggle { view = view.onCheckboxToggle(onCheckboxToggle) }
 		if let onOpenImage { view = view.onOpenImage(onOpenImage) }
 		if let onInitialRenderProgress {
@@ -109,6 +114,7 @@ final class CoordinatorBridgeHarness {
 	private func wireRoundTrip(text: String) {
 		var view = MarkdownWebView(text: text, theme: .default, fontSize: 14)
 			.editable(true)
+			.renderMermaid(renderMermaid)
 			.onSourceEdit { [weak self] newText, caretHint in
 				guard let self else { return }
 				self.source = newText

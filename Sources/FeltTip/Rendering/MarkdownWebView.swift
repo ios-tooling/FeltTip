@@ -53,8 +53,8 @@ public struct MarkdownWebView: UXViewRepresentable {
 	/// Called when the user asks to inspect a sufficiently large rendered image.
 	/// The renderer validates local/remote/data URLs before crossing this seam.
 	var onOpenImage: ((MarkdownImageRequest) -> Void)?
-	/// When true (and not editing), the ~3 MB mermaid engine is embedded inline
-	/// so mermaid code blocks render as diagrams. Off by default — the QuickLook
+	/// When true, the ~3 MB mermaid engine is loaded so mermaid code blocks
+	/// render as read-only diagrams, including inside an editable document. Off by default — the QuickLook
 	/// extension's sandbox can't load a payload that large (it crashes the
 	/// preview), so only the in-app web renderer opts in.
 	var renderMermaid = false
@@ -186,8 +186,8 @@ public struct MarkdownWebView: UXViewRepresentable {
 	}
 
 	/// Opt in to rendering mermaid code blocks as diagrams (embeds the engine).
-	/// Only takes effect when the view is not editable — editing keeps the raw,
-	/// editable source. Not safe in the QuickLook extension.
+	/// In an editable view, diagrams are read-only islands while the surrounding
+	/// rendered Markdown remains editable. Not safe in the QuickLook extension.
 	public func renderMermaid(_ flag: Bool) -> Self {
 		var copy = self
 		copy.renderMermaid = flag

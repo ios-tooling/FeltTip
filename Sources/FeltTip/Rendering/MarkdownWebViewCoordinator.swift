@@ -228,8 +228,7 @@ extension MarkdownWebView {
 				return
 			}
 			// A full (navigating) load is needed for the first render, for
-			// config changes (theme/font mean new CSS), for mermaid pages (the
-			// embedded engine script doesn't survive a body swap), and for our
+			// config changes (theme/font mean new CSS), and for our
 			// own structural edits, whose pending caret is placed in
 			// `didFinish`. Everything else — the text changing under us, i.e.
 			// typing in the raw pane of a split — updates the page in place
@@ -239,15 +238,14 @@ extension MarkdownWebView {
 			// in place instead of navigating — no blank flash, no full-document
 			// re-render, scroll preserved by construction.
 			if pendingSelection != nil, config == lastConfigSignature,
-			   !(parent.renderMermaid && !parent.isEditable), lastFragments != nil {
+			   lastFragments != nil {
 				pendingSwap?.cancel()
 				pendingSwap = nil
 				pendingHostText = nil
 				applyStructuralPatch(into: webView)
 				return
 			}
-			if lastRenderedText == nil || pendingSelection != nil || config != lastConfigSignature
-				|| (parent.renderMermaid && !parent.isEditable) {
+			if lastRenderedText == nil || pendingSelection != nil || config != lastConfigSignature {
 				let replacingExistingPage = lastRenderedText != nil
 				pendingSwap?.cancel()
 				pendingSwap = nil
@@ -1096,10 +1094,10 @@ extension MarkdownWebView {
 			let includeOffsets = parent.isEditable
 			let checkboxes = parent.onCheckboxToggle != nil
 			let allowRemoteResources = parent.allowsRemoteResources
-			// Render mermaid as diagrams when the host opted in and we're not
-			// editing (editing keeps the raw, editable source). The engine
-			// loads through our scheme handler instead of being inlined.
-			let embedMermaid = parent.renderMermaid && !parent.isEditable
+			// Render Mermaid as diagrams whenever the host opts in. In editable
+			// documents the editor script makes each diagram a read-only island.
+			// The engine loads through our scheme handler instead of being inlined.
+			let embedMermaid = parent.renderMermaid
 			let preparedRender = isInitialRender ? parent.preparedInitialRender : nil
 			let preparedConfiguration = MarkdownPreparedWebRender.Configuration(
 				markdown: text,

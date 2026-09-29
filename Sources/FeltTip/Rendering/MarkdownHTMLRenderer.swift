@@ -173,21 +173,26 @@ public enum MarkdownHTMLRenderer {
 		\(engineTag)
 		<script>
 		(function () {
-		  var diagrams = [];
-		  var candidates = document.querySelectorAll('pre > code.language-mermaid');
-		  for (var i = 0; i < candidates.length && diagrams.length < 100; i++) {
-		    var code = candidates[i];
-		    if ((code.textContent || '').length > 1048576) continue;
-		    var div = document.createElement('div');
-		    div.className = 'mermaid';
-		    div.textContent = code.textContent;
-		    code.parentElement.replaceWith(div);
-		    diagrams.push(div);
-		  }
-		  try {
-		    mermaid.initialize({ startOnLoad: false, theme: '\(theme.mermaidTheme)', securityLevel: 'strict', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif' });
-		    mermaid.run({ nodes: diagrams });
-		  } catch (e) {}
+		  window.__mdRenderMermaid = function () {
+		    var diagrams = [];
+		    var candidates = document.querySelectorAll('pre > code.language-mermaid');
+		    for (var i = 0; i < candidates.length && diagrams.length < 100; i++) {
+		      var code = candidates[i];
+		      if ((code.textContent || '').length > 1048576) continue;
+		      var div = document.createElement('div');
+		      div.className = 'mermaid';
+		      div.contentEditable = 'false';
+		      div.textContent = code.textContent;
+		      code.parentElement.replaceWith(div);
+		      diagrams.push(div);
+		    }
+		    if (!diagrams.length) return;
+		    try {
+		      mermaid.initialize({ startOnLoad: false, theme: '\(theme.mermaidTheme)', securityLevel: 'strict', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif' });
+		      mermaid.run({ nodes: diagrams });
+		    } catch (e) {}
+		  };
+		  window.__mdRenderMermaid();
 		})();
 		</script>
 		"""
