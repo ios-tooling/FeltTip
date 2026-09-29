@@ -112,6 +112,17 @@ import Testing
 		])
 		try await harness.waitForSourceEdits(1)
 		try await harness.waitQuiescent()
+		let emptyTaskCaret = try await harness.evaluate("""
+			(() => {
+			  const selection = window.getSelection();
+			  const node = selection && selection.anchorNode;
+			  const element = node && node.nodeType === 1 ? node : node && node.parentElement;
+			  const item = element && element.closest ? element.closest('li') : null;
+			  return String(document.querySelectorAll('ul > p, ol > p').length)
+			    + '|' + (item && item.querySelector('input[type="checkbox"]') ? 'task' : 'none');
+			})()
+			""")
+		#expect(emptyTaskCaret == "0|task")
 		try await harness.type("next")
 		try await harness.waitForSourceEdits(2)
 
@@ -212,6 +223,17 @@ import Testing
 			""")
 		try await harness.waitForSourceEdits(1)
 		try await harness.waitQuiescent()
+		let buttonTaskCaret = try await harness.evaluate("""
+			(() => {
+			  const selection = window.getSelection();
+			  const node = selection && selection.anchorNode;
+			  const element = node && node.nodeType === 1 ? node : node && node.parentElement;
+			  const item = element && element.closest ? element.closest('li') : null;
+			  return String(document.querySelectorAll('ul > p, ol > p').length)
+			    + '|' + (item && item.querySelector('input[type="checkbox"]') ? 'task' : 'none');
+			})()
+			""")
+		#expect(buttonTaskCaret == "0|task")
 		try await harness.type("next")
 		try await harness.waitForSourceEdits(2)
 

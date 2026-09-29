@@ -1327,10 +1327,26 @@
     var target = null;
     // Prefer an empty block the renderer DID emit between the neighbours
     // (an empty list item renders as a bare <li>).
-    if (prevBlock && prevBlock.nextElementSibling && prevBlock.nextElementSibling !== nextBlock
-        && textLength(prevBlock.nextElementSibling) === 0
-        && !prevBlock.nextElementSibling.hasAttribute('data-s')) {
-      target = prevBlock.nextElementSibling;
+    var emptySibling = prevBlock && prevBlock.nextElementSibling !== nextBlock
+      ? prevBlock.nextElementSibling : null;
+    // An appended empty task still contains its checkbox plus the authored
+    // trailing space, so textLength is 1 even though it has no visible content.
+    // Reuse that <li> as the caret home instead of inserting an invalid <p>
+    // beside it, which renders as a large blank row above the new task.
+    var emptyTaskSibling = !!(emptySibling && emptySibling.tagName === 'LI' &&
+      emptySibling.querySelector('input[type="checkbox"]') &&
+      plain(emptySibling.textContent).trim() === '');
+    if (emptyTaskSibling) {
+      var emptyTaskCheckbox = emptySibling.querySelector('input[type="checkbox"]');
+      if (placeInlineCaretHome(
+            emptyTaskCheckbox, offset, previousSourceCharacter, false,
+            null, '', null, '', '', true, false,
+            null, '', null, '', false,
+            null, '', null, '')) return;
+    }
+    if (emptySibling && textLength(emptySibling) === 0
+        && !emptySibling.hasAttribute('data-s')) {
+      target = emptySibling;
     } else {
       target = document.createElement('p');
       if (prevBlock && prevBlock.parentNode) { prevBlock.insertAdjacentElement('afterend', target); }
