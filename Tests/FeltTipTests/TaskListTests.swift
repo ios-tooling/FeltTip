@@ -64,6 +64,17 @@ import Testing
 	}
 
 	@MainActor
+	@Test func taskListItemsSuppressTheirOrdinaryListMarker() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "- [ ] Task\n- Regular item\n")
+		let styles = try await harness.evaluate("""
+			(() => Array.from(document.querySelectorAll('li')).map((item) =>
+			  getComputedStyle(item).listStyleType
+			).join('|'))()
+			""")
+		#expect(styles == "none|disc")
+	}
+
+	@MainActor
 	@Test func nestedParentTaskKeepsCheckboxBesideItsText() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "- [ ] Parent task\n  - [x] Child task\n")
 		let alignment = try await harness.evaluate("""

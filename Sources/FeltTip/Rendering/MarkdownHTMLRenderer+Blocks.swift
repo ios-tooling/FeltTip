@@ -133,7 +133,7 @@ extension MarkdownHTMLRenderer {
 	static func renderListItems(_ items: [ListItemContent]) -> String {
 		var result = ""
 		for item in items {
-			result += "<li>"
+			result += item.checkbox == nil ? "<li>" : "<li class=\"task-list-item\">"
 			var checkboxHTML = ""
 			if let state = item.checkbox {
 				let checked = state == .checked ? " checked" : ""

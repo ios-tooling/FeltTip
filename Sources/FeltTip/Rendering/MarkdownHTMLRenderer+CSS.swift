@@ -164,6 +164,9 @@ extension MarkdownHTMLRenderer {
 		input[type="checkbox"] {
 			margin-right: 0.4em;
 		}
+		.task-list-item {
+			list-style-type: none;
+		}
 		"""
 	}
 
