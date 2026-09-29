@@ -231,6 +231,43 @@
     if (t) return { node: t, offset: 0 };
     return { node: first, offset: 0 };
   }
+  // Native word extension can leave a zero-width endpoint at the end of the
+  // preceding run while all selected text belongs to the following run. The
+  // raw DOM boundary then maps across hidden Markdown syntax even though the
+  // user selected none of that preceding run. Recover the first and last
+  // actually selected stamped characters so replacement keeps an inline
+  // wrapper such as `[label](url)` instead of consuming it as a cross-run edit.
+  function selectedStampedTextEndpoints(range) {
+    if (!range || range.collapsed || !plain(range.toString())) return null;
+    var root = range.commonAncestorContainer;
+    if (root.nodeType === 3) root = root.parentNode;
+    if (!root) return null;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var first = null;
+    var last = null;
+    var node;
+    while ((node = walker.nextNode())) {
+      if (!node.nodeValue || !spanOf(node, 0)) continue;
+      var start = 0;
+      var end = node.nodeValue.length;
+      if (range.startContainer === node) {
+        start = range.startOffset;
+      } else {
+        try { if (range.comparePoint(node, 0) !== 0) continue; }
+        catch (_) { continue; }
+      }
+      if (range.endContainer === node) {
+        end = range.endOffset;
+      } else {
+        try { if (range.comparePoint(node, node.nodeValue.length) !== 0) continue; }
+        catch (_) { continue; }
+      }
+      if (end <= start) continue;
+      if (!first) first = { node: node, offset: start };
+      last = { node: node, offset: end };
+    }
+    return first && last ? { start: first, end: last } : null;
+  }
   // Source offset for a DOM position, or null if it isn't inside a run.
   function sourceOffsetOf(node, offset) {
     var span = spanOf(node, offset);
@@ -2732,6 +2769,23 @@
     if (selectionTouchesReadOnlyIsland()) { e.preventDefault(); return; }
     var startPos = normalizePosition(range.startContainer, range.startOffset, true);
     var endPos = normalizePosition(range.endContainer, range.endOffset, range.collapsed);
+    var selectedTextEndpoints =
+      (e.inputType === 'insertText' || e.inputType === 'insertReplacementText')
+        ? selectedStampedTextEndpoints(range) : null;
+    if (selectedTextEndpoints) {
+      var mappedStart = sourceOffsetOf(startPos.node, startPos.offset);
+      var visibleStart = sourceOffsetOf(
+        selectedTextEndpoints.start.node, selectedTextEndpoints.start.offset);
+      if (mappedStart != null && visibleStart != null && visibleStart > mappedStart) {
+        startPos = selectedTextEndpoints.start;
+      }
+      var mappedEnd = sourceOffsetOf(endPos.node, endPos.offset);
+      var visibleEnd = sourceOffsetOf(
+        selectedTextEndpoints.end.node, selectedTextEndpoints.end.offset);
+      if (mappedEnd != null && visibleEnd != null && visibleEnd < mappedEnd) {
+        endPos = selectedTextEndpoints.end;
+      }
+    }
     var start = sourceOffsetOf(startPos.node, startPos.offset);
     var end = sourceOffsetOf(endPos.node, endPos.offset);
     // After extending a forward selection twice from an empty inline caret
@@ -2834,7 +2888,7 @@
         freeze();
         post({ start: start, end: end, text: data, expected: expected,
                inCell: !!startCell,
-               crossRun: crossRun, selected: selected,
+               crossRun: startSpan !== endSpan, selected: selected,
                endAtBlockStart: endAtBlockStart,
                syntaxStart: replacementSyntaxStart,
                syntaxEnd: replacementSyntaxEnd,

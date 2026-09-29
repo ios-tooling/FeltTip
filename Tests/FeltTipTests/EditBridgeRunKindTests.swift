@@ -50,6 +50,69 @@ import Testing
 		#expect(harness.coordinator.resyncCount == 0)
 	}
 
+	@Test func replacingTheWholeRenderedLinkLabelKeepsTheURL() async throws {
+		let source = "see [the label](https://example.com) now\n"
+		let labelStart = Self.offset(of: "the label", in: source)
+		let cases: [(String, [String])] = [
+			("word navigation", [
+				"window.__mdPlaceCaret(\(labelStart))",
+				"window.getSelection().modify('extend', 'forward', 'word')",
+				"window.getSelection().modify('extend', 'forward', 'word')",
+			]),
+			("text nodes", [
+				"var link = document.querySelector('a[href]')",
+				"var range = document.createRange()",
+				"range.setStart(link.firstChild, 0)",
+				"range.setEnd(link.firstChild, link.firstChild.nodeValue.length)",
+				"var selection = window.getSelection()",
+				"selection.removeAllRanges()",
+				"selection.addRange(range)",
+			]),
+			("previous-run boundary", [
+				"var link = document.querySelector('a[href]')",
+				"var previous = link.closest('[data-s]').previousElementSibling.firstChild",
+				"var range = document.createRange()",
+				"range.setStart(previous, previous.nodeValue.length)",
+				"range.setEnd(link.firstChild, link.firstChild.nodeValue.length)",
+				"var selection = window.getSelection()",
+				"selection.removeAllRanges()",
+				"selection.addRange(range)",
+			]),
+			("next-run boundary", [
+				"var link = document.querySelector('a[href]')",
+				"var next = link.closest('[data-s]').nextElementSibling.nextElementSibling.firstChild",
+				"var range = document.createRange()",
+				"range.setStart(link.firstChild, 0)",
+				"range.setEnd(next, 0)",
+				"var selection = window.getSelection()",
+				"selection.removeAllRanges()",
+				"selection.addRange(range)",
+			]),
+			("both adjacent boundaries", [
+				"var link = document.querySelector('a[href]')",
+				"var previous = link.closest('[data-s]').previousElementSibling.firstChild",
+				"var next = link.closest('[data-s]').nextElementSibling.nextElementSibling.firstChild",
+				"var range = document.createRange()",
+				"range.setStart(previous, previous.nodeValue.length)",
+				"range.setEnd(next, 0)",
+				"var selection = window.getSelection()",
+				"selection.removeAllRanges()",
+				"selection.addRange(range)",
+			]),
+		]
+		for (name, commands) in cases {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			try await harness.batch(commands)
+			try await harness.run("document.execCommand('insertText', false, 'new label')")
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+
+			#expect(harness.source == "see [new label](https://example.com) now\n", Comment(rawValue: name))
+			#expect(try await harness.stampMismatches() == [], Comment(rawValue: name))
+			#expect(harness.coordinator.hardRejections == 0, Comment(rawValue: name))
+		}
+	}
+
 	@Test func typingInsideACodeSpan() async throws {
 		let source = "call `printf` here\n"
 		let harness = try await CoordinatorBridgeHarness(source: source)
