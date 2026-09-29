@@ -6,6 +6,31 @@ import Testing
 
 @MainActor
 struct RawEditorInitialCursorTests {
+	@Test("Pre-filled raw source starts with the caret at the beginning")
+	func prefilledSourceStartsAtBeginning() async throws {
+		let source = (0..<20_000).map { "Line \($0)" }.joined(separator: "\n")
+		let editor = MarkdownTextEditor(
+			text: .constant(source),
+			selectedHeadingID: .constant(nil)
+		)
+		.environment(\.showLineNumbers, true)
+		.environment(\.syntaxHighlightingEnabled, true)
+		let hostingView = NSHostingView(rootView: editor)
+		hostingView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		hostingView.layoutSubtreeIfNeeded()
+
+		var textView: NSTextView?
+		for _ in 0..<40 where textView == nil {
+			textView = findTextView(in: hostingView)
+			if textView == nil { try await Task.sleep(for: .milliseconds(25)) }
+		}
+		let raw = try #require(textView)
+		try await Task.sleep(for: .seconds(1))
+		#expect(raw.selectedRange() == NSRange(location: 0, length: 0))
+		let scrollView = try #require(raw.enclosingScrollView)
+		#expect(scrollView.contentView.bounds.origin.y <= 1)
+	}
+
 	@Test("Raw source disables syntax-corrupting text substitutions")
 	func rawSourceIsSourceFaithful() async throws {
 		let editor = MarkdownTextEditor(

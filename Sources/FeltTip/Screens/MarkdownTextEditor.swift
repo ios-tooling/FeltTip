@@ -109,14 +109,32 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.usesFindBar = true
 		textView.isIncrementalSearchingEnabled = true
 		textView.string = text
+		// NSTextView moves its selection to EOF when its initial string is assigned.
+		// A pre-filled document should open at its beginning; on a large document,
+		// leaving the caret at EOF also makes AppKit scroll the first frame to the end.
+		textView.setSelectedRange(NSRange(location: 0, length: 0))
+		let shouldRevealInitialCaret = selectionTarget == nil
+			&& caretTarget == nil
+			&& scrollToCharacterOffset == nil
+			&& selectedHeadingID == nil
+			&& syncScrollFraction == nil
 		context.coordinator.lineIndex.rebuild(for: text)
 		// Assigning the string can report a selection before the line index is
 		// populated. Correct that initial report once SwiftUI has mounted the view.
 		RunLoop.main.perform { [weak textView, weak coordinator = context.coordinator] in
-			guard let textView, let coordinator else { return }
-			coordinator.reportCursorPosition(in: textView)
+			MainActor.assumeIsolated {
+				guard let textView, let coordinator else { return }
+				coordinator.reportCursorPosition(in: textView)
+				// The initial string assignment can scroll a large NSTextView to EOF
+				// before the representable is mounted. Reveal the initial caret after
+				// layout unless the host supplied a more specific initial target.
+				guard shouldRevealInitialCaret else { return }
+				textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+			}
 		}
-		context.coordinator.scheduleIncrementalLayout(for: textView)
+		context.coordinator.scheduleIncrementalLayout(
+			for: textView,
+			revealStartWhenComplete: shouldRevealInitialCaret)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
 		// re-styling to the paragraph that actually changed.
@@ -264,8 +282,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let clampedLoc = min(sel.location, (text as NSString).length)
 			textView.setSelectedRange(NSRange(location: clampedLoc, length: 0))
 			RunLoop.main.perform { [weak textView, weak coordinator = context.coordinator] in
-				guard let textView, let coordinator else { return }
-				coordinator.reportCursorPosition(in: textView)
+				MainActor.assumeIsolated {
+					guard let textView, let coordinator else { return }
+					coordinator.reportCursorPosition(in: textView)
+				}
 			}
 			context.coordinator.scheduleIncrementalLayout(for: textView)
 		}
@@ -535,12 +555,18 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// files. A synchronous full pass fixes that but beachballs multi-
 		/// hundred-KB documents at open, so big documents are laid out in
 		/// chunks spread across runloop turns instead.
-		func scheduleIncrementalLayout(for textView: NSTextView) {
+		func scheduleIncrementalLayout(
+			for textView: NSTextView,
+			revealStartWhenComplete: Bool = false
+		) {
 			prelayoutTask?.cancel()
 			guard let layoutManager = textView.layoutManager else { return }
 			let length = (textView.string as NSString).length
 			guard length > 100_000 else {
 				layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: length))
+				if revealStartWhenComplete {
+					textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+				}
 				return
 			}
 			prelayoutTask = Task { @MainActor [weak textView] in
@@ -552,6 +578,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					location = end
 					try? await Task.sleep(for: .milliseconds(10))
 				}
+				guard !Task.isCancelled, revealStartWhenComplete, let textView else { return }
+				textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
 			}
 		}
 
