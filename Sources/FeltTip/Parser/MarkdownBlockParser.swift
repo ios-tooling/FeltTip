@@ -82,7 +82,11 @@ public enum MarkdownBlockParser {
 		// Offsets come back through the preprocessing map (when present) and then
 		// `bodyOffset` shifts them past any stripped frontmatter, so the stamped
 		// offsets address the caller's full source.
-		let converter = trackSourceOffsets ? SourceOffsetConverter(processed, baseOffset: bodyOffset, map: offsetMap) : nil
+		let converter = trackSourceOffsets ? SourceOffsetConverter(
+			processed,
+			originalSource: offsetMap == nil ? nil : body,
+			baseOffset: bodyOffset,
+			map: offsetMap) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		guard !Task.isCancelled else { return [] }
@@ -272,11 +276,13 @@ public enum MarkdownBlockParser {
 			   sourceGroups.indices.contains(index),
 			   sourceGroups[index].count == parsedItems.count,
 			   blockSourceOffset == sourceGroups[index].first?.termStart {
-				items = sourceGroups[index].map {
+				items = zip(parsedItems, sourceGroups[index]).map { parsed, source in
 					DefinitionItem(
-						term: $0.term, definitions: $0.definitions,
-						termSourceStart: $0.termStart,
-						definitionSourceStarts: $0.definitionStarts.map(Optional.some))
+						term: parsed.term, definitions: parsed.definitions,
+						termSourceStart: source.termStart,
+						definitionSourceStarts: source.definitionStarts.map(Optional.some),
+						termSourceText: source.term,
+						definitionSourceTexts: source.definitions.map(Optional.some))
 				}
 			} else {
 				items = parsedItems

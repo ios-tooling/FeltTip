@@ -86,6 +86,16 @@ import Testing
 		#expect(!html.contains("_emphasis_"))
 	}
 
+	@Test func rendersFootnoteReferencesInsideDefinitionLists() {
+		let html = MarkdownHTMLRenderer.renderBodyFragment(
+			markdown: "Term\n: A definition with footnote.[^qa]\n\n[^qa]: Verified.",
+			includeSourceOffsets: true)
+
+		#expect(html.contains("A definition with footnote.</span><a"))
+		#expect(html.contains("href=\"#feltip-footnote-qa\" id=\"feltip-footnote-ref-qa\""))
+		#expect(!html.contains("[^qa]"))
+	}
+
 	@Test func rendersFootnotesAsNavigableInPageAnchors() {
 		let html = MarkdownHTMLRenderer.renderDocument(
 			markdown: "See the note.[^release]\n\n[^release]: Deployment details.",

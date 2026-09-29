@@ -97,11 +97,19 @@ extension MarkdownHTMLRenderer {
 		case .definitionList(let items, _):
 			var body = ""
 			for item in items {
-				body += "<dt>\(renderInlineMarkdown(item.term, sourceStart: item.termSourceStart))</dt>"
+				let termHTML = renderInlineMarkdown(
+					item.term,
+					sourceStart: item.termSourceStart,
+					sourceText: item.termSourceText)
+				body += "<dt>\(termHTML)</dt>"
 				for (index, def) in item.definitions.enumerated() {
 					let sourceStart = item.definitionSourceStarts.indices.contains(index)
 						? item.definitionSourceStarts[index] : nil
-					body += "<dd>\(renderInlineMarkdown(def, sourceStart: sourceStart))</dd>"
+					let sourceText = item.definitionSourceTexts.indices.contains(index)
+						? item.definitionSourceTexts[index] : nil
+					let definitionHTML = renderInlineMarkdown(
+						def, sourceStart: sourceStart, sourceText: sourceText)
+					body += "<dd>\(definitionHTML)</dd>"
 				}
 			}
 			return "<dl>\(body)</dl>"
@@ -112,7 +120,11 @@ extension MarkdownHTMLRenderer {
 	/// Markdown delimiters survive the block parse. Parse each as a standalone
 	/// inline paragraph before emitting the `<dt>`/`<dd>`; escaping the raw
 	/// strings made emphasis, code, and links appear literally in the preview.
-	static func renderInlineMarkdown(_ markdown: String, sourceStart: Int?) -> String {
+	static func renderInlineMarkdown(
+		_ markdown: String,
+		sourceStart: Int?,
+		sourceText: String? = nil
+	) -> String {
 		let shouldTrack = emitSourceOffsets && sourceStart != nil
 		let blocks = MarkdownBlockParser.parse(markdown, trackSourceOffsets: shouldTrack)
 		guard blocks.count == 1,
@@ -121,8 +133,29 @@ extension MarkdownHTMLRenderer {
 		}
 		guard let sourceStart, shouldTrack else { return renderInline(content) }
 		var shifted = content
-		let offsets = content.runs.compactMap { run in
-			run.markdownSourceOffset.map { (run.range, $0 + sourceStart) }
+		let sourceText = sourceText ?? markdown
+		if sourceText == markdown {
+			for run in content.runs {
+				if let offset = run.markdownSourceOffset {
+					shifted[run.range].markdownSourceOffset = sourceStart + offset
+				}
+			}
+			return renderInline(shifted)
+		}
+		let offsetMap = MarkdownPreprocessor.offsetMap(from: sourceText, to: markdown)
+		let source = sourceText as NSString
+		let offsets = content.runs.map { run -> (Range<AttributedString.Index>, Int?) in
+			guard let offset = run.markdownSourceOffset else { return (run.range, nil) }
+			let text = String(content[run.range].characters)
+			let length = (text as NSString).length
+			guard offset >= 0, offset < offsetMap.count,
+			      offset + length <= offsetMap.count else { return (run.range, nil) }
+			let mappedStart = offsetMap[offset]
+			guard mappedStart + length <= source.length,
+			      (0..<length).allSatisfy({ offsetMap[offset + $0] == mappedStart + $0 }),
+			      source.substring(with: NSRange(location: mappedStart, length: length)) == text
+			else { return (run.range, nil) }
+			return (run.range, sourceStart + mappedStart)
 		}
 		for (range, offset) in offsets {
 			shifted[range].markdownSourceOffset = offset

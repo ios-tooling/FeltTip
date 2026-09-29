@@ -37,6 +37,9 @@ struct SourceOffsetConverter {
 	/// the mapping is identity and a document-sized Int table would be waste.
 	private let byteToUTF16: [Int]?
 	private let processedUTF16: [UInt16]
+	/// Raw pre-preprocessing source, used to reject synthesized characters that
+	/// inherit a plausible-looking neighbor offset from the diff map.
+	private let originalUTF16: [UInt16]?
 	/// Added to every returned offset. Lets the parsed string be a suffix of
 	/// the caller's source (e.g. the body after frontmatter was stripped) while
 	/// the offsets still address the full source.
@@ -46,10 +49,16 @@ struct SourceOffsetConverter {
 	/// means the parsed string *is* the source.
 	private let map: [Int]?
 
-	init(_ source: String, baseOffset: Int = 0, map: [Int]? = nil) {
+	init(
+		_ source: String,
+		originalSource: String? = nil,
+		baseOffset: Int = 0,
+		map: [Int]? = nil
+	) {
 		self.baseOffset = baseOffset
 		self.map = map
 		processedUTF16 = Array(source.utf16)
+		originalUTF16 = originalSource.map { Array($0.utf16) }
 		var lineStarts = [0]
 		var isASCII = true
 		for (offset, byte) in source.utf8.enumerated() {
@@ -316,6 +325,12 @@ struct SourceOffsetConverter {
 			guard processedOffset + length <= map.count else { return nil }
 			let base = map[processedOffset]
 			for k in 0..<length where map[processedOffset + k] != base + k { return nil }
+			if let originalUTF16 {
+				guard base >= 0, base + length <= originalUTF16.count,
+				      processedUTF16[processedOffset..<(processedOffset + length)]
+					.elementsEqual(originalUTF16[base..<(base + length)])
+				else { return nil }
+			}
 		}
 		return mapToSource(processedOffset) + baseOffset
 	}
