@@ -28,8 +28,10 @@ public final class MarkdownPreparedWebRender: @unchecked Sendable {
 		private let lock = NSLock()
 		private var result: MarkdownRenderService.DocumentHTML?
 		private var consumed = false
+		private var cancelled = false
 
 		var wasConsumed: Bool { lock.withLock { consumed } }
+		var wasCancelled: Bool { lock.withLock { cancelled } }
 
 		func store(_ result: MarkdownRenderService.DocumentHTML) {
 			lock.withLock { self.result = result }
@@ -37,14 +39,22 @@ public final class MarkdownPreparedWebRender: @unchecked Sendable {
 
 		func consumeCompleted() -> MarkdownRenderService.DocumentHTML? {
 			lock.withLock {
-				guard let result else { return nil }
+				guard !cancelled, let result else { return nil }
 				consumed = true
 				return result
 			}
 		}
 
-		func markConsumed() {
-			lock.withLock { consumed = true }
+		func markConsumedIfActive() -> Bool {
+			lock.withLock {
+				guard !cancelled else { return false }
+				consumed = true
+				return true
+			}
+		}
+
+		func cancel() {
+			lock.withLock { cancelled = true }
 		}
 	}
 
@@ -95,13 +105,15 @@ public final class MarkdownPreparedWebRender: @unchecked Sendable {
 
 	func result(matching configuration: Configuration) async -> MarkdownRenderService.DocumentHTML? {
 		guard self.configuration == configuration else { return nil }
-		state.markConsumed()
-		return await task.value
+		guard state.markConsumedIfActive() else { return nil }
+		let result = await task.value
+		return state.wasCancelled ? nil : result
 	}
 
 	/// Stop speculative work when the host discovers that the decoded document
 	/// will open raw or with a different render configuration.
 	public func cancel() {
+		state.cancel()
 		task.cancel()
 	}
 }

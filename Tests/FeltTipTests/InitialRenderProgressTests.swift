@@ -66,6 +66,26 @@ struct InitialRenderProgressTests {
 		#expect(try await harness.evaluate("document.body.textContent.includes('Current') ? 'yes' : 'no'") == "yes")
 	}
 
+	@Test func cancelledPreparedRenderFallsBackToFreshRendering() async throws {
+		let source = "# Restored Split\n\nPreview must not be blank."
+		let prepared = MarkdownPreparedWebRender(
+			markdown: source,
+			theme: .default,
+			fontSize: 14,
+			includeSourceOffsets: true,
+			interactiveCheckboxes: false,
+			embedMermaidEngine: false,
+			allowRemoteResources: false)
+		prepared.cancel()
+
+		let harness = try await CoordinatorBridgeHarness(
+			source: source,
+			preparedInitialRender: prepared)
+
+		#expect(try await harness.evaluate(
+			"document.body.textContent.includes('Preview must not be blank.') ? 'yes' : 'no'") == "yes")
+	}
+
 	@Test func productionDocumentEndScriptsAreInteractiveAtReady() async throws {
 		var events: [Double?] = []
 		var readyCount = 0
