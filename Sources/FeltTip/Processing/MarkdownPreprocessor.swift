@@ -246,6 +246,11 @@ public enum MarkdownPreprocessor {
 				}
 				if inFence { output.append(line); continue }
 			}
+			if features.blockAttributes,
+			   KramdownAttributeListProcessor.isStandaloneAttributeList(line) {
+				output.append("")
+				continue
+			}
 			let trimmed = line.trimmingCharacters(in: .whitespaces)
 			var preservesReferenceSyntax = false
 			if referenceContinuationLines > 0,
@@ -282,6 +287,7 @@ public enum MarkdownPreprocessor {
 
 	private struct LinePassFeatures {
 		let fences: Bool
+		let blockAttributes: Bool
 		let headings: Bool
 		let superSub: Bool
 		let inserted: Bool
@@ -291,7 +297,7 @@ public enum MarkdownPreprocessor {
 		let highlight: Bool
 
 		var requiresPass: Bool {
-			fences || headings || superSub || inserted
+			fences || blockAttributes || headings || superSub || inserted
 				|| emoticons || quotes || typography || highlight
 		}
 
@@ -309,6 +315,7 @@ public enum MarkdownPreprocessor {
 				&& Self.cosmeticPattern.firstMatch(in: text, range: wholeRange) != nil
 			guard hasStructuralCandidate || hasEmoticon || hasCosmeticCandidate else {
 				fences = false
+				blockAttributes = false
 				headings = false
 				superSub = false
 				inserted = false
@@ -325,6 +332,7 @@ public enum MarkdownPreprocessor {
 			}
 
 			fences = contains("```") || contains("~~~")
+			blockAttributes = contains("{:")
 			headings = !options.headingsRequireSpaceAfterHash && contains("#")
 			superSub = contains("^") || contains("~")
 			inserted = contains("++")
@@ -341,7 +349,7 @@ public enum MarkdownPreprocessor {
 		}
 
 		private static let structuralPattern = try! NSRegularExpression(
-			pattern: #"```|~~~|#|\^|~|\+\+|=="#
+			pattern: #"```|~~~|\{\:|#|\^|~|\+\+|=="#
 		)
 		private static let cosmeticPattern = try! NSRegularExpression(
 			pattern: #"["']|\(|\+-|\.\.\.|--"#
