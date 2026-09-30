@@ -502,9 +502,53 @@
       repaintMirror();
     }
   }
-  document.addEventListener('mousedown', function () {
+  document.addEventListener('mousedown', function (event) {
     inlineWordSelectionHome = null;
     clearOwnMirror();
+    var target = event.target && event.target.nodeType === 1
+      ? event.target : event.target && event.target.parentElement;
+    var emptyListCaret = target && target.closest
+      ? target.closest('.md-empty-list-caret') : null;
+    var emptyTaskItem = target && target.closest
+      ? target.closest('li.task-list-item') : null;
+    if (!emptyListCaret && emptyTaskItem &&
+        !(target.closest && target.closest('input[type="checkbox"]'))) {
+      emptyListCaret = emptyTaskItem.querySelector('.md-empty-list-caret');
+    }
+    if (emptyListCaret && event.button === 0 && emptyListCaret.firstChild) {
+      event.preventDefault();
+      document.body.focus({ preventScroll: true });
+      placeCaretIn(
+        emptyListCaret.firstChild,
+        emptyListCaret.firstChild.nodeType === 3
+          ? emptyListCaret.firstChild.nodeValue.length : 0,
+        emptyListCaret);
+    }
+  }, true);
+  // WebKit draws a caret after the authored trailing task-marker space, but
+  // on macOS its first native key event can stop before `beforeinput` when
+  // that space is the list item's only editable text. Route that one printable
+  // key directly by the stamped source offset. The host render replaces this
+  // placeholder with an ordinary text run, so all later input stays native.
+  document.body.addEventListener('keydown', function (event) {
+    if (event.isComposing || event.metaKey || event.ctrlKey ||
+        event.key.length !== 1 || frozen || frozenInputReplayTimer) return;
+    var selection = window.getSelection();
+    if (!selection || !selection.isCollapsed) return;
+    var node = selection.anchorNode;
+    var element = node && node.nodeType === 1 ? node : node && node.parentElement;
+    var emptyListCaret = element && element.closest
+      ? element.closest('.md-empty-list-caret') : null;
+    if (!emptyListCaret) return;
+    var base = parseInt(emptyListCaret.getAttribute('data-s'), 10);
+    if (!Number.isFinite(base)) return;
+    var offset = base + textLength(emptyListCaret);
+    event.preventDefault();
+    event.stopPropagation();
+    freeze();
+    post({ start: offset, end: offset, text: event.key, expected: '',
+           before: '', after: '', caret: offset + event.key.length,
+           rev: stampRev, seq: seq++ });
   }, true);
   window.addEventListener('focus', function () {
     clearOwnMirror();

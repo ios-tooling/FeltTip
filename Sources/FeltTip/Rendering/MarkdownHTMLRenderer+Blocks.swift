@@ -183,7 +183,11 @@ extension MarkdownHTMLRenderer {
 				}
 			}
 			if item.blocks.isEmpty, emitSourceOffsets, let sourceStart = item.sourceStart {
-				result += checkboxHTML + "<span data-s=\"\(sourceStart)\"><br></span>"
+				if item.checkbox != nil {
+					result += checkboxHTML + "<span class=\"md-empty-list-caret\" data-s=\"\(max(0, sourceStart - 1))\">&nbsp;</span>"
+				} else {
+					result += "<span data-s=\"\(sourceStart)\"><br></span>"
+				}
 				result += "</li>"
 				continue
 			}

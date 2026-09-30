@@ -260,6 +260,59 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func preexistingEmptyTaskHasAClickableCaretTarget() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "- [ ] \n")
+		let hitTarget = try await harness.evaluate("""
+			(() => {
+			  const holder = document.querySelector('li.task-list-item .md-empty-list-caret');
+			  if (!holder) return 'missing';
+			  const rect = holder.getBoundingClientRect();
+			  const hit = document.elementFromPoint(rect.left + rect.width / 2,
+			    rect.top + rect.height / 2);
+			  return (rect.width >= 12 ? 'wide' : 'narrow') + '|' +
+			    (hit === holder || holder.contains(hit) ? 'holder' : 'miss');
+			})()
+			""")
+
+		#expect(hitTarget == "wide|holder")
+		try await harness.run("""
+			(() => {
+			  const holder = document.querySelector('.md-empty-list-caret');
+			  holder.closest('li').dispatchEvent(new MouseEvent('mousedown', {
+			    bubbles: true, cancelable: true, button: 0
+			  }));
+			  document.body.dispatchEvent(new KeyboardEvent('keydown', {
+			    bubbles: true, cancelable: true, key: 't'
+			  }));
+			})()
+			""")
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("odo")
+		try await harness.waitForSourceEdits(2)
+
+		#expect(harness.source == "- [ ] todo\n")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
+	@Test func enterOnAPreexistingEmptyTaskExitsTheList() async throws {
+		let harness = try await CoordinatorBridgeHarness(
+			source: "- [x] done\n- [ ] \n")
+		try await harness.batch([
+			"window.__mdPlaceCaret(17)",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("tail")
+		try await harness.waitForSourceEdits(2)
+
+		#expect(harness.source == "- [x] done\n\ntail")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func readOnlyDetailsListDoesNotAdvertiseAnAddButton() async throws {
 		let source = """
 			<details>

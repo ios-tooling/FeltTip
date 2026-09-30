@@ -167,6 +167,9 @@ extension MarkdownHTMLRenderer {
 		.task-list-item {
 			list-style-type: none;
 		}
+		body[contenteditable="true"] .task-list-item > .md-empty-list-caret {
+			padding-right: 12px;
+		}
 		"""
 	}
 
