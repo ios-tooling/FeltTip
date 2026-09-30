@@ -246,7 +246,7 @@ public class MarkdownFormattingTextView: NSTextView {
 }
 
 @MainActor
-private final class NativeReplaceControlProxy: NSObject {
+final class NativeReplaceControlProxy: NSObject {
 	private weak var editor: MarkdownFormattingTextView?
 	fileprivate weak var control: NSSegmentedControl?
 	private var originalTarget: AnyObject?
@@ -286,8 +286,11 @@ private final class NativeReplaceControlProxy: NSObject {
 	}
 
 	private func forwardOriginalAction() {
-		guard let originalAction else { return }
-		NSApp.sendAction(originalAction, to: originalTarget, from: nil)
+		guard let originalAction, let control else { return }
+		// AppKit uses the segmented control sender to distinguish Replace from
+		// Replace All. Forwarding nil makes the native target silently ignore the
+		// All segment even though the button visibly presses.
+		NSApp.sendAction(originalAction, to: originalTarget, from: control)
 	}
 }
 #endif

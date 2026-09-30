@@ -13,6 +13,27 @@ import WebKit
 @Suite(.serialized)
 struct MarkdownTextEditorFindTests {
 	@Test
+	func nativeReplaceAllForwardsTheSegmentedControlSender() {
+		let editor = MarkdownFormattingTextView()
+		let control = NSSegmentedControl(
+			labels: ["Replace", "All"],
+			trackingMode: .selectOne,
+			target: nil,
+			action: nil)
+		control.selectedSegment = 1
+		let target = ReplaceActionRecorder()
+		let proxy = NativeReplaceControlProxy(
+			editor: editor,
+			control: control,
+			originalTarget: target,
+			originalAction: #selector(ReplaceActionRecorder.record(_:)))
+
+		proxy.performAction(control)
+
+		#expect(target.sender === control)
+	}
+
+	@Test
 	func findReopenAfterHostUndoSelectsTheRestoredMatchForReplacement() async throws {
 		let original = "- [ ] draft item\n"
 		let replacement = "- [ ] review item\n"
@@ -377,6 +398,15 @@ private struct MarkdownTextEditorFindHost: View {
 			text: $model.text,
 			selectedHeadingID: $selectedHeadingID
 		)
+	}
+}
+
+@MainActor
+private final class ReplaceActionRecorder: NSObject {
+	private(set) weak var sender: AnyObject?
+
+	@objc func record(_ sender: AnyObject?) {
+		self.sender = sender
 	}
 }
 #endif
