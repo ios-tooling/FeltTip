@@ -59,6 +59,9 @@ enum MarkdownEditSplicer {
 		/// Source offset of the list item whose shape should be continued when
 		/// insertion itself occurs after that item's nested subtree.
 		var listReference: Int? = nil
+		/// Return was pressed in an already-empty list item. Remove that item's
+		/// source marker and leave a paragraph caret after the list.
+		var exitList = false
 		/// Enter was pressed at the first visible character of a block. The
 		/// splice verifies any source prefix hidden by rendering (`# `, `> `,
 		/// `**`, etc.) and inserts before it so the whole block moves.
@@ -118,6 +121,16 @@ enum MarkdownEditSplicer {
 			if deleted.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil {
 				return .rejected("collapsed cross-run delete would remove syntax \(quoted(deleted))")
 			}
+		}
+		if edit.exitList {
+			guard range.length == 0, edit.expected.isEmpty,
+				  let exit = emptyListExit(in: text, caret: edit.start) else {
+				return .rejected("invalid empty-list exit at \(edit.start)")
+			}
+			return .applied(
+				text.replacingCharacters(in: exit, with: ""),
+				selection: NSRange(location: exit.location + 1, length: 0),
+				replaced: text.substring(with: exit))
 		}
 		if let command = edit.formatCommand {
 			guard !edit.crossRun || command.supportsCrossRunSelection else {
@@ -325,6 +338,23 @@ enum MarkdownEditSplicer {
 
 	private static let taskListPrefix = try! NSRegularExpression(
 		pattern: #"^[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+\[[ xX]\][ \t]+"#)
+	private static let emptyListItemPrefix = try! NSRegularExpression(
+		pattern: #"^[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?$"#)
+
+	private static func emptyListExit(
+		in text: NSString,
+		caret: Int
+	) -> NSRange? {
+		var lineStart = min(max(0, caret), text.length)
+		while lineStart > 0, text.character(at: lineStart - 1) != 0x0A { lineStart -= 1 }
+		let range = NSRange(location: lineStart, length: caret - lineStart)
+		let prefix = text.substring(with: range)
+		let full = NSRange(location: 0, length: (prefix as NSString).length)
+		guard emptyListItemPrefix.firstMatch(in: prefix, range: full)?.range == full else {
+			return nil
+		}
+		return range
+	}
 
 	/// Whether the source line containing the edit is a task-list item. The DOM
 	/// exposes the surrounding `<li>` but intentionally hides `[ ]` / `[x]`,
@@ -760,6 +790,7 @@ extension MarkdownEditSplicer.Edit {
 		self.caret = body["caret"] as? Int
 		self.listBreak = body["listBreak"] as? Bool ?? false
 		self.listReference = body["listReference"] as? Int
+		self.exitList = body["exitList"] as? Bool ?? false
 		self.blockStartBreak = body["blockStartBreak"] as? Bool ?? false
 		self.endAtBlockStart = body["endAtBlockStart"] as? Bool ?? false
 		self.hardBreak = body["hardBreak"] as? Bool ?? false

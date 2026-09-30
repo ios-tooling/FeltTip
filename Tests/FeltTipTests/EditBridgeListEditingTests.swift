@@ -42,6 +42,38 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func enterOnAnEmptyListItemExitsTheList() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "- alpha\n- \n")
+		try await harness.batch([
+			"window.__mdPlaceCaret(10)", // after the empty item's marker
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("tail")
+		try await harness.waitForSourceEdits(2)
+
+		#expect(harness.source == "- alpha\n\ntail")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+		#expect(try await harness.stampMismatches().isEmpty)
+	}
+
+	@Test func enterOnAnEmptyOrderedItemExitsTheList() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "1. one\n2. \n")
+		try await harness.batch([
+			"window.__mdPlaceCaret(10)",
+			"document.execCommand('insertParagraph')",
+		])
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type("tail")
+		try await harness.waitForSourceEdits(2)
+
+		#expect(harness.source == "1. one\n\ntail")
+		#expect(try await harness.stampMismatches().isEmpty)
+	}
+
 	@Test func enterAtEndOfDeeplyNestedItemKeepsItsIndent() async throws {
 		let source = "- a\n    - b\n"
 		let harness = try await CoordinatorBridgeHarness(source: source)

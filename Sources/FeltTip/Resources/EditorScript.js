@@ -1391,12 +1391,18 @@
             null, '', null, '', false,
             null, '', null, '')) return;
     }
-    if (emptySibling && textLength(emptySibling) === 0
+    if (emptySibling && emptySibling.tagName === 'LI' && textLength(emptySibling) === 0
         && !emptySibling.hasAttribute('data-s')) {
       target = emptySibling;
     } else {
       target = document.createElement('p');
-      if (prevBlock && prevBlock.parentNode) { prevBlock.insertAdjacentElement('afterend', target); }
+      var previousList = prevBlock && prevBlock.tagName === 'LI'
+        ? prevBlock.closest('ul, ol') : null;
+      var nextList = nextBlock && nextBlock.tagName === 'LI'
+        ? nextBlock.closest('ul, ol') : null;
+      if (previousList && previousList.parentNode) { previousList.insertAdjacentElement('afterend', target); }
+      else if (nextList && nextList.parentNode) { nextList.insertAdjacentElement('beforebegin', target); }
+      else if (prevBlock && prevBlock.parentNode) { prevBlock.insertAdjacentElement('afterend', target); }
       else if (nextBlock && nextBlock.parentNode) { nextBlock.insertAdjacentElement('beforebegin', target); }
       else { document.body.appendChild(target); }
     }
@@ -1446,6 +1452,13 @@
     var li = el && el.closest ? el.closest('li') : null;
     if (!li) return null;
     return li.parentElement && li.parentElement.tagName === 'OL' ? '\n1. ' : '\n- ';
+  }
+  function isEmptyListItem(node) {
+    var el = node.nodeType === 3 ? node.parentNode : node;
+    var li = el && el.closest ? el.closest('li') : null;
+    var parentItem = li && li.parentElement && li.parentElement.closest('li');
+    return !!(li && !parentItem &&
+      plain(li.textContent).replace(/[\u200B\uFEFF]/g, '').trim() === '');
   }
   function directListItems(list) {
     return Array.prototype.filter.call(list.children, function (child) {
@@ -3032,7 +3045,9 @@
       pendingListInsertion = null;
       var listMarker = requestedInsertion
         ? requestedInsertion.marker : listItemMarker(range.startContainer);
-      var marker = inEditableCode ? '\n' : (listMarker || '\n\n');
+      var exitList = !!(listMarker && !requestedInsertion &&
+        isEmptyListItem(range.startContainer));
+      var marker = exitList ? '' : (inEditableCode ? '\n' : (listMarker || '\n\n'));
       var blockStartBreak = !listMarker
         && !inEditableCode
         && isVisualBlockStart(startPos.node, startPos.offset);
@@ -3044,6 +3059,7 @@
              collapsedSyntaxEnd: selected ? [] : selectedSyntaxBoundaries(range, false),
              caret: structuralCaret, listBreak: !!listMarker,
              listReference: requestedInsertion ? requestedInsertion.reference : undefined,
+             exitList: exitList,
              blockStartBreak: blockStartBreak,
              rev: stampRev, seq: seq++ });
       // The host can rebuild the representable as soon as it receives the
@@ -3051,7 +3067,7 @@
       // revision immediately, before the debounced selectionchange report, so
       // a stale mode-handoff selection cannot win that rebuild and redirect
       // the user's next keystroke into an earlier paragraph.
-      if (listMarker) {
+      if (listMarker && !exitList) {
         post({ type: 'selection', start: structuralCaret, length: 0,
                rev: stampRev + 1 });
       }
