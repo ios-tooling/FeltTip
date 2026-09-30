@@ -50,4 +50,16 @@ import Testing
 		}
 		#expect(pairs.first?.key == "title")
 	}
+
+	@Test func leadingBlankLinesRemainPartOfTheBodyOffset() throws {
+		let markdown = "\n\n---\ntitle: Hi\n---\n# Heading"
+		let parsed = MarkdownBlockParser.parse(
+			markdown, preprocessed: true, trackSourceOffsets: true)
+		let heading = parsed.compactMap { block -> AttributedString? in
+			if case .heading(_, let content, _) = block { return content }
+			return nil
+		}.first
+
+		#expect(try #require(heading).runs.first?.markdownSourceOffset == 22)
+	}
 }

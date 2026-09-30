@@ -23,6 +23,20 @@ import Testing
 		if case .heading = blocks[1] {} else { Issue.record("Second should be heading") }
 	}
 
+	@Test func leadingBlankLinesDoNotTurnFrontmatterIntoBodyContent() {
+		let md = "\n\n---\ntitle: Vim\ncategory: Reference\n---\n\n# Getting started"
+		let blocks = MarkdownBlockParser.parse(md)
+
+		guard case .frontmatter(let pairs, _)? = blocks.first else {
+			Issue.record("Expected frontmatter after leading blank lines, got \(blocks.first.debugDescription)")
+			return
+		}
+		#expect(pairs.map(\.key) == ["title", "category"])
+		if case .heading = blocks.dropFirst().first {} else {
+			Issue.record("Body heading should follow frontmatter")
+		}
+	}
+
 	@Test func noFrontmatter() {
 		let md = "# Just a heading"
 		let blocks = MarkdownBlockParser.parse(md)

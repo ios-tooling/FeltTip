@@ -121,30 +121,47 @@ public enum MarkdownBlockParser {
 	/// the raw frontmatter text (the `---…---` block, nil when absent) for the
 	/// editable rendering path.
 	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String, Int, String?) {
-		// Inspect only the first line before splitting the document. The old
-		// full-string trim copied/scanned every character of every non-
-		// frontmatter document on each render just to reject the common case.
-		let firstLineEnd = markdown.firstIndex(of: "\n") ?? markdown.endIndex
-		let firstLine = markdown[..<firstLineEnd]
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard firstLine == "---" else { return (nil, markdown, 0, nil) }
+		// Some editors and downloaded documents leave blank lines before their
+		// metadata. Scan only through that prefix before splitting the document,
+		// preserving the fast rejection path for ordinary large documents.
+		var candidateStart = markdown.startIndex
+		while candidateStart < markdown.endIndex {
+			let newline = markdown[candidateStart...].firstIndex(of: "\n")
+			let candidateEnd = newline ?? markdown.endIndex
+			let line = markdown[candidateStart..<candidateEnd]
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+			if !line.isEmpty {
+				guard line == "---" else { return (nil, markdown, 0, nil) }
+				break
+			}
+			guard let newline else { return (nil, markdown, 0, nil) }
+			candidateStart = markdown.index(after: newline)
+		}
+		guard candidateStart < markdown.endIndex else { return (nil, markdown, 0, nil) }
+
 		let lines = markdown.components(separatedBy: .newlines)
+		// Still require strict YAML-looking content below the fence so an
+		// ordinary thematic break is not consumed.
+		guard let opening = lines.firstIndex(where: {
+			!$0.trimmingCharacters(in: .whitespaces).isEmpty
+		}), lines[opening].trimmingCharacters(in: .whitespaces) == "---"
+		else { return (nil, markdown, 0, nil) }
 
 		var endIndex: Int?
-		for i in 1..<lines.count {
+		for i in (opening + 1)..<lines.count {
 			let line = lines[i].trimmingCharacters(in: .whitespaces)
 			if line == "---" || line == "..." {
 				endIndex = i; break
 			}
 		}
-		guard let end = endIndex, end > 1 else { return (nil, markdown, 0, nil) }
+		guard let end = endIndex, end > opening + 1 else { return (nil, markdown, 0, nil) }
 
 		// Strict check: every non-blank line in the fenced block must look like
 		// a YAML key:value pair (or an indented continuation). Without this,
 		// any document that opens with `---` followed by prose is silently
 		// devoured as "frontmatter" up to the next `---`.
 		var pairs: [(key: String, value: String)] = []
-		var i = 1
+		var i = opening + 1
 		while i < end {
 			let line = lines[i]
 			let stripped = line.trimmingCharacters(in: .whitespaces)
@@ -172,8 +189,9 @@ public enum MarkdownBlockParser {
 		let body = lines[(end + 1)...].joined(separator: "\n")
 		// The `---…---` block, without its trailing newline. The body begins one
 		// newline after it, so its UTF-16 offset is the block's length + 1.
-		let frontText = lines[0...end].joined(separator: "\n")
-		let bodyOffset = (frontText as NSString).length + 1
+		let frontText = lines[opening...end].joined(separator: "\n")
+		let consumedPrefix = lines[0...end].joined(separator: "\n")
+		let bodyOffset = (consumedPrefix as NSString).length + 1
 		let block = MarkdownBlock.frontmatter(pairs: pairs, id: "frontmatter")
 		return (block, body, bodyOffset, frontText)
 	}
