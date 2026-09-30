@@ -521,9 +521,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		coordinator.lastFocusModeEnabled = shouldFocus
 		coordinator.lastFocusRange = nextRange
 		guard shouldFocus, let nextRange, full.length > 0 else { return }
-		let dim = NSColor(theme?.textColor ?? .primary).withAlphaComponent(0.3)
-		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: dim, forCharacterRange: full)
 		let active = NSColor(theme?.textColor ?? .primary)
+		let background = theme.map { NSColor($0.backgroundColor) } ?? textView.backgroundColor
+		// Keep the temporary drawing color opaque. TextKit can fail to draw
+		// fallback-font glyphs (notably CJK) when their foreground temporary
+		// attribute is translucent, making valid source appear to lose text.
+		let dim = active.blended(withFraction: 0.7, of: background)?
+			.withAlphaComponent(1) ?? active
+		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: dim, forCharacterRange: full)
 		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: active, forCharacterRange: nextRange)
 	}
 

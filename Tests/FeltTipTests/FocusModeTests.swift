@@ -48,8 +48,8 @@ import Testing
 	}
 
 	#if os(macOS)
-	@Test @MainActor func rawEditorDimsOnlyWhileItHasKeyboardFocus() async throws {
-		let text = "First\n\nSecond"
+	@Test @MainActor func rawEditorDimsUnicodeWithAnOpaqueColorWhileItHasKeyboardFocus() async throws {
+		let text = "First\n\n第二"
 		let root = RawMarkdownScreen(
 			text: .constant(text), selectedHeadingID: .constant(nil), fontSize: 14,
 			focusModeEnabled: true, theme: .default)
@@ -70,7 +70,11 @@ import Testing
 			.foregroundColor, atCharacterIndex: 8, effectiveRange: nil) as? NSColor
 		let active = textView.layoutManager?.temporaryAttribute(
 			.foregroundColor, atCharacterIndex: 0, effectiveRange: nil) as? NSColor
-		#expect((dimmed?.alphaComponent ?? 1) < (active?.alphaComponent ?? 0))
+		// TextKit can drop fallback-font glyphs (including CJK) when a temporary
+		// foreground color is translucent. Dim by blending against the page while
+		// keeping the actual drawing color opaque.
+		#expect(dimmed?.alphaComponent == 1)
+		#expect(dimmed != active)
 
 		window.makeFirstResponder(nil)
 		try await Task.sleep(for: .milliseconds(50))
