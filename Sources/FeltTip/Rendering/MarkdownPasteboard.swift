@@ -11,6 +11,16 @@
 	import UIKit
 #endif
 
+/// Pasteboard conventions understood by FeltTip's styled Markdown editor.
+///
+/// Apps that put rendered prose on the clipboard can also publish the exact
+/// Markdown source under this private flavor. A later paste into FeltTip then
+/// preserves headings, lists, and other syntax while other apps continue to
+/// consume the ordinary text, RTF, or HTML representations.
+public enum MarkdownClipboard {
+	public static let sourcePasteboardType = "com.standalone.marker.markdown-source"
+}
+
 /// The clipboard the edit bridge reads a paste from, behind a seam the tests
 /// can fill.
 ///
@@ -26,7 +36,7 @@
 /// pasteboard, which is also what macOS does under test — a real `paste:`
 /// through the responder chain is the pipeline those tests are there to cover.
 enum MarkdownPasteboard {
-	private static let sourceType = "com.standalone.marker.markdown-source"
+	private static let sourceType = MarkdownClipboard.sourcePasteboardType
 
 	/// Stands in for the system pasteboard. Tests only; nil everywhere else.
 	nonisolated(unsafe) static var substitute: (@Sendable () -> String?)?
