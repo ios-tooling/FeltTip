@@ -145,6 +145,27 @@ import Testing
 		#expect(harness.coordinator.hardRejections == 0)
 	}
 
+	@Test func typingAfterAddButtonLandsInTheNewListItem() async throws {
+		let source = "paragraph\n\n- first\n- second\n"
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let reportsBefore = harness.sourceSelectionReportCount
+		try await harness.batch([
+			"window.__mdPlaceCaret(4)",
+			"window.__mdInsertListItem(document.querySelector('ul'))",
+		])
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.lastCaretHint == 30)
+		#expect(harness.sourceSelectionReportCount > reportsBefore)
+		#expect(harness.lastReportedSourceSelection == NSRange(location: 30, length: 0))
+		try await harness.waitQuiescent()
+		try await harness.type("third")
+		try await harness.waitForSourceEdits(2)
+
+		#expect(harness.source == "paragraph\n\n- first\n- second\n- third\n")
+		#expect(harness.coordinator.resyncCount == 0)
+		#expect(harness.coordinator.hardRejections == 0)
+	}
+
 	@Test func menuRouteOutsideAListIsANoopAndLeavesEditingUsable() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: "paragraph\n")
 		try await harness.batch([

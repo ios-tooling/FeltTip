@@ -3037,14 +3037,24 @@
         && !inEditableCode
         && isVisualBlockStart(startPos.node, startPos.offset);
       freeze();
+      var structuralCaret = start + marker.length;
       post({ start: start, end: end, text: marker, expected: expected,
              crossRun: crossRun, selected: selected,
              endAtBlockStart: endAtBlockStart, before: before, after: after,
              collapsedSyntaxEnd: selected ? [] : selectedSyntaxBoundaries(range, false),
-             caret: start + marker.length, listBreak: !!listMarker,
+             caret: structuralCaret, listBreak: !!listMarker,
              listReference: requestedInsertion ? requestedInsertion.reference : undefined,
              blockStartBreak: blockStartBreak,
              rev: stampRev, seq: seq++ });
+      // The host can rebuild the representable as soon as it receives the
+      // structural edit. Publish the intended post-edit list caret in the new
+      // revision immediately, before the debounced selectionchange report, so
+      // a stale mode-handoff selection cannot win that rebuild and redirect
+      // the user's next keystroke into an earlier paragraph.
+      if (listMarker) {
+        post({ type: 'selection', start: structuralCaret, length: 0,
+               rev: stampRev + 1 });
+      }
       return;
     }
     // Paste: take the plain text only (markdown IS the rich form here) and
