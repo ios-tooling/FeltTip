@@ -69,6 +69,18 @@ struct MarkdownInstantPreviewTests {
 	}
 
 	@Test @MainActor
+	func resolvesRelativeLinksAgainstRemoteBaseURL() {
+		let baseURL = URL(string: "https://example.com/guides/topic/")!
+		let rendered = MarkdownInstantPreview.renderForTesting(
+			"Read the [sibling](sibling.md).",
+			baseURL: baseURL)
+		let linkRange = (rendered.string as NSString).range(of: "sibling")
+
+		#expect(rendered.attribute(.link, at: linkRange.location, effectiveRange: nil) as? URL
+			== URL(string: "https://example.com/guides/topic/sibling.md"))
+	}
+
+	@Test @MainActor
 	func launchRendererProvidesReadableSelectableTextWithoutFullParse() {
 		let rendered = MarkdownInstantPreview.renderLaunchForTesting(
 			"# Heading\n\n- A **fast** item\n\n```swift\nlet value = 1\n```")

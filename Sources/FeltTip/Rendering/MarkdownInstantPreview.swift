@@ -17,15 +17,22 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 	let text: String
 	let theme: MarkdownTheme
 	let fontSize: CGFloat
+	let baseURL: URL?
 	var initialScrollFraction: Double?
 	var onReady: (@MainActor @Sendable () -> Void)?
 	var onScrollFractionChanged: (@MainActor @Sendable (Double) -> Void)?
 	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 
-	public init(text: String, theme: MarkdownTheme, fontSize: CGFloat) {
+	public init(
+		text: String,
+		theme: MarkdownTheme,
+		fontSize: CGFloat,
+		baseURL: URL? = nil
+	) {
 		self.text = text
 		self.theme = theme
 		self.fontSize = fontSize
+		self.baseURL = baseURL
 	}
 
 	public func initialScrollFraction(_ fraction: Double?) -> Self {
@@ -59,9 +66,13 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 	/// Pure rendering seam for regression and performance tests. Production
 	/// callers should use the view so TextKit owns layout and selection.
 	static func renderForTesting(
-		_ markdown: String, theme: MarkdownTheme = .default, fontSize: CGFloat = 16
+		_ markdown: String,
+		theme: MarkdownTheme = .default,
+		fontSize: CGFloat = 16,
+		baseURL: URL? = nil
 	) -> NSAttributedString {
-		InstantAttributedRenderer.render(markdown, theme: theme, fontSize: fontSize)
+		InstantAttributedRenderer.render(
+			markdown, theme: theme, fontSize: fontSize, baseURL: baseURL)
 	}
 
 	static func renderLaunchForTesting(
@@ -90,7 +101,7 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 
 	public func makeNSView(context: Context) -> NSScrollView {
 		let rendered = InstantAttributedRenderer.render(
-			text, theme: theme, fontSize: fontSize)
+			text, theme: theme, fontSize: fontSize, baseURL: baseURL)
 		let (scrollView, textView) = Self.makeSurface(
 			rendered: rendered, theme: theme)
 		textView.delegate = context.coordinator
@@ -155,6 +166,7 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 		private var renderedText: String?
 		private var renderedTheme: MarkdownTheme?
 		private var renderedFontSize: CGFloat?
+		private var renderedBaseURL: URL?
 
 		init(parent: MarkdownInstantPreview) { self.parent = parent }
 
@@ -168,6 +180,7 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 			renderedText = parent.text
 			renderedTheme = parent.theme
 			renderedFontSize = parent.fontSize
+			renderedBaseURL = parent.baseURL
 			boundsObserver = NotificationCenter.default.addObserver(
 				forName: NSView.boundsDidChangeNotification,
 				object: scrollView.contentView,
@@ -181,12 +194,17 @@ public struct MarkdownInstantPreview: NSViewRepresentable {
 			guard let textView else { return }
 			guard renderedText != parent.text
 				|| renderedTheme != parent.theme
-				|| renderedFontSize != parent.fontSize else { return }
+				|| renderedFontSize != parent.fontSize
+				|| renderedBaseURL != parent.baseURL else { return }
 			renderedText = parent.text
 			renderedTheme = parent.theme
 			renderedFontSize = parent.fontSize
+			renderedBaseURL = parent.baseURL
 			textView.textStorage?.setAttributedString(InstantAttributedRenderer.render(
-				parent.text, theme: parent.theme, fontSize: parent.fontSize))
+				parent.text,
+				theme: parent.theme,
+				fontSize: parent.fontSize,
+				baseURL: parent.baseURL))
 		}
 
 		func didAttach() {
@@ -339,14 +357,39 @@ private enum InstantAttributedRenderer {
 	}
 
 	static func render(
-		_ markdown: String, theme: MarkdownTheme, fontSize: CGFloat
+		_ markdown: String,
+		theme: MarkdownTheme,
+		fontSize: CGFloat,
+		baseURL: URL? = nil
 	) -> NSAttributedString {
 		let output = NSMutableAttributedString()
 		for block in MarkdownBlockParser.parse(
 			markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true) {
 			append(block, to: output, theme: theme, fontSize: fontSize, depth: 0)
 		}
+		resolveRelativeLinks(in: output, baseURL: baseURL)
 		return output
+	}
+
+	private static func resolveRelativeLinks(
+		in output: NSMutableAttributedString,
+		baseURL: URL?
+	) {
+		guard let baseURL, output.length > 0 else { return }
+		var replacements: [(NSRange, URL)] = []
+		output.enumerateAttribute(
+			.link,
+			in: NSRange(location: 0, length: output.length)
+		) { value, range, _ in
+			guard let link = value as? URL,
+				link.scheme == nil,
+				let resolved = URL(string: link.relativeString, relativeTo: baseURL)?.absoluteURL
+			else { return }
+			replacements.append((range, resolved))
+		}
+		for (range, resolved) in replacements {
+			output.addAttribute(.link, value: resolved, range: range)
+		}
 	}
 
 	private static func append(
