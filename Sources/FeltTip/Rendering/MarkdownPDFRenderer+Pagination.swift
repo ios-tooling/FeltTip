@@ -15,7 +15,8 @@ extension MarkdownPDFRenderer {
 	/// nudged up so an element in `unbreakable` is never split across pages.
 	static func paginate(webView: WKWebView, contentHeight: CGFloat, margin: CGFloat,
 						  unbreakable: [(top: CGFloat, height: CGFloat)],
-						  headings: [(top: CGFloat, height: CGFloat)]) async -> Data? {
+						  headings: [(top: CGFloat, height: CGFloat)],
+						  links: [PDFLinkRegion] = []) async -> Data? {
 		let printW = pageWidth - 2 * margin
 		let printH = pageHeight - 2 * margin
 		let boxes  = unbreakable.map { (top: $0.top, bottom: $0.top + $0.height) }
@@ -62,6 +63,20 @@ extension MarkdownPDFRenderer {
 			ctx.translateBy(x: margin, y: margin + (printH - contentH))
 			ctx.drawPDFPage(slice)
 			ctx.restoreGState()
+
+			let sliceBottom = top + contentH
+			for link in links where link.top < sliceBottom && link.top + link.height > top {
+				let clippedTop = max(link.top, top)
+				let clippedBottom = min(link.top + link.height, sliceBottom)
+				let clippedHeight = clippedBottom - clippedTop
+				guard clippedHeight > 0 else { continue }
+				let rect = CGRect(
+					x: margin + link.left,
+					y: pageHeight - margin - (clippedTop - top) - clippedHeight,
+					width: link.width,
+					height: clippedHeight)
+				ctx.setURL(link.url as CFURL, for: rect)
+			}
 			ctx.endPDFPage()
 		}
 

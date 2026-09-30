@@ -116,7 +116,14 @@ public enum MarkdownPDFRenderer {
 
 		let boxes = await unbreakableBoxes(in: webView)
 		let headings = await headingBoxes(in: webView)
-		let result = await paginate(webView: webView, contentHeight: cssHeight, margin: margin, unbreakable: boxes, headings: headings)
+		let links = await linkRegions(in: webView)
+		let result = await paginate(
+			webView: webView,
+			contentHeight: cssHeight,
+			margin: margin,
+			unbreakable: boxes,
+			headings: headings,
+			links: links)
 		_ = loader
 		return result
 	}
@@ -161,6 +168,50 @@ public enum MarkdownPDFRenderer {
 	/// Headings only — used to avoid leaving a heading widowed at a page bottom.
 	static func headingBoxes(in webView: WKWebView) async -> [(top: CGFloat, height: CGFloat)] {
 		await boxes(in: webView, selector: "h1, h2, h3, h4, h5, h6")
+	}
+
+	struct PDFLinkRegion {
+		let url: URL
+		let left: CGFloat
+		let top: CGFloat
+		let width: CGFloat
+		let height: CGFloat
+	}
+
+	/// WebKit's sliced PDFs lose their annotations when their drawing is copied
+	/// into the final paginated context. Capture link geometry from the laid-out
+	/// page so pagination can restore clickable URL annotations on each slice.
+	static func linkRegions(in webView: WKWebView) async -> [PDFLinkRegion] {
+		let script = #"""
+		JSON.stringify(Array.from(document.querySelectorAll('a[href]')).flatMap(function(a) {
+		  var href = a.getAttribute('href');
+		  if (!href) return [];
+		  return Array.from(a.getClientRects()).map(function(r) {
+		    return { href: href, left: r.left + window.scrollX,
+		             top: r.top + window.scrollY, width: r.width, height: r.height };
+		  });
+		}))
+		"""#
+		guard let result = try? await webView.evaluateJavaScript(script),
+		      let raw = result as? String,
+		      let data = raw.data(using: .utf8),
+		      let decoded = try? JSONDecoder().decode([PDFLinkPayload].self, from: data)
+		else { return [] }
+		return decoded.compactMap { payload in
+			guard let url = URL(string: payload.href),
+			      payload.width > 0, payload.height > 0 else { return nil }
+			return PDFLinkRegion(
+				url: url, left: payload.left, top: payload.top,
+				width: payload.width, height: payload.height)
+		}
+	}
+
+	private struct PDFLinkPayload: Decodable {
+		let href: String
+		let left: CGFloat
+		let top: CGFloat
+		let width: CGFloat
+		let height: CGFloat
 	}
 
 	private static func boxes(in webView: WKWebView, selector: String) async -> [(top: CGFloat, height: CGFloat)] {

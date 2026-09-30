@@ -46,4 +46,18 @@ import Testing
 			#expect(searchable.contains(line), "PDF searchable text must preserve \(line.debugDescription); extracted \(searchable.debugDescription)")
 		}
 	}
+
+	@Test("PDF hyperlinks remain clickable")
+	func hyperlinksRemainClickable() async throws {
+		let html = MarkdownHTMLRenderer.renderDocument(
+			markdown: "Read the [documentation](https://example.com/docs?q=1&lang=en)."
+		)
+		let data = try #require(await MarkdownPDFRenderer.pdfData(html: html))
+		let document = try #require(PDFDocument(data: data))
+		let page = try #require(document.page(at: 0))
+		let action = try #require(
+			page.annotations.compactMap { $0.action as? PDFActionURL }.first
+		)
+		#expect(action.url?.absoluteString == "https://example.com/docs?q=1&lang=en")
+	}
 }
