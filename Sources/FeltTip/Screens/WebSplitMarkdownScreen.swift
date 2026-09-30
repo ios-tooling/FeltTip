@@ -51,6 +51,9 @@ public struct WebSplitMarkdownScreen: View {
 	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	var onVisibleSectionChanged: ((String) -> Void)?
 	var initialCompactPane: MarkdownCompactPane
+	/// The pane that receives a host-driven selection handoff. The other pane
+	/// mirrors that selection without taking keyboard focus.
+	var selectionTargetPane: MarkdownCompactPane
 	var onCompactPaneChanged: ((MarkdownCompactPane) -> Void)?
 	var initialScrollFraction: Double?
 	var onScrollFractionChanged: ((Double) -> Void)?
@@ -81,6 +84,7 @@ public struct WebSplitMarkdownScreen: View {
 		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		onVisibleSectionChanged: ((String) -> Void)? = nil,
 		initialCompactPane: MarkdownCompactPane = .rendered,
+		selectionTargetPane: MarkdownCompactPane? = nil,
 		onCompactPaneChanged: ((MarkdownCompactPane) -> Void)? = nil,
 		initialScrollFraction: Double? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
@@ -104,6 +108,7 @@ public struct WebSplitMarkdownScreen: View {
 		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.onVisibleSectionChanged = onVisibleSectionChanged
 		self.initialCompactPane = initialCompactPane
+		self.selectionTargetPane = selectionTargetPane ?? initialCompactPane
 		self.onCompactPaneChanged = onCompactPaneChanged
 		self.initialScrollFraction = initialScrollFraction
 		self.onScrollFractionChanged = onScrollFractionChanged
@@ -164,7 +169,7 @@ public struct WebSplitMarkdownScreen: View {
 				onSourceSelectionChanged: onSourceSelectionChanged,
 				mirroredSelection: rawMirror,
 				caretTarget: caretTarget,
-				selectionTarget: selectionTarget
+				selectionTarget: selectionTargetPane == .source ? selectionTarget : nil
 			)
 			.frame(minWidth: 150, maxWidth: .infinity)
 
@@ -219,7 +224,7 @@ public struct WebSplitMarkdownScreen: View {
 			}
 			.mirroredSelection(previewMirror)
 			.caretTarget(caretTarget)
-			.selectionTarget(selectionTarget)
+			.selectionTarget(selectionTargetPane == .rendered ? selectionTarget : nil)
 			.contentReloadToken(contentReloadToken)
 			.preparedInitialRender(preparedInitialRender)
 			.onInitialRenderProgress { onInitialRenderProgress?($0) }

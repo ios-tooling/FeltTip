@@ -173,6 +173,34 @@ struct EditorSelectionHandoffTests {
 		}
 	}
 
+	@Test func styledViewRestoresSelectionAfterHiddenKramdownAttributeLine() async throws {
+		let source = """
+		# Before
+
+		Paragraph before.
+
+		{: .callout #intro}
+
+		Paragraph after token: LOCAL UNSAVED
+
+		## End
+		"""
+		let selected = (source as NSString).range(of: "LOCAL UNSAVED")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(MarkdownSelectionTarget(range: selected, token: 1))
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+
+		try await harness.waitUntil("selection after hidden Kramdown attributes") {
+			try await harness.evaluate("window.getSelection().toString()") == "LOCAL UNSAVED"
+		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "LOCAL UNSAVED")
+	}
+
 	@Test func inactiveStyledViewDefersSelectionTargetUntilRevealed() async throws {
 		let source = "# Heading\n\nbody tail"
 		let target = NSRange(
