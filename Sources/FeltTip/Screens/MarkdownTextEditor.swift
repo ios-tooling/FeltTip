@@ -892,7 +892,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if parent.typewriterMode { centerCursor(in: tv) }
 			parent.applyFocusMode(to: tv, coordinator: self)
 			reportCursorPosition(in: tv)
-			if tv.window?.firstResponder === tv {
+			// The native Find bar gives keyboard focus to its field editor while it
+			// moves the text view's real selection. Report those ranges as active
+			// selections too, or a host can retain and later reapply a stale mode-
+			// handoff target when Done returns focus to the editor.
+			if tv.window?.firstResponder === tv
+				|| tv.enclosingScrollView?.isFindBarVisible == true {
 				let range = tv.selectedRange()
 				parent.onSourceSelectionChanged?(range)
 				parent.onSelectionChanged?(range.length > 0 ? range : nil)

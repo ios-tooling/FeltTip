@@ -276,6 +276,52 @@ struct MarkdownTextEditorFindTests {
 		#expect(rawEditor.selectedRange() == firstRange)
 	}
 
+	@Test
+	func nativeFindReportsItsSelectionWhileTheSearchFieldHasFocus() async throws {
+		let original = "Before needle after"
+		var text = original
+		var selectedHeadingID: String?
+		var reportedSelection: NSRange?
+		let parent = MarkdownTextEditor(
+			text: Binding(get: { text }, set: { text = $0 }),
+			selectedHeadingID: Binding(
+				get: { selectedHeadingID },
+				set: { selectedHeadingID = $0 }
+			),
+			onSourceSelectionChanged: { reportedSelection = $0 }
+		)
+		let coordinator = MarkdownTextEditor.Coordinator(parent)
+		let rawEditor = MarkdownFormattingTextView()
+		rawEditor.string = original
+		rawEditor.delegate = coordinator
+		rawEditor.usesFindBar = true
+		let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+		scrollView.documentView = rawEditor
+		let window = NSWindow(
+			contentRect: scrollView.frame,
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		window.contentView = scrollView
+		window.orderFront(nil)
+
+		try #require(window.makeFirstResponder(rawEditor))
+		perform(.showFindInterface, on: rawEditor)
+		let searchField = try await waitForSearchField(in: scrollView)
+		try #require(window.makeFirstResponder(searchField))
+		let match = (original as NSString).range(of: "needle")
+		reportedSelection = nil
+		rawEditor.setSelectedRange(match)
+		coordinator.textViewDidChangeSelection(
+			Notification(name: NSTextView.didChangeSelectionNotification, object: rawEditor)
+		)
+
+		#expect(window.firstResponder !== rawEditor)
+		#expect(scrollView.isFindBarVisible)
+		#expect(reportedSelection == match)
+	}
+
 	private func perform(_ action: NSTextFinder.Action, on textView: NSTextView) {
 		let item = NSMenuItem()
 		item.tag = action.rawValue
