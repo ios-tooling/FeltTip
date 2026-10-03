@@ -8,6 +8,8 @@ import Foundation
 import WebKit
 
 extension MarkdownPDFRenderer {
+	static let pdfCaptureTimeout: Duration = .seconds(15)
+
 	/// Captures the laid-out web view into letter-sized pages. Each page is
 	/// rendered at 1:1 via `WKPDFConfiguration.rect` rather than slicing one
 	/// giant PDF — `createPDF` clamps a single page to ~14400pt, which silently
@@ -46,11 +48,8 @@ extension MarkdownPDFRenderer {
 			let config = WKPDFConfiguration()
 			config.rect = CGRect(
 				x: 0, y: top, width: printW, height: contentH)
-			guard let data = try? await withCheckedThrowingContinuation({
-				(c: CheckedContinuation<Data, Error>) in
-				webView.createPDF(configuration: config) {
-					c.resume(with: $0)
-				}
+			guard let data = try? await capturePDF(start: { completion in
+				webView.createPDF(configuration: config, completionHandler: completion)
 			}),
 			let provider = CGDataProvider(data: data as CFData),
 			let slice = CGPDFDocument(provider)?.page(at: 1)
@@ -82,6 +81,44 @@ extension MarkdownPDFRenderer {
 
 		ctx.closePDF()
 		return completed ? out as Data : nil
+	}
+
+	/// WebKit has failed to call its PDF completion handler after a content-
+	/// process termination on some OS releases. Convert the callback to async
+	/// with an independent deadline so one lost callback cannot suspend the
+	/// entire export forever. `AsyncThrowingStream.Continuation` safely ignores
+	/// a late callback after timeout or cancellation.
+	static func capturePDF(
+		timeout: Duration = pdfCaptureTimeout,
+		start: (@escaping @Sendable (Result<Data, Error>) -> Void) -> Void
+	) async throws -> Data {
+		try Task.checkCancellation()
+		let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream(
+			bufferingPolicy: .bufferingNewest(1))
+		start { result in
+			switch result {
+			case .success(let data):
+				continuation.yield(data)
+				continuation.finish()
+			case .failure(let error):
+				continuation.finish(throwing: error)
+			}
+		}
+		let timeoutTask = Task {
+			do { try await Task.sleep(for: timeout) }
+			catch { return }
+			continuation.finish(throwing: URLError(.timedOut))
+		}
+		return try await withTaskCancellationHandler {
+			defer { timeoutTask.cancel() }
+			var iterator = stream.makeAsyncIterator()
+			guard let data = try await iterator.next() else {
+				throw URLError(.unknown)
+			}
+			return data
+		} onCancel: {
+			continuation.finish(throwing: CancellationError())
+		}
 	}
 
 	/// Runs the inherently MainActor-bound WebKit page captures while checking

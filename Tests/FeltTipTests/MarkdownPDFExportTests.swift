@@ -5,6 +5,18 @@ import Testing
 @testable import FeltTip
 
 @Suite @MainActor struct MarkdownPDFExportTests {
+	@Test("A lost WebKit PDF callback times out instead of hanging")
+	func lostPDFCallbackTimesOut() async {
+		do {
+			_ = try await MarkdownPDFRenderer.capturePDF(
+				timeout: .milliseconds(25),
+				start: { _ in })
+			Issue.record("Expected the missing callback to time out")
+		} catch {
+			#expect((error as? URLError)?.code == .timedOut)
+		}
+	}
+
 	@Test("Short markdown exports as one PDF page")
 	func shortDocumentHasNoBlankTrailingPage() async throws {
 		let html = MarkdownHTMLRenderer.renderDocument(
