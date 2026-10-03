@@ -7,6 +7,18 @@ import Foundation
 
 enum ImageDataLoader {
 	static let maximumBytes = 64 * 1024 * 1024
+	static let requestTimeout: TimeInterval = 30
+	static let resourceTimeout: TimeInterval = 30
+
+	/// A request timeout only limits a period without network progress. Pair it
+	/// with a resource timeout so a server cannot hold image work open by
+	/// trickling bytes indefinitely.
+	static func sessionConfiguration() -> URLSessionConfiguration {
+		let configuration = URLSessionConfiguration.ephemeral
+		configuration.timeoutIntervalForRequest = requestTimeout
+		configuration.timeoutIntervalForResource = resourceTimeout
+		return configuration
+	}
 
 	static func data(from url: URL) async throws -> Data {
 		if url.isFileURL {
@@ -16,7 +28,10 @@ enum ImageDataLoader {
 		guard url.scheme == "https" || url.scheme == "http" else {
 			throw URLError(.unsupportedURL)
 		}
-		let (bytes, response) = try await URLSession.shared.bytes(from: url)
+		let request = URLRequest(url: url, timeoutInterval: requestTimeout)
+		let session = URLSession(configuration: sessionConfiguration())
+		defer { session.finishTasksAndInvalidate() }
+		let (bytes, response) = try await session.bytes(for: request)
 		if let http = response as? HTTPURLResponse,
 		   !(200...299).contains(http.statusCode) {
 			throw URLError(.badServerResponse)

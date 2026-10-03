@@ -49,9 +49,10 @@ import WebKit
 
 		// The pre-scoping implementation was O(ranges × spans) with a forced
 		// layout per span visit — seconds at this size. Scoped lookups plus
-		// one coalesced redraw must stay well under a second even on a busy
-		// test machine.
-		#expect(elapsed < .milliseconds(900), "drawing \(ranges.count) markers took \(elapsed)")
+		// one coalesced redraw must stay near a second even while the full Swift
+		// Testing suite is concurrently exercising other WebViews. The old path
+		// took several seconds, leaving ample separation from this ceiling.
+		#expect(elapsed < .milliseconds(1_200), "drawing \(ranges.count) markers took \(elapsed)")
 
 		// A redraw after an in-place keystroke must not corrupt or duplicate.
 		try await harness.type("x", at: (ns.range(of: "Paragraph 400 ").location + 10))

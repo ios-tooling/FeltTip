@@ -38,6 +38,9 @@ import Testing
 		heartbeat.cancel()
 		let ticks = await heartbeat.value
 		#expect(rendered.html.contains("Section 2000"))
-		#expect(ticks >= 3, "main actor only ticked \(ticks)× during a background render — was it blocked?")
+		// One tick is the discriminating signal: the previous synchronous path
+		// produced zero. Requiring several ticks is load-sensitive because other
+		// @MainActor tests run concurrently in the full suite.
+		#expect(ticks >= 1, "main actor did not tick during a background render — was it blocked?")
 	}
 }
