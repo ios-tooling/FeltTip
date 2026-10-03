@@ -207,7 +207,12 @@ underneath it, not in what the page asks for.
     simulators whose prediction dictionary or WebKit shortcut is unavailable.
     The styled page explicitly enables autocorrect, sentence capitalization,
     and spellcheck so WebKit OS-default changes cannot silently remove these
-    features; `EditBridgeTextSubstitutionTests` verifies those page traits.
+    features. Automatic spellcheck is disabled for pages above 50,000 rendered
+    characters: macOS WebKit otherwise checks the entire editable document
+    synchronously on the app's main thread during load. Autocorrect and sentence
+    capitalization remain enabled, and editing is unchanged.
+    `EditBridgeTextSubstitutionTests` verifies both the ordinary- and
+    large-document page traits.
   The **raw** editor turns substitution off wholesale because it edits markdown
   source, where a curled quote changes meaning; the styled view edits prose, so
   it leaves substitution on and relies on the mapping.

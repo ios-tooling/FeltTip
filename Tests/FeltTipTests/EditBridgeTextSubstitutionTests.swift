@@ -25,6 +25,18 @@ import Testing
 		#expect(try await harness.evaluate("String(document.body.spellcheck)") == "true")
 	}
 
+	@Test func largeStyledPageSkipsEagerWholeDocumentSpellcheck() async throws {
+		let paragraph = "A deliberately misspelld paragraph exercises the automatic spell checker.\n\n"
+		let source = String(repeating: paragraph, count: 800)
+		#expect(source.count > 50_000)
+
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		#expect(try await harness.evaluate("document.body.getAttribute('autocorrect')") == "on")
+		#expect(try await harness.evaluate("document.body.getAttribute('autocapitalize')") == "sentences")
+		#expect(try await harness.evaluate("String(document.body.spellcheck)") == "false")
+		#expect(try await harness.stampMismatches() == [])
+	}
+
 	/// Start a composition with the caret at `offset`, run `mutate` against the
 	/// composing run the way an IME or dictation commit would, then end it.
 	private func compose(

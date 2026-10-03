@@ -8,14 +8,20 @@
   try {
     window.webkit.messageHandlers.mdedit.postMessage({ type: 'ready', bridge: !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mdedit) });
   } catch (e) {}
-  document.body.contentEditable = 'true';
   // A styled document is prose, so keep iOS' software-keyboard substitutions
   // enabled explicitly. WebKit's default for a programmatically editable body
   // is not stable across OS releases and can otherwise suppress QuickType and
   // autocorrect even though the bridge handles their replacement events.
   document.body.setAttribute('autocorrect', 'on');
   document.body.setAttribute('autocapitalize', 'sentences');
-  document.body.spellcheck = true;
+  // On macOS, enabling spellcheck makes WebKit synchronously send the entire
+  // editable page through NSSpellChecker. Large documents can then block the
+  // app's main thread for several seconds before the first page is usable.
+  // Keep the normal prose behavior for ordinary documents, but bound that
+  // eager whole-document work. Editing remains available either way.
+  var automaticSpellcheckCharacterLimit = 50000;
+  document.body.spellcheck = (document.body.textContent || '').length <= automaticSpellcheckCharacterLimit;
+  document.body.contentEditable = 'true';
   document.body.style.outline = 'none';
   // Blocks we can't map edits inside become read-only islands, so the caret
   // can't land somewhere a keystroke would be silently vetoed. Tables are
