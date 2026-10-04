@@ -63,9 +63,22 @@ final class LocalResourceAccessPolicy: @unchecked Sendable {
 /// custom resource scheme. The request URL's path is the real filesystem path,
 /// so we read the bytes directly — the way to show local images in a
 /// `loadHTMLString` page, which WKWebView won't let load `file://` subresources.
-final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendable {
+	struct Resource: Sendable {
+		let data: Data
+		let mimeType: String
+	}
+
+	private final class SchemeTaskBox: @unchecked Sendable {
+		let task: any WKURLSchemeTask
+		init(_ task: any WKURLSchemeTask) { self.task = task }
+	}
+
 	weak var coordinator: MarkdownWebView.Coordinator?
 	private let accessPolicy: LocalResourceAccessPolicy
+	private let stateLock = NSLock()
+	private var activeTasks: Set<ObjectIdentifier> = []
+	private static let resourceReadTimeout: Duration = .seconds(10)
 
 	init(coordinator: MarkdownWebView.Coordinator?, accessPolicy: LocalResourceAccessPolicy) {
 		self.coordinator = coordinator
@@ -91,33 +104,64 @@ final class LocalResourceSchemeHandler: NSObject, WKURLSchemeHandler {
 			task.didFinish()
 			return
 		}
-		guard let fileURL = accessPolicy.authorizedFileURL(for: url) else {
-			task.didFailWithError(URLError(.noPermissionsToReadFile))
-			let coordinator = coordinator
-			Task { @MainActor in coordinator?.reportResourceAccessDenied() }
-			return
+		let box = SchemeTaskBox(task)
+		let taskID = ObjectIdentifier(task as AnyObject)
+		_ = stateLock.withLock { activeTasks.insert(taskID) }
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			do {
+				let resource = try await Self.loadResource(
+					requestURL: url, accessPolicy: accessPolicy)
+				guard consumeIfActive(taskID) else { return }
+				let response = URLResponse(
+					url: url, mimeType: resource.mimeType,
+					expectedContentLength: resource.data.count,
+					textEncodingName: nil)
+				box.task.didReceive(response)
+				box.task.didReceive(resource.data)
+				box.task.didFinish()
+			} catch {
+				guard consumeIfActive(taskID) else { return }
+				box.task.didFailWithError(error)
+				if (error as? URLError)?.code == .noPermissionsToReadFile {
+					coordinator?.reportResourceAccessDenied()
+				}
+			}
 		}
-		guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-			task.didFailWithError(URLError(.noPermissionsToReadFile))
-			let coordinator = coordinator
-			Task { @MainActor in coordinator?.reportResourceAccessDenied() }
-			return
-		}
-		defer { try? handle.close() }
-		guard let data = try? handle.read(
-				upToCount: LocalResourceAccessPolicy.maximumResourceBytes + 1),
-			  data.count <= LocalResourceAccessPolicy.maximumResourceBytes else {
-			task.didFailWithError(URLError(.dataLengthExceedsMaximum))
-			return
-		}
-		let mimeType = UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-		let response = URLResponse(url: url, mimeType: mimeType, expectedContentLength: data.count, textEncodingName: nil)
-		task.didReceive(response)
-		task.didReceive(data)
-		task.didFinish()
 	}
 
-	func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+	func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {
+		let taskID = ObjectIdentifier(task as AnyObject)
+		_ = stateLock.withLock { activeTasks.remove(taskID) }
+	}
+
+	static func loadResource(
+		requestURL: URL,
+		accessPolicy: LocalResourceAccessPolicy,
+		timeout: Duration = resourceReadTimeout,
+		loader: (@Sendable (URL) throws -> Resource)? = nil
+	) async throws -> Resource {
+		try await BoundedSynchronousWork.run(timeout: timeout) {
+			if let loader { return try loader(requestURL) }
+			guard let fileURL = accessPolicy.authorizedFileURL(for: requestURL),
+				  let handle = try? FileHandle(forReadingFrom: fileURL) else {
+				throw URLError(.noPermissionsToReadFile)
+			}
+			defer { try? handle.close() }
+			guard let data = try? handle.read(
+					upToCount: LocalResourceAccessPolicy.maximumResourceBytes + 1),
+				  data.count <= LocalResourceAccessPolicy.maximumResourceBytes else {
+				throw URLError(.dataLengthExceedsMaximum)
+			}
+			let mimeType = UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType
+				?? "application/octet-stream"
+			return Resource(data: data, mimeType: mimeType)
+		}
+	}
+
+	private func consumeIfActive(_ taskID: ObjectIdentifier) -> Bool {
+		stateLock.withLock { activeTasks.remove(taskID) != nil }
+	}
 }
 
 /// Breaks the WKUserContentController → handler retain cycle (the controller

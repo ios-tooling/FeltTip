@@ -444,14 +444,14 @@ extension MarkdownWebView {
 						"window.__mdPlaceCaret && window.__mdPlaceCaret(\(self.caretPlacementArguments($0)));"
 					} ?? ""
 					do {
-						_ = try await webView.evaluateJavaScript("""
+						_ = try await MarkdownPDFRenderer.evaluateJavaScript("""
 							(function () {
 							  if (!window.__mdSwapContent) return false;
 							  window.__mdSwapContent(\(bodyJSON), \(revision));
 							  \(caretCall)
 							  return true;
 							})()
-							""")
+							""", in: webView)
 					} catch {
 						return
 					}

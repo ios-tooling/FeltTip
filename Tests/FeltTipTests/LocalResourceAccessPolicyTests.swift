@@ -68,6 +68,26 @@ import Testing
 		}
 	}
 
+	@Test("A stalled WebView resource read times out")
+	func stalledSchemeReadTimesOut() async {
+		let gate = DispatchSemaphore(value: 0)
+		do {
+			_ = try await LocalResourceSchemeHandler.loadResource(
+				requestURL: URL(string: "markerlocalres://res/Volumes/disconnected/image.png")!,
+				accessPolicy: LocalResourceAccessPolicy(),
+				timeout: .milliseconds(20)) { _ in
+					_ = gate.wait(timeout: .now() + 10)
+					return .init(data: Data(), mimeType: "image/png")
+				}
+			Issue.record("Expected a timeout")
+		} catch let error as URLError {
+			#expect(error.code == .timedOut)
+		} catch {
+			Issue.record("Unexpected error: \(error)")
+		}
+		gate.signal()
+	}
+
 	private func requestURL(_ file: URL, host: String = "res") -> URL {
 		var components = URLComponents()
 		components.scheme = "markerlocalres"
