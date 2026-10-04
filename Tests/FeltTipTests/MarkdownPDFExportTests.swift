@@ -29,6 +29,23 @@ import Testing
 		}
 	}
 
+	@Test("A lost reload scroll snapshot falls back instead of stalling navigation")
+	func lostReloadScrollSnapshotFallsBack() async {
+		let scrollY = await MarkdownWebView.Coordinator.captureScrollY(
+			timeout: .milliseconds(25), start: { _ in })
+		#expect(scrollY == nil)
+	}
+
+	@Test("A reload scroll snapshot preserves a valid offset")
+	func reloadScrollSnapshotPreservesOffset() async {
+		let scrollY = await MarkdownWebView.Coordinator.captureScrollY(
+			timeout: .seconds(1)
+		) { completion in
+			completion(NSNumber(value: 42.5), nil)
+		}
+		#expect(scrollY == 42.5)
+	}
+
 	@Test("Short markdown exports as one PDF page")
 	func shortDocumentHasNoBlankTrailingPage() async throws {
 		let html = MarkdownHTMLRenderer.renderDocument(

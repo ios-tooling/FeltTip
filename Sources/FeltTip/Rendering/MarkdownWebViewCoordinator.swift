@@ -117,6 +117,8 @@ extension MarkdownWebView {
 		/// Cancels an older asynchronous pre-navigation scroll snapshot when a
 		/// newer configuration change supersedes it before JavaScript replies.
 		private var reloadCaptureGeneration = 0
+		private var reloadCaptureTask: Task<Void, Never>?
+		static let reloadScrollCaptureTimeout: Duration = .seconds(2)
 		/// Currently executing full/fragment render. Superseding work cancels
 		/// the task as well as advancing the generation, so cancellable render
 		/// stages can stop consuming CPU instead of merely dropping their result.
@@ -278,16 +280,35 @@ extension MarkdownWebView {
 		private func captureScrollThenLoadHTML(for text: String, into webView: WKWebView) {
 			reloadCaptureGeneration += 1
 			let generation = reloadCaptureGeneration
-			webView.evaluateJavaScript("window.scrollY || window.pageYOffset || 0") {
-				[weak self, weak webView] result, _ in
-				guard let self, let webView, generation == self.reloadCaptureGeneration else { return }
-				if let number = result as? NSNumber {
-					let capturedY = max(0, number.doubleValue)
+			reloadCaptureTask?.cancel()
+			reloadCaptureTask = Task { @MainActor [weak self, weak webView] in
+				guard let webView else { return }
+				let capturedY = await Self.captureScrollY(
+					timeout: Self.reloadScrollCaptureTimeout
+				) { completion in
+					webView.evaluateJavaScript(
+						"window.scrollY || window.pageYOffset || 0",
+						completionHandler: completion)
+				}
+				guard !Task.isCancelled, let self,
+				      generation == self.reloadCaptureGeneration else { return }
+				self.reloadCaptureTask = nil
+				if let capturedY {
 					self.lastScrollY = capturedY
 					self.pendingReloadScrollY = capturedY > 0 ? capturedY : nil
 				}
 				self.loadHTML(for: text, into: webView)
 			}
+		}
+
+		static func captureScrollY(
+			timeout: Duration,
+			start: (@escaping @Sendable (Any?, Error?) -> Void) -> Void
+		) async -> Double? {
+			guard let result = try? await MarkdownPDFRenderer.evaluateJavaScript(
+				timeout: timeout, start: start),
+			      let number = result as? NSNumber else { return nil }
+			return max(0, number.doubleValue)
 		}
 
 		/// Close the edit epoch as soon as fresher host text arrives, not after
@@ -1260,6 +1281,9 @@ extension MarkdownWebView {
 			renderTask?.cancel()
 			renderTask = nil
 			renderGeneration += 1
+			reloadCaptureTask?.cancel()
+			reloadCaptureTask = nil
+			reloadCaptureGeneration += 1
 			pendingHostText = nil
 			selfEdit = nil
 			lastRenderedText = nil
