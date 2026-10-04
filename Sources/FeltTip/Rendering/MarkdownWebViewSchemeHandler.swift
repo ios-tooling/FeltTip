@@ -16,10 +16,20 @@ final class LocalResourceAccessPolicy: @unchecked Sendable {
 	private var root: URL?
 
 	func setRoot(_ url: URL?) {
-		let resolved = url?.standardizedFileURL.resolvingSymlinksInPath()
 		lock.lock()
-		root = resolved
+		root = url?.standardizedFileURL
 		lock.unlock()
+	}
+
+	func authorizedFileURLBounded(
+		for requestURL: URL,
+		timeout: Duration = .seconds(10),
+		authorize: (@Sendable (URL) -> URL?)? = nil
+	) async -> URL? {
+		try? await BoundedSynchronousWork.run(timeout: timeout) {
+			if let authorize { return authorize(requestURL) }
+			return self.authorizedFileURL(for: requestURL)
+		}
 	}
 
 	func authorizedFileURL(for requestURL: URL) -> URL? {
@@ -51,7 +61,7 @@ final class LocalResourceAccessPolicy: @unchecked Sendable {
 		guard let root else { return nil }
 		let candidate = URL(fileURLWithPath: requestURL.path)
 			.standardizedFileURL.resolvingSymlinksInPath()
-		let rootPath = root.path
+		let rootPath = root.resolvingSymlinksInPath().path
 		guard candidate.path == rootPath
 			|| candidate.path.hasPrefix(rootPath.hasSuffix("/") ? rootPath : rootPath + "/")
 		else { return nil }

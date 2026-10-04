@@ -88,6 +88,23 @@ import Testing
 		gate.signal()
 	}
 
+	@Test("A stalled local-image authorization times out")
+	func stalledAuthorizationTimesOut() async {
+		let gate = DispatchSemaphore(value: 0)
+		let request = URL(string: "markerlocalres://res/Volumes/disconnected/image.png")!
+		let policy = LocalResourceAccessPolicy()
+
+		let authorized = await policy.authorizedFileURLBounded(
+			for: request,
+			timeout: .milliseconds(20)) { url in
+				_ = gate.wait(timeout: .now() + 10)
+				return url
+			}
+		gate.signal()
+
+		#expect(authorized == nil)
+	}
+
 	private func requestURL(_ file: URL, host: String = "res") -> URL {
 		var components = URLComponents()
 		components.scheme = "markerlocalres"

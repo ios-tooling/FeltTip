@@ -127,10 +127,14 @@ extension MarkdownWebView.Coordinator {
 			return
 		}
 		if body["type"] as? String == "openImage" {
-			guard let source = body["source"] as? String,
-			      let request = imageRequest(source: source, altText: body["alt"] as? String ?? "")
-			else { return }
-			parent.onOpenImage?(request)
+			guard let source = body["source"] as? String else { return }
+			let altText = body["alt"] as? String ?? ""
+			Task { @MainActor [weak self] in
+				guard let self,
+				      let request = await imageRequest(source: source, altText: altText)
+				else { return }
+				parent.onOpenImage?(request)
+			}
 			return
 		}
 		if body["type"] as? String == "previewLink" {
@@ -1740,12 +1744,12 @@ extension MarkdownWebView.Coordinator {
 		loadHTML(for: source, into: webView)
 	}
 
-	private func imageRequest(source: String, altText: String) -> MarkdownImageRequest? {
+	private func imageRequest(source: String, altText: String) async -> MarkdownImageRequest? {
 		guard let url = URL(string: source), let scheme = url.scheme?.lowercased() else { return nil }
 		let resolved: URL
 		switch scheme {
 		case MarkdownWebView.resourceScheme, "file":
-			guard let local = localResourceAccessPolicy?.authorizedFileURL(for: url) else { return nil }
+			guard let local = await localResourceAccessPolicy?.authorizedFileURLBounded(for: url) else { return nil }
 			resolved = local
 		case "http", "https":
 			guard parent.allowsRemoteResources else { return nil }

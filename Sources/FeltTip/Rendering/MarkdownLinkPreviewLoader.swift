@@ -28,9 +28,9 @@ enum MarkdownLinkPreviewLoader {
 		timeout: Duration = readTimeout,
 		reader: @escaping @Sendable (URL) -> MarkdownLinkPreview? = read
 	) async -> MarkdownLinkPreview? {
-		guard let fileURL = accessPolicy.authorizedMarkdownURL(for: requestURL) else { return nil }
 		return try? await BoundedSynchronousWork.run(timeout: timeout) {
-			reader(fileURL)
+			guard let fileURL = accessPolicy.authorizedMarkdownURL(for: requestURL) else { return nil }
+			return reader(fileURL)
 		}
 	}
 
