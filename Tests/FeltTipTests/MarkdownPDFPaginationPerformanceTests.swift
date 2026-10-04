@@ -80,6 +80,33 @@ import Testing
 		#expect(mainActorTicks >= 1)
 	}
 
+	@Test("Invalid page geometry cannot enter a non-progressing pagination loop")
+	func invalidGeometryIsRejected() {
+		for printHeight in [CGFloat.zero, -1, .infinity, .nan] {
+			#expect(MarkdownPDFRenderer.pageTopOffsets(
+				contentHeight: 1_000,
+				printHeight: printHeight,
+				boxes: [],
+				headings: []).isEmpty)
+		}
+		#expect(MarkdownPDFRenderer.pageTopOffsets(
+			contentHeight: .infinity,
+			printHeight: 720,
+			boxes: [],
+			headings: []).isEmpty)
+	}
+
+	@Test("An adversarial document cannot create an unbounded page plan")
+	func excessivePagePlanIsRejected() {
+		let pages = MarkdownPDFRenderer.pageTopOffsets(
+			contentHeight: CGFloat(MarkdownPDFRenderer.maximumPageCount + 1) * 720,
+			printHeight: 720,
+			boxes: [],
+			headings: [])
+
+		#expect(pages.isEmpty)
+	}
+
 	@Test("Cancelled PDF capture stops after its in-flight page")
 	@MainActor
 	func cancelledCaptureStopsBeforeRemainingPages() async {

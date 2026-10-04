@@ -10,6 +10,7 @@ import WebKit
 extension MarkdownPDFRenderer {
 	static let pdfCaptureTimeout: Duration = .seconds(15)
 	static let javaScriptTimeout: Duration = .seconds(5)
+	nonisolated static let maximumPageCount = 2_000
 
 	private struct JavaScriptResult: @unchecked Sendable {
 		let value: Any?
@@ -201,6 +202,8 @@ extension MarkdownPDFRenderer {
 		boxes: [(top: CGFloat, bottom: CGFloat)],
 		headings: [(top: CGFloat, bottom: CGFloat)]
 	) -> [CGFloat] {
+		guard contentHeight.isFinite, contentHeight >= 0,
+			printHeight.isFinite, printHeight > 0 else { return [] }
 		// DOM queries normally arrive in document order, but sorting here makes
 		// the planner robust to nested elements and lets each page inspect only
 		// its own candidates. The old implementation rescanned every box for
@@ -219,6 +222,7 @@ extension MarkdownPDFRenderer {
 
 		while current + printHeight < contentHeight {
 			guard !Task.isCancelled else { return [] }
+			guard tops.count < maximumPageCount else { return [] }
 			var bottom = current + printHeight
 
 			// Don't split an element across the boundary.

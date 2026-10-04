@@ -35,6 +35,10 @@ public enum MarkdownPDFRenderer {
 		allowRemoteResources: Bool = false
 	) async -> Data? {
 		let printW = pageWidth - 2 * margin
+		let printH = pageHeight - 2 * margin
+		guard fontSize.isFinite, fontSize > 0,
+			margin.isFinite, margin >= 0,
+			printW > 0, printH > 0 else { return nil }
 		let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: printW, height: pageHeight))
 		let loader = WebViewLoadWaiter()
 		webView.navigationDelegate = loader
