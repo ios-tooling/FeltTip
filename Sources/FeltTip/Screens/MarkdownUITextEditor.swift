@@ -29,6 +29,7 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 	var syntaxHighlightingEnabled: Bool = true
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
+	var scrollTarget: MarkdownScrollTarget?
 	var onCursorPositionChanged: ((Int, Int, Int, Int) -> Void)?
 	var onSourceEdit: ((String, Int) -> Void)?
 	var onSelectionChanged: ((NSRange?) -> Void)?
@@ -77,6 +78,7 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 		coordinator.applySelectionTarget(to: textView)
 		coordinator.applyMirroredSelection(to: textView)
 		coordinator.applySyncScrollFraction(to: textView)
+		coordinator.applyScrollTarget(to: textView)
 		coordinator.highlightIfNeeded(textView, theme: theme, enabled: syntaxHighlightingEnabled)
 		coordinator.applyFocusMode(to: textView)
 	}

@@ -13,6 +13,7 @@ public struct RawMarkdownScreen: View {
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
+	var scrollTarget: MarkdownScrollTarget?
 	var typewriterMode: Bool = false
 	var focusModeEnabled: Bool = false
 	var theme: MarkdownTheme?
@@ -32,6 +33,7 @@ public struct RawMarkdownScreen: View {
 		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		syncScrollFraction: Double? = nil,
+		scrollTarget: MarkdownScrollTarget? = nil,
 		typewriterMode: Bool = false,
 		focusModeEnabled: Bool = false,
 		theme: MarkdownTheme? = nil,
@@ -50,6 +52,7 @@ public struct RawMarkdownScreen: View {
 		self.onVisibleHeadingChanged = onVisibleHeadingChanged
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.syncScrollFraction = syncScrollFraction
+		self.scrollTarget = scrollTarget
 		self.typewriterMode = typewriterMode
 		self.focusModeEnabled = focusModeEnabled
 		self.theme = theme
@@ -72,6 +75,7 @@ public struct RawMarkdownScreen: View {
 			onVisibleHeadingChanged: onVisibleHeadingChanged,
 			onScrollFractionChanged: onScrollFractionChanged,
 			syncScrollFraction: syncScrollFraction,
+			scrollTarget: scrollTarget,
 			typewriterMode: typewriterMode,
 			focusModeEnabled: focusModeEnabled,
 			theme: theme,
@@ -94,6 +98,7 @@ public struct RawMarkdownScreen: View {
 			syntaxHighlightingEnabled: syntaxHighlightingEnabled,
 			onScrollFractionChanged: onScrollFractionChanged,
 			syncScrollFraction: syncScrollFraction,
+			scrollTarget: scrollTarget,
 			onCursorPositionChanged: onCursorPositionChanged,
 			onSourceEdit: onSourceEdit,
 			onSelectionChanged: onSelectionChanged,

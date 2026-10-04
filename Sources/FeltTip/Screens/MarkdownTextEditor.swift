@@ -18,6 +18,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	var syncScrollFraction: Double?
+	var scrollTarget: MarkdownScrollTarget?
 	var typewriterMode: Bool = false
 	var focusModeEnabled: Bool = false
 	var theme: MarkdownTheme?
@@ -52,6 +53,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		syncScrollFraction: Double? = nil,
+		scrollTarget: MarkdownScrollTarget? = nil,
 		typewriterMode: Bool = false,
 		focusModeEnabled: Bool = false,
 		theme: MarkdownTheme? = nil,
@@ -70,6 +72,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.onVisibleHeadingChanged = onVisibleHeadingChanged
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.syncScrollFraction = syncScrollFraction
+		self.scrollTarget = scrollTarget
 		self.typewriterMode = typewriterMode
 		self.focusModeEnabled = focusModeEnabled
 		self.theme = theme
@@ -121,6 +124,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			&& scrollToCharacterOffset == nil
 			&& selectedHeadingID == nil
 			&& syncScrollFraction == nil
+			&& scrollTarget == nil
 		context.coordinator.lineIndex.rebuild(for: text)
 		// Assigning the string can report a selection before the line index is
 		// populated. Correct that initial report once SwiftUI has mounted the view.
@@ -345,29 +349,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		if let fraction = syncScrollFraction, fraction != context.coordinator.lastAppliedFraction {
 			context.coordinator.lastAppliedFraction = fraction
-			context.coordinator.isSyncScroll = true
-			let docHeight = scrollView.documentView?.frame.height ?? 0
-			let visibleHeight = scrollView.contentView.bounds.height
-			let target = fraction * max(0, docHeight - visibleHeight)
-			if MarkdownSplitSyncLog.enabled {
-				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, target, docHeight)
-			}
-			// Preserve x: with a line-number gutter the resting origin is
-			// -contentInsets.left, and scrolling to x: 0 slid the text
-			// horizontally underneath the ruler.
-			scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: target))
-			scrollView.reflectScrolledClipView(scrollView.contentView)
-			// The driven offset counts as already reported, so notification
-			// stragglers arriving after `isSyncScroll` clears (they can trail
-			// by several runloop ticks) don't echo back as user scrolls.
-			context.coordinator.lastReportedScrollOffset = target
-			// Bounds-change observers queued on .main fire after this method
-			// returns. Hold the flag until the next main-queue tick so the
-			// echoed scroll is dropped instead of bouncing back as a fresh
-			// "user scrolled" event.
-			DispatchQueue.main.async { [weak coordinator = context.coordinator] in
-				coordinator?.isSyncScroll = false
-			}
+			context.coordinator.applyScrollFraction(fraction, to: scrollView)
+		}
+
+		if let target = scrollTarget {
+			context.coordinator.applyScrollTarget(target, to: scrollView)
 		}
 
 		if let offset = scrollToCharacterOffset, offset != context.coordinator.lastScrolledOffset {
@@ -567,6 +553,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrollTime: CFAbsoluteTime = 0
 		var lastReportedHeading: String?
 		var lastAppliedFraction: Double = -1
+		var lastScrollTargetToken: Int?
 		var lastScrolledOffset: Int = -1
 		var lastCaretToken: Int?
 		var lastSelectionTargetToken: Int?
@@ -693,6 +680,34 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// coming back through the host binding.
 		var pendingLocalText: String?
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
+
+		func applyScrollFraction(_ fraction: Double, to scrollView: NSScrollView) {
+			isSyncScroll = true
+			let docHeight = scrollView.documentView?.frame.height ?? 0
+			let visibleHeight = scrollView.contentView.bounds.height
+			let offset = fraction * max(0, docHeight - visibleHeight)
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, offset, docHeight)
+			}
+			// Preserve x: with a line-number gutter the resting origin is
+			// -contentInsets.left, and scrolling to x: 0 slid the text
+			// horizontally underneath the ruler.
+			scrollView.contentView.scroll(to: NSPoint(
+				x: scrollView.contentView.bounds.origin.x, y: offset))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+			lastReportedScrollOffset = offset
+			// Bounds-change observers queued on .main fire after this method
+			// returns. Hold the flag until the next main-queue tick so the
+			// echoed scroll is dropped instead of bouncing back as a fresh
+			// user scroll.
+			DispatchQueue.main.async { [weak self] in self?.isSyncScroll = false }
+		}
+
+		func applyScrollTarget(_ target: MarkdownScrollTarget, to scrollView: NSScrollView) {
+			guard target.token != lastScrollTargetToken else { return }
+			lastScrollTargetToken = target.token
+			applyScrollFraction(Double(target.topFraction), to: scrollView)
+		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching
 		/// pending local value is merely the normal binding round trip; a

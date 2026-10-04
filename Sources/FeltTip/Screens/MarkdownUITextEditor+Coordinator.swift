@@ -23,6 +23,7 @@ extension MarkdownUITextEditor {
 		private var lastSelectionToken: Int?
 		private var lastMirroredSelection: NSRange?
 		private var lastSyncedFraction: Double?
+		private var lastScrollTargetToken: Int?
 		private var lastThemeSignature: Int?
 		private var needsFullHighlight = true
 		private var lastFocusRange: NSRange?
@@ -141,6 +142,16 @@ extension MarkdownUITextEditor {
 			guard span > 0 else { return }
 			textView.setContentOffset(
 				CGPoint(x: 0, y: CGFloat(fraction) * span), animated: false)
+		}
+
+		func applyScrollTarget(to textView: UITextView) {
+			guard let target = parent.scrollTarget,
+			      target.token != lastScrollTargetToken else { return }
+			lastScrollTargetToken = target.token
+			let span = textView.contentSize.height - textView.bounds.height
+			guard span > 0 else { return }
+			textView.setContentOffset(
+				CGPoint(x: 0, y: target.topFraction * span), animated: false)
 		}
 
 		// MARK: - Appearance
