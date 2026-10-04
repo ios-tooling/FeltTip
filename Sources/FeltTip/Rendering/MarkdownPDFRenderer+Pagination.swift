@@ -9,6 +9,11 @@ import WebKit
 
 extension MarkdownPDFRenderer {
 	static let pdfCaptureTimeout: Duration = .seconds(15)
+	static let javaScriptTimeout: Duration = .seconds(5)
+
+	private struct JavaScriptResult: @unchecked Sendable {
+		let value: Any?
+	}
 
 	/// Captures the laid-out web view into letter-sized pages. Each page is
 	/// rendered at 1:1 via `WKPDFConfiguration.rect` rather than slicing one
@@ -116,6 +121,51 @@ extension MarkdownPDFRenderer {
 				throw URLError(.unknown)
 			}
 			return data
+		} onCancel: {
+			continuation.finish(throwing: CancellationError())
+		}
+	}
+
+	/// `evaluateJavaScript` can lose its completion callback when WebKit's
+	/// content process terminates. Use the callback API with a deadline rather
+	/// than awaiting the system async overlay indefinitely.
+	static func evaluateJavaScript(
+		_ script: String,
+		in webView: WKWebView,
+		timeout: Duration = javaScriptTimeout
+	) async throws -> Any? {
+		try await evaluateJavaScript(timeout: timeout) { completion in
+			webView.evaluateJavaScript(script, completionHandler: completion)
+		}
+	}
+
+	static func evaluateJavaScript(
+		timeout: Duration = javaScriptTimeout,
+		start: (@escaping @Sendable (Any?, Error?) -> Void) -> Void
+	) async throws -> Any? {
+		try Task.checkCancellation()
+		let (stream, continuation) = AsyncThrowingStream<JavaScriptResult, Error>.makeStream(
+			bufferingPolicy: .bufferingNewest(1))
+		start { value, error in
+			if let error {
+				continuation.finish(throwing: error)
+			} else {
+				continuation.yield(JavaScriptResult(value: value))
+				continuation.finish()
+			}
+		}
+		let timeoutTask = Task {
+			do { try await Task.sleep(for: timeout) }
+			catch { return }
+			continuation.finish(throwing: URLError(.timedOut))
+		}
+		return try await withTaskCancellationHandler {
+			defer { timeoutTask.cancel() }
+			var iterator = stream.makeAsyncIterator()
+			guard let result = try await iterator.next() else {
+				throw URLError(.unknown)
+			}
+			return result.value
 		} onCancel: {
 			continuation.finish(throwing: CancellationError())
 		}

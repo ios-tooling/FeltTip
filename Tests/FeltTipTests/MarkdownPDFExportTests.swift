@@ -17,6 +17,18 @@ import Testing
 		}
 	}
 
+	@Test("A lost WebKit JavaScript callback times out instead of hanging")
+	func lostJavaScriptCallbackTimesOut() async {
+		do {
+			_ = try await MarkdownPDFRenderer.evaluateJavaScript(
+				timeout: .milliseconds(25),
+				start: { _ in })
+			Issue.record("Expected the missing callback to time out")
+		} catch {
+			#expect((error as? URLError)?.code == .timedOut)
+		}
+	}
+
 	@Test("Short markdown exports as one PDF page")
 	func shortDocumentHasNoBlankTrailingPage() async throws {
 		let html = MarkdownHTMLRenderer.renderDocument(

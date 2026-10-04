@@ -153,7 +153,9 @@ public final class MermaidSVGRenderer {
 		try? await Task.sleep(nanoseconds: 50_000_000)  // let the resize lay out
 		let pdfConfig = WKPDFConfiguration()
 		pdfConfig.rect = CGRect(x: x, y: y, width: w, height: h)
-		guard let pdf = try? await webView.pdf(configuration: pdfConfig),
+		guard let pdf = try? await MarkdownPDFRenderer.capturePDF(start: { completion in
+			webView.createPDF(configuration: pdfConfig, completionHandler: completion)
+		}),
 			  let png = Self.rasterize(pdf: pdf, size: CGSize(width: w, height: h), scale: scale) else { return nil }
 		// The caller embeds these PNG bytes via an attachment file wrapper (an
 		// image-only attachment doesn't serialize to DOCX/RTF) and uses `size`

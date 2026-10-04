@@ -48,7 +48,7 @@ public enum MarkdownPDFRenderer {
 		// Arabic presentation forms. Route only those runs through a face whose
 		// character map preserves source Unicode, and isolate right-to-left runs so
 		// a page wrap cannot split a searchable phrase. Other text keeps its font.
-		_ = try? await webView.evaluateJavaScript(#"""
+		_ = try? await evaluateJavaScript(#"""
 		(() => {
 		  const greek = '[\\u0370-\\u03ff\\u1f00-\\u1fff]';
 		  const arabic = '[\\u0600-\\u06ff\\u0750-\\u077f\\u08a0-\\u08ff\\ufb50-\\ufdff\\ufe70-\\ufeff]';
@@ -91,7 +91,7 @@ public enum MarkdownPDFRenderer {
 		    node.replaceWith(fragment);
 		  }
 		})()
-		"""#)
+		"""#, in: webView)
 
 		// Measure from the document origin through the body's content. The
 		// documentElement's scrollHeight is at least the initial viewport height
@@ -99,19 +99,20 @@ public enum MarkdownPDFRenderer {
 		// omits the body's top offset from a collapsed first-child margin (which
 		// can clip the last content). Keep a point of rounding slack at the end.
 		var cssHeight = pageHeight
-		if let raw = try? await webView.evaluateJavaScript("""
+		if let raw = try? await evaluateJavaScript("""
 			(() => {
 			  const body = document.body;
 			  const rect = body.getBoundingClientRect();
 			  return Math.ceil(Math.max(rect.bottom, rect.top + body.scrollHeight) + window.scrollY) + 1;
 			})()
-			"""),
+			""", in: webView),
 		   let h = (raw as? Double).map({ CGFloat($0) }), h > 0 {
 			cssHeight = h
 			webView.frame = CGRect(origin: webView.frame.origin,
 			                       size: CGSize(width: printW, height: h))
 			// Force a re-layout at the new size before snapshotting.
-			_ = try? await webView.evaluateJavaScript("window.getComputedStyle(document.body).height")
+			_ = try? await evaluateJavaScript(
+				"window.getComputedStyle(document.body).height", in: webView)
 		}
 
 		let boxes = await unbreakableBoxes(in: webView)
@@ -192,7 +193,7 @@ public enum MarkdownPDFRenderer {
 		  });
 		}))
 		"""#
-		guard let result = try? await webView.evaluateJavaScript(script),
+		guard let result = try? await evaluateJavaScript(script, in: webView),
 		      let raw = result as? String,
 		      let data = raw.data(using: .utf8),
 		      let decoded = try? JSONDecoder().decode([PDFLinkPayload].self, from: data)
@@ -219,7 +220,7 @@ public enum MarkdownPDFRenderer {
 		JSON.stringify(Array.from(document.querySelectorAll('\(selector)'))
 			.map(function(e){ var r = e.getBoundingClientRect(); return [r.top + window.scrollY, r.height]; }))
 		"""
-		guard let result = try? await webView.evaluateJavaScript(js),
+		guard let result = try? await evaluateJavaScript(js, in: webView),
 			  let raw = result as? String else { return [] }
 		return await decodeBoxesJSON(raw)
 	}
