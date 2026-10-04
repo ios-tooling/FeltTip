@@ -3248,6 +3248,7 @@
     }
     var drifted = false;
     var driftDetails = [];
+    var recoveryEdits = [];
     finalText.forEach(function (expect, span) {
       // Exact, deliberately. A looser rule that let the run show a prefix of
       // what was asked for was tried and is wrong: deleting up to a trailing
@@ -3256,12 +3257,44 @@
       // healthy prefix while the mapping is already broken. plain() keeps
       // WebKit's routine &nbsp;-for-space substitution out of it; a dropped
       // character survives that normalization, which is the point.
-      if (!span.isConnected || plain(span.textContent) !== plain(expect)) {
+      var expectedText = plain(expect);
+      var actualText = plain(span.textContent);
+      if (!span.isConnected || actualText !== expectedText) {
+        // macOS smart quotes can "retrocurl" an earlier straight quote without
+        // delivering a second beforeinput event. When that is the only drift —
+        // one ordinary UTF-16 code unit replaced in place — preserve the system
+        // edit by sending a verified source splice after the queued edits. Keep
+        // every length-changing or surrogate-boundary mismatch on the conservative
+        // full-resync path; those include WebKit whitespace normalization.
+        var prefix = 0;
+        while (prefix < expectedText.length &&
+               expectedText.charCodeAt(prefix) === actualText.charCodeAt(prefix)) prefix++;
+        var suffix = 0;
+        while (suffix < expectedText.length - prefix &&
+               expectedText.charCodeAt(expectedText.length - 1 - suffix) ===
+               actualText.charCodeAt(actualText.length - 1 - suffix)) suffix++;
+        var oldLength = expectedText.length - prefix - suffix;
+        var newLength = actualText.length - prefix - suffix;
+        var oldUnit = oldLength === 1 ? expectedText.charCodeAt(prefix) : 0;
+        var newUnit = newLength === 1 ? actualText.charCodeAt(prefix) : 0;
+        var ordinaryUnits = !(oldUnit >= 0xD800 && oldUnit <= 0xDFFF) &&
+                            !(newUnit >= 0xD800 && newUnit <= 0xDFFF);
+        var base = parseInt(span.getAttribute('data-s'), 10);
+        if (span.isConnected && expectedText.length === actualText.length &&
+            oldLength === 1 && newLength === 1 && ordinaryUnits && !isNaN(base)) {
+          recoveryEdits.push({
+            start: base + prefix, end: base + prefix + 1,
+            text: actualText.substring(prefix, prefix + 1),
+            expected: expectedText.substring(prefix, prefix + 1),
+            before: '', after: ''
+          });
+          return;
+        }
         drifted = true;
         if (driftDetails.length < 3) {
           driftDetails.push({
             stamp: span.getAttribute('data-s'), connected: span.isConnected,
-            expected: plain(expect), actual: plain(span.textContent)
+            expected: expectedText, actual: actualText
           });
         }
       }
@@ -3278,6 +3311,14 @@
       delete edit.__span;
       delete edit.__expect;
       post(edit);
+    }
+    while (recoveryEdits.length) {
+      var recovery = recoveryEdits.shift();
+      recovery.rev = stampRev;
+      recovery.seq = seq++;
+      stampRev += 1;
+      caret = recovery.start + recovery.text.length;
+      post(recovery);
     }
     if (drifted) {
       freeze();
