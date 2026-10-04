@@ -23,6 +23,17 @@ extension Data: MarkdownContent {
 
 extension URL: MarkdownContent {
 	public func resolveMarkdown() -> String {
-		(try? String(contentsOf: self, encoding: .utf8)) ?? ""
+		resolveMarkdown(timeout: .seconds(10))
+	}
+
+	func resolveMarkdown(
+		timeout: Duration,
+		reader: @escaping @Sendable (URL) throws -> String = {
+			try String(contentsOf: $0, encoding: .utf8)
+		}
+	) -> String {
+		(try? BoundedSynchronousWork.runSynchronously(timeout: timeout) {
+			try reader(self)
+		}) ?? ""
 	}
 }

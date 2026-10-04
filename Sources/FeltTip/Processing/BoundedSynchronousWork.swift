@@ -5,6 +5,22 @@ import Foundation
 /// Swift cooperative executor prevents several blocked filesystem calls from
 /// starving the timeout tasks that are meant to release their callers.
 enum BoundedSynchronousWork {
+	private final class ResultBox<Value: Sendable>: @unchecked Sendable {
+		private let lock = NSLock()
+		private var result: Result<Value, Error>?
+
+		func store(_ result: Result<Value, Error>) {
+			lock.withLock { self.result = result }
+		}
+
+		func get() throws -> Value {
+			try lock.withLock {
+				guard let result else { throw URLError(.unknown) }
+				return try result.get()
+			}
+		}
+	}
+
 	private final class CancellationHandles: @unchecked Sendable {
 		let worker: DispatchWorkItem
 		let deadline: DispatchWorkItem
@@ -57,6 +73,27 @@ enum BoundedSynchronousWork {
 			handles.deadline.cancel()
 			continuation.finish(throwing: CancellationError())
 		}
+	}
+
+	/// Synchronous compatibility entry point for APIs whose signature cannot
+	/// suspend. The caller may block until the deadline, but never indefinitely.
+	static func runSynchronously<Value: Sendable>(
+		timeout: Duration,
+		operation: @escaping @Sendable () throws -> Value
+	) throws -> Value {
+		let box = ResultBox<Value>()
+		let completion = DispatchSemaphore(value: 0)
+		let worker = DispatchWorkItem {
+			box.store(Result { try operation() })
+			completion.signal()
+		}
+		DispatchQueue.global(qos: .userInitiated).async(execute: worker)
+		guard completion.wait(
+			timeout: .now() + dispatchInterval(for: timeout)) == .success else {
+			worker.cancel()
+			throw URLError(.timedOut)
+		}
+		return try box.get()
 	}
 
 	private static func dispatchInterval(for duration: Duration) -> DispatchTimeInterval {
