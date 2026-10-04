@@ -16,6 +16,10 @@ import Foundation
 
 @MainActor final class DefaultMarkdownLinkHandler: MarkdownLinkHandler {
 	static let shared = DefaultMarkdownLinkHandler()
+	struct ResolvedAccessPaths: Sendable {
+		let chosen: URL
+		let wanted: URL
+	}
 
 	#if os(macOS)
 	func openLink(_ url: URL, isMarkdownDocument: Bool) {
@@ -44,14 +48,30 @@ import Foundation
 			panel.message = "Select a folder containing “\(url.lastPathComponent)” to allow this and sibling links."
 		}
 		guard panel.runModal() == .OK, let selected = panel.url else { return nil }
-		let chosen = selected.standardizedFileURL.resolvingSymlinksInPath()
-		let wanted = url.standardizedFileURL.resolvingSymlinksInPath()
+		guard let paths = Self.resolveAccessPaths(selected: selected, target: url) else { return nil }
+		let chosen = paths.chosen
+		let wanted = paths.wanted
 		guard scope.grant(chosen, covers: wanted) else { return nil }
 		let scoped = chosen.startAccessingSecurityScopedResource() ? chosen : nil
 		NSDocumentController.shared.openDocument(withContentsOf: wanted, display: true) { document, _, _ in
 			if document == nil { NSWorkspace.shared.open(wanted) }
 		}
 		return scoped
+	}
+
+	nonisolated static func resolveAccessPaths(
+		selected: URL,
+		target: URL,
+		timeout: Duration = .seconds(10),
+		resolver: @escaping @Sendable (URL) -> URL = {
+			$0.standardizedFileURL.resolvingSymlinksInPath()
+		}
+	) -> ResolvedAccessPaths? {
+		try? BoundedSynchronousWork.runSynchronously(timeout: timeout) {
+			ResolvedAccessPaths(
+				chosen: resolver(selected),
+				wanted: resolver(target))
+		}
 	}
 	#else
 	func openLink(_ url: URL, isMarkdownDocument: Bool) {
