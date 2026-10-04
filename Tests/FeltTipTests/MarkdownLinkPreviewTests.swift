@@ -73,6 +73,30 @@ struct MarkdownLinkPreviewTests {
 
 		#expect(await MarkdownLinkPreviewLoader.load(requestURL: request, accessPolicy: policy) == nil)
 	}
+
+	@Test("A stalled authorized link read times out")
+	func stalledReadTimesOut() async throws {
+		let folder = FileManager.default.temporaryDirectory
+			.appending(path: "markdown-link-preview-\(UUID().uuidString)", directoryHint: .isDirectory)
+		try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		defer { try? FileManager.default.removeItem(at: folder) }
+		let file = folder.appending(path: "stalled.md")
+		try Data().write(to: file)
+		let policy = LocalResourceAccessPolicy()
+		policy.setRoot(folder)
+		let gate = DispatchSemaphore(value: 0)
+
+		let preview = await MarkdownLinkPreviewLoader.load(
+			requestURL: file,
+			accessPolicy: policy,
+			timeout: .milliseconds(20)) { _ in
+				_ = gate.wait(timeout: .now() + 10)
+				return MarkdownLinkPreview(filename: "unexpected.md", pairs: [])
+			}
+		gate.signal()
+
+		#expect(preview == nil)
+	}
 }
 
 @Suite(.serialized) @MainActor

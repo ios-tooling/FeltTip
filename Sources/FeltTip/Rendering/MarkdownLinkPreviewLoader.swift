@@ -20,23 +20,29 @@ struct MarkdownLinkPreview: Sendable, Equatable {
 /// filesystem work, especially for generated or accidentally huge documents.
 enum MarkdownLinkPreviewLoader {
 	private static let maximumBytes = 256 * 1024
+	private static let readTimeout: Duration = .seconds(10)
 
 	static func load(
 		requestURL: URL,
-		accessPolicy: LocalResourceAccessPolicy
+		accessPolicy: LocalResourceAccessPolicy,
+		timeout: Duration = readTimeout,
+		reader: @escaping @Sendable (URL) -> MarkdownLinkPreview? = read
 	) async -> MarkdownLinkPreview? {
 		guard let fileURL = accessPolicy.authorizedMarkdownURL(for: requestURL) else { return nil }
-		return await Task.detached(priority: .userInitiated) {
-			guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
-			defer { try? handle.close() }
-			guard let data = try? handle.read(upToCount: maximumBytes) else { return nil }
-			let source = String(decoding: data, as: UTF8.self)
-			guard case .frontmatter(let pairs, _)? = MarkdownBlockParser.parse(source).first
-			else { return nil }
-			return MarkdownLinkPreview(
-				filename: fileURL.lastPathComponent,
-				pairs: pairs.map { .init(key: $0.key, value: $0.value) })
+		return try? await BoundedSynchronousWork.run(timeout: timeout) {
+			reader(fileURL)
 		}
-		.value
+	}
+
+	private static func read(_ fileURL: URL) -> MarkdownLinkPreview? {
+		guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+		defer { try? handle.close() }
+		guard let data = try? handle.read(upToCount: maximumBytes) else { return nil }
+		let source = String(decoding: data, as: UTF8.self)
+		guard case .frontmatter(let pairs, _)? = MarkdownBlockParser.parse(source).first
+		else { return nil }
+		return MarkdownLinkPreview(
+			filename: fileURL.lastPathComponent,
+			pairs: pairs.map { .init(key: $0.key, value: $0.value) })
 	}
 }

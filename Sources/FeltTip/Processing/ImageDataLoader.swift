@@ -9,6 +9,7 @@ enum ImageDataLoader {
 	static let maximumBytes = 64 * 1024 * 1024
 	static let requestTimeout: TimeInterval = 30
 	static let resourceTimeout: TimeInterval = 30
+	static let localReadTimeout: Duration = .seconds(10)
 
 	/// A request timeout only limits a period without network progress. Pair it
 	/// with a resource timeout so a server cannot hold image work open by
@@ -20,9 +21,15 @@ enum ImageDataLoader {
 		return configuration
 	}
 
-	static func data(from url: URL) async throws -> Data {
+	static func data(
+		from url: URL,
+		localTimeout: Duration = localReadTimeout,
+		localReader: @escaping @Sendable (URL) throws -> Data = localData
+	) async throws -> Data {
 		if url.isFileURL {
-			return try localData(from: url)
+			return try await BoundedSynchronousWork.run(timeout: localTimeout) {
+				try localReader(url)
+			}
 		}
 
 		guard url.scheme == "https" || url.scheme == "http" else {
