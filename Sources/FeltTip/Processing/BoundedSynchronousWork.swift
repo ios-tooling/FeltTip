@@ -5,6 +5,8 @@ import Foundation
 /// Swift cooperative executor prevents several blocked filesystem calls from
 /// starving the timeout tasks that are meant to release their callers.
 enum BoundedSynchronousWork {
+	static let maximumConcurrentWorkers = 8
+
 	private final class ResultBox<Value: Sendable>: @unchecked Sendable {
 		private let lock = NSLock()
 		private var result: Result<Value, Error>?
@@ -22,14 +24,22 @@ enum BoundedSynchronousWork {
 	}
 
 	private final class CancellationHandles: @unchecked Sendable {
-		let worker: DispatchWorkItem
+		let worker: Operation
 		let deadline: DispatchWorkItem
 
-		init(worker: DispatchWorkItem, deadline: DispatchWorkItem) {
+		init(worker: Operation, deadline: DispatchWorkItem) {
 			self.worker = worker
 			self.deadline = deadline
 		}
 	}
+
+	private static let workerQueue: OperationQueue = {
+		let queue = OperationQueue()
+		queue.name = "com.ios-tooling.felttip.bounded-synchronous-work-workers"
+		queue.qualityOfService = .userInitiated
+		queue.maxConcurrentOperationCount = maximumConcurrentWorkers
+		return queue
+	}()
 
 	private static let timeoutQueue = DispatchQueue(
 		label: "com.ios-tooling.felttip.bounded-synchronous-work-timeouts",
@@ -42,7 +52,7 @@ enum BoundedSynchronousWork {
 		try Task.checkCancellation()
 		let (stream, continuation) = AsyncThrowingStream<Value, Error>.makeStream(
 			bufferingPolicy: .bufferingNewest(1))
-		let worker = DispatchWorkItem {
+		let worker = BlockOperation {
 			do {
 				continuation.yield(try operation())
 				continuation.finish()
@@ -50,7 +60,7 @@ enum BoundedSynchronousWork {
 				continuation.finish(throwing: error)
 			}
 		}
-		DispatchQueue.global(qos: .userInitiated).async(execute: worker)
+		workerQueue.addOperation(worker)
 		let deadline = DispatchWorkItem {
 			continuation.finish(throwing: URLError(.timedOut))
 		}
@@ -83,11 +93,11 @@ enum BoundedSynchronousWork {
 	) throws -> Value {
 		let box = ResultBox<Value>()
 		let completion = DispatchSemaphore(value: 0)
-		let worker = DispatchWorkItem {
+		let worker = BlockOperation {
 			box.store(Result { try operation() })
 			completion.signal()
 		}
-		DispatchQueue.global(qos: .userInitiated).async(execute: worker)
+		workerQueue.addOperation(worker)
 		guard completion.wait(
 			timeout: .now() + dispatchInterval(for: timeout)) == .success else {
 			worker.cancel()
