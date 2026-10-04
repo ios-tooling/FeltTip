@@ -142,6 +142,16 @@ public class MarkdownFormattingTextView: NSTextView {
 		setSelectedRange(match)
 	}
 
+	fileprivate func replaceSelectedFindMatch(with replacement: String) {
+		let match = selectedRange()
+		guard match.length > 0 else { return }
+		textStorage?.replaceCharacters(in: match, with: replacement)
+		didChangeText()
+		setSelectedRange(NSRange(
+			location: match.location + (replacement as NSString).length,
+			length: 0))
+	}
+
 	fileprivate static func findReplaceField(in view: NSView?) -> NSTextField? {
 		guard let view else { return nil }
 		if let field = view as? NSTextField,
@@ -281,7 +291,11 @@ final class NativeReplaceControlProxy: NSObject {
 			forwardOriginalAction()
 			return
 		}
-		editor.insertText(replacement, replacementRange: match)
+		// NSTextView.insertText and shouldChangeText both ask NSTextFinder to
+		// synchronously stop its asynchronous search before editing. Under load
+		// that wait can deadlock the main thread, so mutate the already-validated
+		// match and then send the ordinary did-change notification ourselves.
+		editor.replaceSelectedFindMatch(with: replacement)
 		editor.selectRememberedFindMatchIfNeeded()
 	}
 

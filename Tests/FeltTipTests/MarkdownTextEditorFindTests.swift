@@ -13,6 +13,44 @@ import WebKit
 @Suite(.serialized)
 struct MarkdownTextEditorFindTests {
 	@Test
+	func guardedNativeReplaceDoesNotEnterBlockingTextFinderPreflight() {
+		let editor = FindPreflightRecordingTextView()
+		editor.string = "draft"
+		editor.setSelectedRange(NSRange(location: 0, length: 5))
+		let searchField = NSSearchField()
+		searchField.stringValue = "draft"
+		let replacementField = NSTextField()
+		replacementField.stringValue = "review"
+		let control = NSSegmentedControl(
+			labels: ["Replace", "All"],
+			trackingMode: .selectOne,
+			target: nil,
+			action: nil)
+		control.selectedSegment = 0
+		let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+		contentView.addSubview(editor)
+		contentView.addSubview(searchField)
+		contentView.addSubview(replacementField)
+		contentView.addSubview(control)
+		let window = NSWindow(
+			contentRect: contentView.frame,
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false)
+		window.contentView = contentView
+		let proxy = NativeReplaceControlProxy(
+			editor: editor,
+			control: control,
+			originalTarget: nil,
+			originalAction: nil)
+
+		proxy.performAction(control)
+
+		#expect(editor.string == "review")
+		#expect(editor.didEnterTextChangePreflight == false)
+	}
+
+	@Test
 	func nativeReplaceAllForwardsTheSegmentedControlSender() {
 		let editor = MarkdownFormattingTextView()
 		let control = NSSegmentedControl(
@@ -416,13 +454,32 @@ struct MarkdownTextEditorFindTests {
 		_ description: String,
 		condition: () -> Bool
 	) async throws {
-		for _ in 0..<100 {
+		// The full suite runs many WebKit integration tests in parallel. Give
+		// main-actor view propagation enough headroom under that load while still
+		// putting a firm bound on a genuinely lost update.
+		for _ in 0..<500 {
 			if condition() {
 				return
 			}
 			try await Task.sleep(for: .milliseconds(10))
 		}
 		Issue.record("Timed out waiting for \(description)")
+		throw CancellationError()
+	}
+}
+
+@MainActor
+private final class FindPreflightRecordingTextView: MarkdownFormattingTextView {
+	private(set) var didEnterTextChangePreflight = false
+
+	override func shouldChangeText(
+		in affectedCharRange: NSRange,
+		replacementString: String?
+	) -> Bool {
+		didEnterTextChangePreflight = true
+		return super.shouldChangeText(
+			in: affectedCharRange,
+			replacementString: replacementString)
 	}
 }
 
