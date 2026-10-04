@@ -68,9 +68,9 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	}
 
 	func evaluate(_ script: String) async throws -> String? {
-		try await withCheckedThrowingContinuation { continuation in
+		try await BoundedTestCallbackWaiter.wait { completion in
 			webView.evaluateJavaScript(script) { result, error in
-				if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: result as? String) }
+				if let error { completion(.failure(error)) } else { completion(.success(result as? String)) }
 			}
 		}
 	}
