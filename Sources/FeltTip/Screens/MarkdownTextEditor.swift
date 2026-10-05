@@ -360,13 +360,23 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			Task { @MainActor in selectedHeadingID = nil }
 		}
 
-		if let fraction = syncScrollFraction, fraction != context.coordinator.lastAppliedFraction {
-			context.coordinator.lastAppliedFraction = fraction
-			context.coordinator.applyScrollFraction(fraction, to: scrollView)
-		}
+		if selectionTarget?.range.length ?? 0 > 0 {
+			// A selected source range is a stronger positional anchor than a
+			// normalized viewport captured before the selection moved the outgoing
+			// editor. SwiftUI can re-enter here after the initial handoff (for
+			// example when the cursor/status model updates); never let that stale
+			// fraction hide the selection again.
+			context.coordinator.revealExtendedSelectionTarget(in: scrollView)
+		} else {
+			if let fraction = syncScrollFraction,
+			   fraction != context.coordinator.lastAppliedFraction {
+				context.coordinator.lastAppliedFraction = fraction
+				context.coordinator.applyScrollFraction(fraction, to: scrollView)
+			}
 
-		if let target = scrollTarget {
-			context.coordinator.applyScrollTarget(target, to: scrollView)
+			if let target = scrollTarget {
+				context.coordinator.applyScrollTarget(target, to: scrollView)
+			}
 		}
 
 		if let offset = scrollToCharacterOffset, offset != context.coordinator.lastScrolledOffset {
@@ -737,7 +747,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
-		private func revealExtendedSelectionTarget(in scrollView: NSScrollView) {
+		fileprivate func revealExtendedSelectionTarget(in scrollView: NSScrollView) {
 			guard let target = parent.selectionTarget, target.range.length > 0,
 				let textView = scrollView.documentView as? NSTextView else { return }
 			let length = (textView.string as NSString).length

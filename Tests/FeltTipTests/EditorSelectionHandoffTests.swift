@@ -3,6 +3,7 @@
 #else
 	import UIKit
 #endif
+import Observation
 import SwiftUI
 import Testing
 @testable import FeltTip
@@ -318,16 +319,8 @@ struct EditorSelectionHandoffTests {
 			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
 		}.joined(separator: "\n\n")
 		let selected = (source as NSString).range(of: "## Sector 0")
-		var text = source
-		var heading: String?
-		let root = RawMarkdownScreen(
-			text: Binding(get: { text }, set: { text = $0 }),
-			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
-			fontSize: 14,
-			syncScrollFraction: 0.9,
-			scrollTarget: MarkdownScrollTarget(topFraction: 0.9, token: 1),
-			selectionTarget: MarkdownSelectionTarget(range: selected, token: 1)
-		)
+		let model = RawSelectionViewportModel(source: source, selected: selected)
+		let root = RawSelectionViewportHost(model: model)
 		let hosting = NSHostingView(rootView: root)
 		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
 		let window = NSWindow(
@@ -338,7 +331,11 @@ struct EditorSelectionHandoffTests {
 
 		hosting.layoutSubtreeIfNeeded()
 		let textView = try #require(try await waitForTextView(in: hosting))
-		try await Task.sleep(for: .milliseconds(300))
+		try await Task.sleep(for: .milliseconds(200))
+		// Cursor/status publication re-renders Marker after the initial handoff.
+		// Model that later pass with another stale normalized fraction.
+		model.syncFraction = 0.8
+		try await Task.sleep(for: .milliseconds(200))
 		hosting.layoutSubtreeIfNeeded()
 
 		#expect(textView.selectedRange() == selected)
@@ -462,6 +459,34 @@ struct EditorSelectionHandoffTests {
 			try await Task.sleep(for: .milliseconds(25))
 		}
 		return nil
+	}
+}
+
+@MainActor @Observable
+private final class RawSelectionViewportModel {
+	var text: String
+	var heading: String?
+	var syncFraction = 0.9
+	let selected: NSRange
+
+	init(source: String, selected: NSRange) {
+		text = source
+		self.selected = selected
+	}
+}
+
+private struct RawSelectionViewportHost: View {
+	@Bindable var model: RawSelectionViewportModel
+
+	var body: some View {
+		RawMarkdownScreen(
+			text: $model.text,
+			selectedHeadingID: $model.heading,
+			fontSize: 14,
+			syncScrollFraction: model.syncFraction,
+			scrollTarget: MarkdownScrollTarget(topFraction: 0.9, token: 1),
+			selectionTarget: MarkdownSelectionTarget(range: model.selected, token: 1)
+		)
 	}
 }
 #endif
