@@ -46,6 +46,7 @@ final class CoordinatorBridgeHarness {
 	private let initialRenderProgress: (@MainActor @Sendable (Double?) -> Void)?
 	private let preparedInitialRender: MarkdownPreparedWebRender?
 	private let renderMermaid: Bool
+	private let scrollTarget: MarkdownScrollTarget?
 	/// When true, the emulated SwiftUI round-trip is suppressed — the page
 	/// never gets the re-render a structural edit expects, which is exactly
 	/// the stuck-freeze condition the frozenTimeout safety net exists for.
@@ -57,7 +58,8 @@ final class CoordinatorBridgeHarness {
 		onOpenImage: ((MarkdownImageRequest) -> Void)? = nil,
 		preparedInitialRender: MarkdownPreparedWebRender? = nil,
 		onInitialRenderProgress: (@MainActor @Sendable (Double?) -> Void)? = nil,
-		renderMermaid: Bool = false
+		renderMermaid: Bool = false,
+		scrollTarget: MarkdownScrollTarget? = nil
 	) async throws {
 		self.source = source
 		self.checkboxToggle = onCheckboxToggle
@@ -65,9 +67,11 @@ final class CoordinatorBridgeHarness {
 		self.preparedInitialRender = preparedInitialRender
 		self.initialRenderProgress = onInitialRenderProgress
 		self.renderMermaid = renderMermaid
+		self.scrollTarget = scrollTarget
 		var view = MarkdownWebView(text: source, theme: .default, fontSize: 14)
 			.editable(true)
 			.renderMermaid(renderMermaid)
+			.scrollTarget(scrollTarget)
 		if let onCheckboxToggle { view = view.onCheckboxToggle(onCheckboxToggle) }
 		if let onOpenImage { view = view.onOpenImage(onOpenImage) }
 		if let onInitialRenderProgress {
@@ -100,6 +104,7 @@ final class CoordinatorBridgeHarness {
 		#endif
 		wireRoundTrip(text: source)
 		coordinator.load(into: webView)
+		coordinator.applyScrollControls(to: webView)
 		try await waitUntil("initial editable content") {
 			let pageRev = try await self.evaluate(
 				"window.__mdGetRev ? String(window.__mdGetRev()) : 'none'")
@@ -115,6 +120,7 @@ final class CoordinatorBridgeHarness {
 		var view = MarkdownWebView(text: text, theme: .default, fontSize: 14)
 			.editable(true)
 			.renderMermaid(renderMermaid)
+			.scrollTarget(scrollTarget)
 			.onSourceEdit { [weak self] newText, caretHint in
 				guard let self else { return }
 				self.source = newText

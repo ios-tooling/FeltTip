@@ -56,6 +56,10 @@ public struct WebSplitMarkdownScreen: View {
 	var selectionTargetPane: MarkdownCompactPane
 	var onCompactPaneChanged: ((MarkdownCompactPane) -> Void)?
 	var initialScrollFraction: Double?
+	/// A tokenized host restore applied to both panes. Unlike
+	/// `initialScrollFraction`, this can restore the same position each time a
+	/// long-lived split view is revealed again.
+	var scrollTarget: MarkdownScrollTarget?
 	var onScrollFractionChanged: ((Double) -> Void)?
 	/// Host-driven caret restore (undo/redo), applied to both panes so the
 	/// insertion point lands at the edit site regardless of which pane is focused.
@@ -87,6 +91,7 @@ public struct WebSplitMarkdownScreen: View {
 		selectionTargetPane: MarkdownCompactPane? = nil,
 		onCompactPaneChanged: ((MarkdownCompactPane) -> Void)? = nil,
 		initialScrollFraction: Double? = nil,
+		scrollTarget: MarkdownScrollTarget? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
 		caretTarget: MarkdownCaretTarget? = nil,
 		selectionTarget: MarkdownSelectionTarget? = nil,
@@ -111,6 +116,7 @@ public struct WebSplitMarkdownScreen: View {
 		self.selectionTargetPane = selectionTargetPane ?? initialCompactPane
 		self.onCompactPaneChanged = onCompactPaneChanged
 		self.initialScrollFraction = initialScrollFraction
+		self.scrollTarget = scrollTarget
 		self.onScrollFractionChanged = onScrollFractionChanged
 		self.caretTarget = caretTarget
 		self.selectionTarget = selectionTarget
@@ -153,6 +159,7 @@ public struct WebSplitMarkdownScreen: View {
 				onVisibleHeadingChanged: { id in if let id { onVisibleSectionChanged?(id) } },
 				onScrollFractionChanged: { didScroll(.raw, fraction: $0) },
 				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
+				scrollTarget: scrollTarget,
 				typewriterMode: typewriterMode,
 				focusModeEnabled: focusModeEnabled,
 				theme: theme,
@@ -177,6 +184,7 @@ public struct WebSplitMarkdownScreen: View {
 				.frame(minWidth: 150, maxWidth: .infinity)
 		}
 		.onAppear { restoreInitialScroll() }
+		.onChange(of: scrollTarget) { _, target in restoreScroll(to: target) }
 		.onChange(of: text) { _, _ in suspendSyncWhileEditing() }
 	}
 
@@ -213,9 +221,7 @@ public struct WebSplitMarkdownScreen: View {
 			.renderMermaid(true)
 			.focusMode(focusModeEnabled)
 			.initialScrollFraction(initialScrollFraction)
-			.scrollTarget(scrollSource == .raw
-				? MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: previewScrollToken)
-				: nil)
+			.scrollTarget(previewScrollTarget)
 			.onScrollFractionChanged { top, _, _ in didScroll(.formatted, fraction: Double(top)) }
 			.onSelectionChanged { range in
 				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] preview selection -> rawMirror=%@", String(describing: range)) }
@@ -246,7 +252,22 @@ public struct WebSplitMarkdownScreen: View {
 		return view
 	}
 
-	private enum ScrollSource { case none, raw, formatted }
+	private enum ScrollSource { case none, raw, formatted, host }
+
+	/// Host and pane-sync targets use disjoint token spaces. MarkdownWebView
+	/// deduplicates by token, so sharing a sequence could otherwise make a raw
+	/// pane scroll accidentally suppress the next host restore.
+	private var previewScrollTarget: MarkdownScrollTarget? {
+		if scrollSource == .host, let scrollTarget {
+			return MarkdownScrollTarget(
+				topFraction: scrollTarget.topFraction,
+				token: scrollTarget.token &* 2)
+		}
+		guard scrollSource == .raw else { return nil }
+		return MarkdownScrollTarget(
+			topFraction: CGFloat(scrollFraction),
+			token: previewScrollToken &* 2 &+ 1)
+	}
 
 	/// Lockout mirrors SplitMarkdownScreen: while one pane is the active source,
 	/// drop the other pane's echoed scroll callbacks so the two don't ping-pong.
@@ -255,6 +276,11 @@ public struct WebSplitMarkdownScreen: View {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] editing, drop %@ %.4f", "\(source)", fraction) }
 			return
 		}
+		// Both panes briefly report their pre-restore offsets while a host target
+		// is landing. Those are echoes, not user scrolls; allowing the first one
+		// to claim sourcehood would immediately synchronize both panes back to
+		// their old (often zero) position.
+		if scrollSource == .host { return }
 		if scrollSource != .none && scrollSource != source {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] drop %@ %.4f (source %@)", "\(source)", fraction, "\(scrollSource)") }
 			return
@@ -280,10 +306,28 @@ public struct WebSplitMarkdownScreen: View {
 	}
 
 	private func restoreInitialScroll() {
-		guard !didRestoreScroll, let fraction = initialScrollFraction else { return }
+		guard !didRestoreScroll else { return }
+		if let scrollTarget {
+			restoreScroll(to: scrollTarget)
+			return
+		}
+		guard let fraction = initialScrollFraction else { return }
 		didRestoreScroll = true
 		scrollFraction = fraction
 		scrollSource = .formatted
+		lockoutTask?.cancel()
+		lockoutTask = Task { @MainActor in
+			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
+			guard !Task.isCancelled else { return }
+			scrollSource = .none
+		}
+	}
+
+	private func restoreScroll(to target: MarkdownScrollTarget?) {
+		guard let target else { return }
+		didRestoreScroll = true
+		scrollFraction = Double(target.topFraction)
+		scrollSource = .host
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))

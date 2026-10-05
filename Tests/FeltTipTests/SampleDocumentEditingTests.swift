@@ -398,6 +398,26 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		#expect(scrollY > 200, "outline scroll did not move the view (scrollY \(scrollY))")
 	}
 
+	@Test func scrollTargetArrivingBeforeFirstNavigationFinishesIsReapplied() async throws {
+		let source = (0..<300)
+			.map { "## Section \($0)\n\nA realistically sized paragraph for viewport restoration." }
+			.joined(separator: "\n\n")
+		let expected = 0.63
+		let host = try await CoordinatorBridgeHarness(
+			source: source,
+			scrollTarget: MarkdownScrollTarget(topFraction: expected, token: 1))
+		try await Task.sleep(for: .milliseconds(300))
+
+		let fraction = try await host.evaluate("""
+			(function () {
+			  var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+			    - window.innerHeight;
+			  return maxY > 0 ? String(window.scrollY / maxY) : '-1';
+			})()
+			""").flatMap(Double.init) ?? -1
+		#expect(abs(fraction - expected) < 0.05)
+	}
+
 	@Test func themeReloadPreservesLiveScrollPosition() async throws {
 		let host = try await makeHost()
 		let target = try await host.evaluate("""

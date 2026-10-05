@@ -219,6 +219,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
+		if let target = scrollTarget {
+			// SwiftUI is not required to call updateNSView after this initial
+			// construction. Apply the first host target once the scroll view has
+			// joined a window and TextKit has had a turn to establish its height.
+			RunLoop.main.perform { [weak scrollView, weak coordinator = context.coordinator] in
+				MainActor.assumeIsolated {
+					guard let scrollView, let coordinator,
+						coordinator.parent.scrollTarget?.token == target.token else { return }
+					coordinator.applyScrollTarget(target, to: scrollView)
+				}
+			}
+		}
+
 		return scrollView
 	}
 
@@ -707,6 +720,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard target.token != lastScrollTargetToken else { return }
 			lastScrollTargetToken = target.token
 			applyScrollFraction(Double(target.topFraction), to: scrollView)
+			// A target can arrive in the representable's first update, before
+			// TextKit has expanded the document view to its laid-out height. Replay
+			// once after the first layout settles so that the restore does not get
+			// consumed at y=0. A newer token supersedes this deferred pass.
+			let token = target.token
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak scrollView] in
+				guard let self, let scrollView,
+					self.lastScrollTargetToken == token else { return }
+				self.applyScrollFraction(Double(target.topFraction), to: scrollView)
+			}
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching

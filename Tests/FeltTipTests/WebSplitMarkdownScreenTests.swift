@@ -75,6 +75,35 @@ struct WebSplitMarkdownScreenTests {
 		#expect(!(window.firstResponder is WKWebView))
 	}
 
+	@Test("A long-lived split view reapplies repeated host scroll targets")
+	func splitReappliesHostScrollTargets() async throws {
+		let source = (0..<250).map { "Line \($0): enough text to create a scrollable document." }.joined(separator: "\n")
+		let model = SplitSelectionModel()
+		model.scrollTarget = MarkdownScrollTarget(topFraction: 0.75, token: 1)
+		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+
+		let rawEditor = try #require(try await waitForRawEditor(in: hosting))
+		for (token, expected) in [(1, 0.75), (2, 0.2)] {
+			if token > 1 {
+				model.scrollTarget = MarkdownScrollTarget(topFraction: expected, token: token)
+			}
+			for _ in 0..<80 where abs(scrollFraction(of: rawEditor) - expected) > 0.05 {
+				hosting.layoutSubtreeIfNeeded()
+				try await Task.sleep(for: .milliseconds(25))
+			}
+			#expect(
+				abs(scrollFraction(of: rawEditor) - expected) <= 0.05,
+				"target \(expected), actual \(scrollFraction(of: rawEditor))")
+		}
+	}
+
 	private func waitForRawEditor(in view: NSView) async throws -> NSTextView? {
 		for _ in 0..<120 {
 			if let editor = findRawEditor(in: view) { return editor }
@@ -90,11 +119,20 @@ struct WebSplitMarkdownScreenTests {
 		}
 		return nil
 	}
+
+	private func scrollFraction(of editor: NSTextView) -> Double {
+		guard let scrollView = editor.enclosingScrollView else { return 0 }
+		let scrollableHeight = max(
+			0, (scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
+		guard scrollableHeight > 0 else { return 0 }
+		return scrollView.contentView.bounds.origin.y / scrollableHeight
+	}
 }
 
 @MainActor @Observable
 private final class SplitSelectionModel {
 	var target: MarkdownSelectionTarget?
+	var scrollTarget: MarkdownScrollTarget?
 }
 
 private struct SplitSelectionHost: View {
@@ -117,6 +155,7 @@ private struct SplitSelectionHost: View {
 			fontSize: 14,
 			editablePreview: true,
 			selectionTargetPane: .source,
+			scrollTarget: model.scrollTarget,
 			selectionTarget: model.target)
 	}
 }

@@ -1243,6 +1243,12 @@ extension MarkdownWebView {
 				log("didFinish: restoring scrollY \(restoreY)")
 				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(restoreY), null, 0);", completionHandler: nil)
 			}
+			// updateUXView can deliver a host scroll target while the first page is
+			// still loading. Its early JavaScript call is necessarily a no-op, but
+			// the token has already been consumed. Reapply the absolute target now
+			// that the control script exists; it is the host's latest viewport and
+			// intentionally wins over the one-time initial position above.
+			applyScrollTarget(to: webView, force: true)
 			if didStartInitialRender, !didSignalInitialRenderReady {
 				didSignalInitialRenderReady = true
 				parent.onInitialRenderReady?()
@@ -1399,11 +1405,7 @@ extension MarkdownWebView {
 
 		/// Apply token-gated scroll controls (target/delta) from the host.
 		func applyScrollControls(to webView: WKWebView) {
-			if let target = parent.scrollTarget, target.token != lastScrollTargetToken {
-				lastScrollTargetToken = target.token
-				log("scroll control: toFraction \(target.topFraction) token \(target.token)")
-				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(target.topFraction));", completionHandler: nil)
-			}
+			applyScrollTarget(to: webView)
 			if let delta = parent.scrollDelta, delta.token != lastScrollDeltaToken {
 				lastScrollDeltaToken = delta.token
 				log("scroll control: byPixels \(delta.deltaY) token \(delta.token)")
@@ -1414,6 +1416,16 @@ extension MarkdownWebView {
 				log("scroll control: toSourceOffset \(target.offset) token \(target.token)")
 				webView.evaluateJavaScript("window.__mdScrollToSourceOffset && window.__mdScrollToSourceOffset(\(target.offset));", completionHandler: nil)
 			}
+		}
+
+		private func applyScrollTarget(to webView: WKWebView, force: Bool = false) {
+			guard let target = parent.scrollTarget,
+				force || target.token != lastScrollTargetToken else { return }
+			lastScrollTargetToken = target.token
+			log("scroll control: toFraction \(target.topFraction) token \(target.token)")
+			webView.evaluateJavaScript(
+				"window.__mdScrollToFraction && window.__mdScrollToFraction(\(target.topFraction));",
+				completionHandler: nil)
 		}
 
 		public func webView(
