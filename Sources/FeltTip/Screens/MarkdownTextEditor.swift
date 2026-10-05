@@ -779,31 +779,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		private func revealSelectionRange(
 			_ range: NSRange, in textView: NSTextView, scrollView: NSScrollView
 		) {
-			guard let layoutManager = textView.layoutManager,
-				let textContainer = textView.textContainer else { return }
+			guard let layoutManager = textView.layoutManager else { return }
 			layoutManager.ensureLayout(forCharacterRange: range)
-			let glyphRange = layoutManager.glyphRange(
-				forCharacterRange: range, actualCharacterRange: nil)
-			var rect = layoutManager.boundingRect(
-				forGlyphRange: glyphRange, in: textContainer)
-			let origin = textView.textContainerOrigin
-			rect.origin.x += origin.x
-			rect.origin.y += origin.y
-
-			let visible = scrollView.contentView.bounds
-			let targetY: CGFloat?
-			if rect.minY < visible.minY {
-				targetY = max(0, rect.minY - textView.textContainerInset.height)
-			} else if rect.maxY > visible.maxY {
-				targetY = max(0, rect.maxY - visible.height + textView.textContainerInset.height)
-			} else {
-				targetY = nil
-			}
-			guard let targetY else { return }
-			scrollView.contentView.scroll(to: NSPoint(
-				x: scrollView.contentView.bounds.origin.x, y: targetY))
-			scrollView.reflectScrolledClipView(scrollView.contentView)
-			lastReportedScrollOffset = targetY
+			textView.scrollRangeToVisible(range)
+			lastReportedScrollOffset = scrollView.contentView.bounds.origin.y
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching
@@ -1108,8 +1087,10 @@ private final class RulerInsetScrollView: NSScrollView {
 		let saved = contentView.bounds.origin.y
 		super.tile()
 		let clipHeight = contentView.bounds.height
-		let docHeight = documentView?.frame.height ?? 0
-		let y = min(max(0, saved), max(0, docHeight - clipHeight))
+		let documentFrame = documentView?.frame ?? .zero
+		let minY = documentFrame.minY
+		let maxY = max(minY, documentFrame.maxY - clipHeight)
+		let y = min(max(minY, saved), maxY)
 		if abs(contentView.bounds.origin.y - y) > 0.5 {
 			contentView.scroll(to: NSPoint(x: contentView.bounds.origin.x, y: y))
 			reflectScrolledClipView(contentView)

@@ -348,7 +348,7 @@ struct EditorSelectionHandoffTests {
 	}
 
 	@Test func rawEditorRevealsInitialExtendedSelectionAfterLateLayoutScroll() async throws {
-		let source = (0..<420).map { index in
+		let source = (0..<1_600).map { index in
 			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
 		}.joined(separator: "\n\n")
 		let selected = (source as NSString).range(of: "## Sector 0")
