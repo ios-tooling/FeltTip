@@ -339,6 +339,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let range = NSRange(location: location, length: selectedLength)
 			textView.setSelectedRange(range)
 			textView.scrollRangeToVisible(range)
+			context.coordinator.scheduleExtendedSelectionReveal(
+				target: target, range: range, in: scrollView)
 			// Selection notifications are intentionally ignored while SwiftUI is
 			// driving this update, so publish the cursor position explicitly. Without
 			// this, hosts keep the styled editor's stale line/column until the user
@@ -754,6 +756,22 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let location = min(max(0, target.range.location), length)
 			let selectedLength = min(max(0, target.range.length), length - location)
 			textView.scrollRangeToVisible(NSRange(location: location, length: selectedLength))
+		}
+
+		fileprivate func scheduleExtendedSelectionReveal(
+			target: MarkdownSelectionTarget, range: NSRange, in scrollView: NSScrollView
+		) {
+			guard range.length > 0 else { return }
+			// The first update can precede TextKit's final document geometry for a
+			// large file. Reassert visibility after layout, but only if this target
+			// is still the latest handoff and the user has not moved the selection.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak scrollView] in
+				guard let self, let scrollView,
+					self.lastSelectionTargetToken == target.token,
+					let textView = scrollView.documentView as? NSTextView,
+					textView.selectedRange() == range else { return }
+				textView.scrollRangeToVisible(range)
+			}
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching

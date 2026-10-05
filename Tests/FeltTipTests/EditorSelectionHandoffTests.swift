@@ -347,6 +347,46 @@ struct EditorSelectionHandoffTests {
 			"The selected top title was hidden by a stale viewport restore at \(fraction)")
 	}
 
+	@Test func rawEditorRevealsInitialExtendedSelectionAfterLateLayoutScroll() async throws {
+		let source = (0..<420).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let selected = (source as NSString).range(of: "## Sector 0")
+		var text = source
+		var heading: String?
+		let root = RawMarkdownScreen(
+			text: Binding(get: { text }, set: { text = $0 }),
+			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
+			fontSize: 14,
+			selectionTarget: MarkdownSelectionTarget(range: selected, token: 1)
+		)
+		let hosting = NSHostingView(rootView: root)
+		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
+		let scrollView = try #require(textView.enclosingScrollView)
+		let span = max(0,
+			(scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
+		scrollView.contentView.scroll(to: NSPoint(
+			x: scrollView.contentView.bounds.origin.x, y: span * 0.8))
+		scrollView.reflectScrolledClipView(scrollView.contentView)
+
+		try await Task.sleep(for: .milliseconds(200))
+		hosting.layoutSubtreeIfNeeded()
+		let settledSpan = max(0,
+			(scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
+		let fraction = settledSpan > 0 ? scrollView.contentView.bounds.origin.y / settledSpan : 0
+		#expect(textView.selectedRange() == selected)
+		#expect(fraction < 0.1,
+			"The initial selection reveal was lost during late layout at \(fraction)")
+	}
+
 	@Test func unicodeSelectionRoundTripsThroughStyledAndRawHandoffs() async throws {
 		let source = "Alpha 😀 cafe\u{301} 👩‍💻 omega"
 		let selected = (source as NSString).range(of: "😀 cafe\u{301} 👩‍💻")
