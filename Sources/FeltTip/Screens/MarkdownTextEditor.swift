@@ -755,7 +755,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let length = (textView.string as NSString).length
 			let location = min(max(0, target.range.location), length)
 			let selectedLength = min(max(0, target.range.length), length - location)
-			textView.scrollRangeToVisible(NSRange(location: location, length: selectedLength))
+			revealSelectionRange(
+				NSRange(location: location, length: selectedLength),
+				in: textView, scrollView: scrollView)
 		}
 
 		fileprivate func scheduleExtendedSelectionReveal(
@@ -770,8 +772,38 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					self.lastSelectionTargetToken == target.token,
 					let textView = scrollView.documentView as? NSTextView,
 					textView.selectedRange() == range else { return }
-				textView.scrollRangeToVisible(range)
+				self.revealSelectionRange(range, in: textView, scrollView: scrollView)
 			}
+		}
+
+		private func revealSelectionRange(
+			_ range: NSRange, in textView: NSTextView, scrollView: NSScrollView
+		) {
+			guard let layoutManager = textView.layoutManager,
+				let textContainer = textView.textContainer else { return }
+			layoutManager.ensureLayout(forCharacterRange: range)
+			let glyphRange = layoutManager.glyphRange(
+				forCharacterRange: range, actualCharacterRange: nil)
+			var rect = layoutManager.boundingRect(
+				forGlyphRange: glyphRange, in: textContainer)
+			let origin = textView.textContainerOrigin
+			rect.origin.x += origin.x
+			rect.origin.y += origin.y
+
+			let visible = scrollView.contentView.bounds
+			let targetY: CGFloat?
+			if rect.minY < visible.minY {
+				targetY = max(0, rect.minY - textView.textContainerInset.height)
+			} else if rect.maxY > visible.maxY {
+				targetY = max(0, rect.maxY - visible.height + textView.textContainerInset.height)
+			} else {
+				targetY = nil
+			}
+			guard let targetY else { return }
+			scrollView.contentView.scroll(to: NSPoint(
+				x: scrollView.contentView.bounds.origin.x, y: targetY))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
+			lastReportedScrollOffset = targetY
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching
