@@ -720,16 +720,30 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard target.token != lastScrollTargetToken else { return }
 			lastScrollTargetToken = target.token
 			applyScrollFraction(Double(target.topFraction), to: scrollView)
+			revealExtendedSelectionTarget(in: scrollView)
 			// A target can arrive in the representable's first update, before
 			// TextKit has expanded the document view to its laid-out height. Replay
 			// once after the first layout settles so that the restore does not get
-			// consumed at y=0. A newer token supersedes this deferred pass.
+			// consumed at y=0. A newer token supersedes this deferred pass. When a
+			// mode handoff also carries an extended selection, reveal it after both
+			// passes so the generic viewport target cannot hide the user's stronger
+			// positional anchor.
 			let token = target.token
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak scrollView] in
 				guard let self, let scrollView,
 					self.lastScrollTargetToken == token else { return }
 				self.applyScrollFraction(Double(target.topFraction), to: scrollView)
+				self.revealExtendedSelectionTarget(in: scrollView)
 			}
+		}
+
+		private func revealExtendedSelectionTarget(in scrollView: NSScrollView) {
+			guard let target = parent.selectionTarget, target.range.length > 0,
+				let textView = scrollView.documentView as? NSTextView else { return }
+			let length = (textView.string as NSString).length
+			let location = min(max(0, target.range.location), length)
+			let selectedLength = min(max(0, target.range.length), length - location)
+			textView.scrollRangeToVisible(NSRange(location: location, length: selectedLength))
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching

@@ -313,6 +313,43 @@ struct EditorSelectionHandoffTests {
 		#expect(reports.last?.column == expected.column)
 	}
 
+	@Test func rawEditorKeepsAnExtendedHandoffSelectionVisibleAfterViewportRestore() async throws {
+		let source = (0..<420).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let selected = (source as NSString).range(of: "## Sector 0")
+		var text = source
+		var heading: String?
+		let root = RawMarkdownScreen(
+			text: Binding(get: { text }, set: { text = $0 }),
+			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
+			fontSize: 14,
+			syncScrollFraction: 0.9,
+			scrollTarget: MarkdownScrollTarget(topFraction: 0.9, token: 1),
+			selectionTarget: MarkdownSelectionTarget(range: selected, token: 1)
+		)
+		let hosting = NSHostingView(rootView: root)
+		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
+		try await Task.sleep(for: .milliseconds(300))
+		hosting.layoutSubtreeIfNeeded()
+
+		#expect(textView.selectedRange() == selected)
+		let scrollView = try #require(textView.enclosingScrollView)
+		let span = max(0,
+			(scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
+		let fraction = span > 0 ? scrollView.contentView.bounds.origin.y / span : 0
+		#expect(fraction < 0.1,
+			"The selected top title was hidden by a stale viewport restore at \(fraction)")
+	}
+
 	@Test func unicodeSelectionRoundTripsThroughStyledAndRawHandoffs() async throws {
 		let source = "Alpha 😀 cafe\u{301} 👩‍💻 omega"
 		let selected = (source as NSString).range(of: "😀 cafe\u{301} 👩‍💻")
