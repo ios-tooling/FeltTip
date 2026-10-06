@@ -99,8 +99,10 @@ extension MarkdownWebView {
 		private var lastCaretToken: Int?
 		/// Selection-handoff token already applied.
 		private var lastSelectionTargetToken: Int?
-		/// Expected report from a handoff still crossing the WebKit boundary.
-		/// Activation can otherwise publish the prewarmed page's old caret first.
+		/// A handoff whose caret placement is still crossing the WebKit boundary.
+		/// Activating a prewarmed page fires its focus handler first, which would
+		/// otherwise publish the page's old caret as if the user had moved there.
+		/// Cleared when the placement script completes or its report arrives.
 		private var guardedSelectionTarget: (range: NSRange, token: Int)?
 		private var lastFocusModeEnabled: Bool?
 		/// `initialScrollFraction` is applied only once, after the first render.
@@ -537,11 +539,14 @@ extension MarkdownWebView {
 			}
 		}
 
-		private func placeCaretAfterUpdate(_ selection: NSRange?, into webView: WKWebView) {
+		private func placeCaretAfterUpdate(
+			_ selection: NSRange?, into webView: WKWebView,
+			completion: (@MainActor @Sendable () -> Void)? = nil
+		) {
 			guard let selection else { return }
 			webView.evaluateJavaScript(
-				"window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments(selection)));",
-				completionHandler: nil)
+				"window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments(selection)));"
+			) { _, _ in completion?() }
 		}
 
 		/// Source-line bounds let the page distinguish a caret in hidden Markdown
@@ -1341,14 +1346,6 @@ extension MarkdownWebView {
 			selfEdit = nil
 		}
 
-		private func guardSelectionReports(for range: NSRange, token: Int) {
-			guardedSelectionTarget = (range, token)
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-				guard self?.guardedSelectionTarget?.token == token else { return }
-				self?.guardedSelectionTarget = nil
-			}
-		}
-
 		func shouldPublishSelectionReport(_ range: NSRange?) -> Bool {
 			guard let guardedSelectionTarget else { return true }
 			guard range == guardedSelectionTarget.range else {
@@ -1372,10 +1369,18 @@ extension MarkdownWebView {
 			      target.token != lastSelectionTargetToken else { return }
 			lastSelectionTargetToken = target.token
 			let selection = composedSelection(target.range, in: parent.text as NSString)
-			guardSelectionReports(for: selection, token: target.token)
 			if currentSource == parent.text {
-				placeCaretAfterUpdate(selection, into: webView)
+				// Same DOM, same revision: only the placement's own completion
+				// separates the page's stale caret report from a real one.
+				guardedSelectionTarget = (selection, target.token)
+				let token = target.token
+				placeCaretAfterUpdate(selection, into: webView) { [weak self] in
+					guard self?.guardedSelectionTarget?.token == token else { return }
+					self?.guardedSelectionTarget = nil
+				}
 			} else {
+				// The page is about to be rebuilt at a new revision, so any report
+				// from the current DOM is dropped as stale by the revision check.
 				pendingSelection = selection
 				pendingStructuralTailDelta = nil
 				pendingStructuralTailBoundary = nil
