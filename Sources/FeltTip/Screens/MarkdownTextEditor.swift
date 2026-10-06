@@ -29,6 +29,15 @@ enum MarkdownScrollGeometry {
 		let clamped = min(1, max(0, fraction))
 		return minY + CGFloat(clamped) * (maxY - minY)
 	}
+
+	static func centeredOriginY(
+		localMidY: CGFloat, documentFrame: CGRect, visibleHeight: CGFloat
+	) -> CGFloat {
+		let minY = documentFrame.minY
+		let maxY = max(minY, documentFrame.maxY - visibleHeight)
+		let midpointInScrollCoordinates = minY + localMidY
+		return min(maxY, max(minY, midpointInScrollCoordinates - visibleHeight / 2))
+	}
 }
 @preconcurrency import AppKit
 
@@ -233,6 +242,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						// A genuine source-pane scroll means the handoff has finished.
 						// Keep the selection itself, but stop forcing it back onscreen
 						// during every subsequent SwiftUI update.
+						coordinator.cancelViewportRestore()
 						coordinator.pinnedSelectionTargetToken = nil
 						let fraction = MarkdownScrollGeometry.fraction(
 							originY: offset,
@@ -407,7 +417,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let range = NSRange(location: location, length: selectedLength)
 			context.coordinator.pinSelectionVisibility(target: target, range: range, in: textView)
 			textView.setSelectedRange(range)
-			textView.scrollRangeToVisible(range)
+			// Reveal synchronously through the same centered path used by the
+			// delayed layout replay. `scrollRangeToVisible` posts a bounds change
+			// before our replay; a host update can mistake that programmatic move
+			// for user scrolling, release the selection pin, and restore the stale
+			// viewport from the pane's previous visit.
+			context.coordinator.revealSelectionRange(
+				range, in: textView, scrollView: scrollView)
 			context.coordinator.scheduleExtendedSelectionReveal(
 				target: target, range: range, in: scrollView)
 			// Selection notifications are intentionally ignored while SwiftUI is
@@ -838,13 +854,27 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			lastViewportSize = size
 			viewportRestoreTask?.cancel()
 			let anchor = viewportRestoreAnchor ?? lastStableScrollFraction
+			let selectionToken = pinnedSelectionTargetToken
 			viewportRestoreAnchor = anchor
 			viewportRestoreTask = Task { @MainActor [weak self, weak scrollView] in
 				for delay in [120, 480, 900] {
 					try? await Task.sleep(for: .milliseconds(delay))
 					guard !Task.isCancelled, let self, let scrollView else { return }
 					self.applyScrollFraction(self.viewportRestoreAnchor ?? anchor, to: scrollView)
-					self.revealExtendedSelectionTarget(in: scrollView)
+					// A resize restore may outlive the short handoff pin. If it
+					// began while an extended selection owned the viewport, keep
+					// that exact selection centered throughout the restore. A real
+					// user scroll cancels this task in the bounds observer above.
+					if let selectionToken,
+						let target = self.parent.selectionTarget,
+						target.token == selectionToken,
+						let textView = scrollView.documentView as? NSTextView,
+						textView.selectedRange() == target.range {
+						self.revealSelectionRange(
+							target.range, in: textView, scrollView: scrollView)
+					} else {
+						self.revealExtendedSelectionTarget(in: scrollView)
+					}
 				}
 				self?.viewportRestoreTask = nil
 				self?.viewportRestoreAnchor = nil
@@ -932,12 +962,33 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
-		private func revealSelectionRange(
+		fileprivate func revealSelectionRange(
 			_ range: NSRange, in textView: NSTextView, scrollView: NSScrollView
 		) {
-			guard let layoutManager = textView.layoutManager else { return }
+			guard let layoutManager = textView.layoutManager,
+				let textContainer = textView.textContainer,
+				let documentView = scrollView.documentView else { return }
 			layoutManager.ensureLayout(forCharacterRange: range)
-			textView.scrollRangeToVisible(range)
+			let glyphRange = layoutManager.glyphRange(
+				forCharacterRange: range, actualCharacterRange: nil)
+			let selectionRect = layoutManager.boundingRect(
+				forGlyphRange: glyphRange, in: textContainer
+			).offsetBy(
+				dx: textView.textContainerOrigin.x,
+				dy: textView.textContainerOrigin.y)
+			let visibleHeight = scrollView.contentView.bounds.height
+			let documentFrame = documentView.frame
+			// TextKit can place a tall document at a negative frame origin. The
+			// layout manager's rectangle is local to NSTextView, while the clip
+			// view scrolls in the document frame's coordinate space; include that
+			// origin before centering or the result clamps to the document bottom.
+			let centeredY = MarkdownScrollGeometry.centeredOriginY(
+				localMidY: selectionRect.midY,
+				documentFrame: documentFrame,
+				visibleHeight: visibleHeight)
+			scrollView.contentView.scroll(to: NSPoint(
+				x: scrollView.contentView.bounds.origin.x, y: centeredY))
+			scrollView.reflectScrolledClipView(scrollView.contentView)
 			lastReportedScrollOffset = scrollView.contentView.bounds.origin.y
 			let fraction = MarkdownScrollGeometry.fraction(
 				originY: lastReportedScrollOffset,

@@ -1308,7 +1308,10 @@
       r.setStart(start.node, start.offset);
       r.setEnd(end.node, end.offset);
       sel.removeAllRanges(); sel.addRange(r);
-      start.span.scrollIntoView({ block: 'nearest' });
+      // A pane handoff is a deliberate repositioning rather than ordinary
+      // scrolling. Put the transferred selection in the most useful part of
+      // the viewport when the document has enough room on either side.
+      start.span.scrollIntoView({ block: 'center' });
       return;
     }
     if (start) {

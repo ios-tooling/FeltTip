@@ -220,6 +220,16 @@ struct EditorSelectionHandoffTests {
 				})()
 				""")
 		#expect(visibility == "yes")
+		let centerDeltaString = try #require(try await harness.evaluate("""
+			(function () {
+			  var selection = window.getSelection()
+			  var rect = selection.getRangeAt(0).getBoundingClientRect()
+			  return String(Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2))
+			})()
+			"""))
+		let centerDelta = try #require(Double(centerDeltaString))
+		#expect(centerDelta < 5,
+			"Sector 016 was visible but not centered; midpoint missed by \(centerDelta) points")
 		let fractionString = try #require(try await harness.evaluate("""
 			(function () {
 			  var root = document.scrollingElement || document.documentElement
@@ -445,6 +455,48 @@ struct EditorSelectionHandoffTests {
 		let fraction = span > 0 ? scrollView.contentView.bounds.origin.y / span : 0
 		#expect(fraction < 0.1,
 			"The selected top title was hidden by a stale viewport restore at \(fraction)")
+	}
+
+	@Test func rawEditorCentersAnExtendedHandoffSelectionWhenPossible() async throws {
+		let source = (0..<420).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let selected = (source as NSString).range(of: "## Sector 210")
+		let model = RawSelectionViewportModel(source: source, selected: selected)
+		let hosting = NSHostingView(rootView: RawSelectionViewportHost(model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
+		try await Task.sleep(for: .milliseconds(100))
+		// Reproduce Marker restoring the raw pane's viewport from its previous
+		// visit while the incoming extended selection is still settling.
+		model.syncFraction = 0.8
+		window.setContentSize(NSSize(width: 430, height: 400))
+		hosting.layoutSubtreeIfNeeded()
+		try await Task.sleep(for: .milliseconds(1_200))
+		hosting.layoutSubtreeIfNeeded()
+
+		#expect(textView.selectedRange() == selected)
+		let scrollView = try #require(textView.enclosingScrollView)
+		let selectionMidY = try #require(selectionMidY(selected, in: textView))
+		let viewportMidY = scrollView.contentView.bounds.midY
+		#expect(abs(selectionMidY - viewportMidY) < 5,
+			"Raw handoff selection midpoint \(selectionMidY) did not center on viewport midpoint \(viewportMidY)")
+	}
+
+	@Test func rawSelectionCenteringAccountsForANegativeDocumentOrigin() {
+		let origin = MarkdownScrollGeometry.centeredOriginY(
+			localMidY: 2_000,
+			documentFrame: CGRect(x: 0, y: -10_000, width: 600, height: 20_000),
+			visibleHeight: 400)
+
+		#expect(origin == -8_200)
 	}
 
 	@Test func rawEditorReleasesExtendedSelectionAfterTheHandoffSettles() async throws {
@@ -692,6 +744,19 @@ struct EditorSelectionHandoffTests {
 			.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
 		let clipRect = textView.convert(textRect, to: scrollView.contentView)
 		return scrollView.contentView.bounds.intersects(clipRect)
+	}
+
+	private func selectionMidY(_ range: NSRange, in textView: NSTextView) -> CGFloat? {
+		guard let layoutManager = textView.layoutManager,
+			let textContainer = textView.textContainer else { return nil }
+		layoutManager.ensureLayout(forCharacterRange: range)
+		let glyphRange = layoutManager.glyphRange(
+			forCharacterRange: range, actualCharacterRange: nil)
+		return layoutManager.boundingRect(
+			forGlyphRange: glyphRange, in: textContainer
+		).offsetBy(
+			dx: textView.textContainerOrigin.x,
+			dy: textView.textContainerOrigin.y).midY
 	}
 }
 
