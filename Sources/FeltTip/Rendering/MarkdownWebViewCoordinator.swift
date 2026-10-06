@@ -1528,10 +1528,13 @@ extension MarkdownWebView {
 			parent.onResourceAccessDenied?()
 		}
 
-		func log(_ message: String) {
+		/// The message is an autoclosure: call sites interpolate whole-document
+		/// values (lengths, dictionaries) and must cost nothing when logging is off.
+		func log(_ message: @autoclosure () -> String) {
 			guard Self.debugEditing else { return }
-			print("[MarkdownWebView] \(message)")
-			NSLog("[MarkdownWebView] %@", message)
+			let text = message()
+			print("[MarkdownWebView] \(text)")
+			NSLog("[MarkdownWebView] %@", text)
 		}
 	}
 }

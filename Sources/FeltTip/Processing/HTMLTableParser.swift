@@ -45,11 +45,25 @@ enum HTMLTableParser {
 		splitTagWithOpening(html, tag: tag).map(\.body)
 	}
 
+	/// One compiled pattern per tag name (`tr`, `th`, `td`); this runs once per
+	/// table row, so compiling per call scaled with row count.
+	private static let tagPatternLock = NSLock()
+	nonisolated(unsafe) private static var tagPatternCache: [String: NSRegularExpression] = [:]
+
+	private static func tagPattern(_ tag: String) -> NSRegularExpression {
+		tagPatternLock.withLock {
+			if let cached = tagPatternCache[tag] { return cached }
+			let pattern = try! NSRegularExpression(
+				pattern: "(<\(tag)[^>]*>)(.*?)</\(tag)>",
+				options: [.caseInsensitive, .dotMatchesLineSeparators]
+			)
+			tagPatternCache[tag] = pattern
+			return pattern
+		}
+	}
+
 	private static func splitTagWithOpening(_ html: String, tag: String) -> [(opening: String, body: String)] {
-		let pattern = try! NSRegularExpression(
-			pattern: "(<\(tag)[^>]*>)(.*?)</\(tag)>",
-			options: [.caseInsensitive, .dotMatchesLineSeparators]
-		)
+		let pattern = tagPattern(tag)
 		let ns = html as NSString
 		return pattern.matches(in: html, range: NSRange(location: 0, length: ns.length)).map {
 			(opening: ns.substring(with: $0.range(at: 1)), body: ns.substring(with: $0.range(at: 2)))

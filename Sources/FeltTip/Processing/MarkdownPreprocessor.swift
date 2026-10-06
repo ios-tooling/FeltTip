@@ -230,59 +230,110 @@ public enum MarkdownPreprocessor {
 			options: options,
 			preservingSourceText: preservingSourceText)
 		guard features.requiresPass else { return text }
-		var output: [String] = []
+		// Earlier passes hand back NSString-bridged strings, whose UTF-8 view is
+		// transcoded on every access. One contiguous copy up front makes every
+		// byte scan below a plain memory read; lines are then substrings of it
+		// and the output is built in place rather than split, mapped, and joined.
+		var text = text
+		text.makeContiguousUTF8()
+		var result = ""
+		result.reserveCapacity(text.utf8.count + 64)
 		var inFence = false
 		var referenceContinuationLines = 0
-		let lines = text.components(separatedBy: "\n")
-		output.reserveCapacity(lines.count)
-		for (index, line) in lines.enumerated() {
-			if index & 63 == 0, Task.isCancelled { return nil }
-			if features.fences {
-				let trimmed = line.trimmingCharacters(in: .whitespaces)
-				if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-					inFence.toggle()
-					referenceContinuationLines = 0
-					output.append(line); continue
-				}
-				if inFence { output.append(line); continue }
-			}
-			if features.blockAttributes,
-			   KramdownAttributeListProcessor.isStandaloneAttributeList(line) {
-				output.append("")
-				continue
-			}
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			var preservesReferenceSyntax = false
-			if referenceContinuationLines > 0,
-			   !trimmed.isEmpty,
-			   (line.first == " " || line.first == "\t") {
-				preservesReferenceSyntax = true
-				referenceContinuationLines -= 1
-			} else if !trimmed.isEmpty {
-				referenceContinuationLines = 0
-			}
-			if let continuationLimit = SmartQuotes.referenceDefinitionContinuationLimit(trimmed) {
-				preservesReferenceSyntax = true
-				referenceContinuationLines = continuationLimit
-			}
-			var processed = line
-			if features.headings { processed = HeadingSpaceInjector.applyLine(processed) }
-			if features.superSub { processed = SuperSubProcessor.applyLine(processed) }
-			if features.inserted { processed = InsertedTextProcessor.applyLine(processed) }
-			if features.emoticons {
-				processed = EmoticonShortcodes.applyLine(processed)
-			}
-			if features.quotes && !preservesReferenceSyntax {
-				processed = SmartQuotes.applyLine(processed)
-			}
-			if features.typography {
-				processed = SmartTypography.applyLine(processed)
-			}
-			if features.highlight { processed = HighlightSyntax.applyLine(processed) }
-			output.append(processed)
+		let utf8 = text.utf8
+		var lineStart = utf8.startIndex
+		var lineIndex = 0
+		while true {
+			let lineEnd = utf8[lineStart...].firstIndex(of: 0x0A) ?? utf8.endIndex
+			if lineIndex & 63 == 0, Task.isCancelled { return nil }
+			lineIndex += 1
+			if lineIndex > 1 { result.append("\n") }
+			let line = text[lineStart..<lineEnd]
+			result.append(contentsOf: processLine(
+				line, features: features, inFence: &inFence,
+				referenceContinuationLines: &referenceContinuationLines))
+			if lineEnd == utf8.endIndex { break }
+			lineStart = utf8.index(after: lineEnd)
 		}
 		guard !Task.isCancelled else { return nil }
-		return output.joined(separator: "\n")
+		return result
+	}
+
+	/// One line of the merged pass. One byte pass decides everything about
+	/// the line: which processors can possibly apply (a processor never
+	/// introduces a marker it did not have, so the original line's markers are
+	/// a safe superset for every later stage), whether the byte-level fast
+	/// paths may run, and where the whitespace trim falls.
+	private static func processLine(
+		_ line: Substring,
+		features: LinePassFeatures,
+		inFence: inout Bool,
+		referenceContinuationLines: inout Int
+	) -> Substring {
+		let scan = ASCIILineScan(line)
+		let trimmed: Substring
+		if scan.isASCII {
+			let utf8 = line.utf8
+			let start = utf8.index(utf8.startIndex, offsetBy: scan.leadingWhitespace)
+			let end = utf8.index(utf8.endIndex, offsetBy: -min(scan.trailingWhitespace, scan.byteCount - scan.leadingWhitespace))
+			trimmed = line[start..<end]
+		} else {
+			trimmed = Substring(line.trimmingCharacters(in: .whitespaces))
+		}
+		if features.fences {
+			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+				inFence.toggle()
+				referenceContinuationLines = 0
+				return line
+			}
+			if inFence { return line }
+		}
+		if features.blockAttributes, scan.hasOpenBrace,
+		   KramdownAttributeListProcessor.isStandaloneAttributeList(trimmed: trimmed) {
+			return ""
+		}
+		var preservesReferenceSyntax = false
+		if referenceContinuationLines > 0,
+		   !trimmed.isEmpty,
+		   scan.isASCII ? (line.utf8.first == 0x20 || line.utf8.first == 0x09)
+		                : (line.first == " " || line.first == "\t") {
+			preservesReferenceSyntax = true
+			referenceContinuationLines -= 1
+		} else if !trimmed.isEmpty {
+			referenceContinuationLines = 0
+		}
+		if scan.hasOpenBracket,
+		   let continuationLimit = SmartQuotes.referenceDefinitionContinuationLimit(trimmed) {
+			preservesReferenceSyntax = true
+			referenceContinuationLines = continuationLimit
+		}
+		var processed = line
+		if features.headings, scan.hasHash { processed = Substring(HeadingSpaceInjector.applyLine(String(processed))) }
+		if features.superSub, scan.hasCaret || scan.hasTilde { processed = Substring(SuperSubProcessor.applyLine(String(processed))) }
+		if features.inserted, scan.hasPlusPlus { processed = Substring(InsertedTextProcessor.applyLine(String(processed))) }
+		if features.emoticons, scan.hasEmoticonSeed {
+			switch EmoticonShortcodes.applyASCIILine(processed) {
+			case .unchanged: break
+			case .changed(let result): processed = Substring(result)
+			case .notASCII: processed = Substring(EmoticonShortcodes.applyLine(String(processed)))
+			}
+		}
+		if features.quotes, !preservesReferenceSyntax, scan.hasDoubleQuote || scan.hasSingleQuote {
+			switch SmartQuotes.applyASCIILine(processed) {
+			case .unchanged: break
+			case .changed(let result): processed = Substring(result)
+			case .notASCII: processed = Substring(SmartQuotes.applyLine(String(processed)))
+			}
+		}
+		if features.typography, scan.hasParen || scan.hasPlusMinus || scan.hasEllipsis || scan.hasDoubleDash {
+			switch SmartTypography.applyASCIILine(processed) {
+			case .unchanged: break
+			case .changed(let result): processed = Substring(result)
+			case .notASCII: processed = Substring(SmartTypography.applyLine(String(processed)))
+			}
+		}
+		if features.highlight, scan.hasEqualsEquals { processed = Substring(HighlightSyntax.applyLine(String(processed))) }
+		return processed
 	}
 
 	private struct LinePassFeatures {

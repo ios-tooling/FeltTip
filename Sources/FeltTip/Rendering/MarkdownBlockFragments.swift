@@ -21,19 +21,87 @@ public struct MarkdownBlockFragment: Sendable, Equatable {
 	public let firstStamp: Int?
 	private let signatureCache = SignatureCache()
 
-	init(html: String) {
+	/// `mayContainStamps` is false for renders without source offsets, where
+	/// no fragment can carry a stamp and the scan would be wasted per block.
+	init(html: String, mayContainStamps: Bool = true) {
 		self.html = html
-		guard let first = Self.stampRegex.firstMatch(
-			in: html, range: NSRange(html.startIndex..., in: html)),
-		      let firstRange = Range(first.range(at: 1), in: html),
-		      let base = Int(html[firstRange]) else {
-			self.firstStamp = nil
-			return
-		}
-		firstStamp = base
+		firstStamp = mayContainStamps ? Self.firstStamp(in: html) : nil
 	}
 
-	private static let stampRegex = try! NSRegularExpression(pattern: "data-s=\"(\\d+)\"")
+	private static let stampAttribute = Array("data-s=\"".utf8)
+
+	/// Index just past the next `data-s="` at or after `start`, or nil.
+	private static func nextStampAttribute(
+		in bytes: UnsafeBufferPointer<UInt8>, from start: Int
+	) -> Int? {
+		let needle = stampAttribute
+		let limit = bytes.count - needle.count
+		var i = start
+		while i <= limit {
+			if bytes[i] == 0x64, // 'd'
+			   bytes[i + 1] == 0x61, bytes[i + 2] == 0x74, bytes[i + 3] == 0x61,
+			   bytes[i + 4] == 0x2D, bytes[i + 5] == 0x73, bytes[i + 6] == 0x3D,
+			   bytes[i + 7] == 0x22 {
+				return i + needle.count
+			}
+			i += 1
+		}
+		return nil
+	}
+
+	/// Digits at `start` up to a closing quote: the stamp value and the index
+	/// of that quote. Nil unless the attribute is exactly `"<digits>"`.
+	private static func stampValue(
+		in bytes: UnsafeBufferPointer<UInt8>, from start: Int
+	) -> (value: Int, end: Int)? {
+		var index = start
+		var value = 0
+		var sawDigit = false
+		while index < bytes.count, bytes[index] >= 0x30, bytes[index] <= 0x39 {
+			value = value &* 10 &+ Int(bytes[index] - 0x30)
+			sawDigit = true
+			index += 1
+		}
+		guard sawDigit, index < bytes.count, bytes[index] == 0x22 else { return nil }
+		return (value, index)
+	}
+
+	/// The first stamp in `html`, found with a byte scan. The regex this
+	/// replaced bridged every fragment to NSString and ran ICU per block on
+	/// every render.
+	static func firstStamp(in html: String) -> Int? {
+		var html = html
+		return html.withUTF8 { bytes in
+			var searchStart = 0
+			while let valueStart = nextStampAttribute(in: bytes, from: searchStart) {
+				if let stamp = stampValue(in: bytes, from: valueStart) { return stamp.value }
+				searchStart = valueStart
+			}
+			return nil
+		}
+	}
+
+	/// `html` with every `data-s` value rewritten relative to `base`. Works on
+	/// bytes and splices ASCII digits, so the result decodes as valid UTF-8.
+	static func rewritingStamps(in html: String, base: Int) -> String {
+		var html = html
+		return html.withUTF8 { bytes in
+			var output: [UInt8] = []
+			output.reserveCapacity(bytes.count)
+			var cursor = 0
+			var searchStart = 0
+			while let valueStart = nextStampAttribute(in: bytes, from: searchStart) {
+				searchStart = valueStart
+				guard let stamp = stampValue(in: bytes, from: valueStart) else { continue }
+				output.append(contentsOf: bytes[cursor..<valueStart])
+				output.append(contentsOf: String(stamp.value - base).utf8)
+				cursor = stamp.end
+				searchStart = stamp.end
+			}
+			output.append(contentsOf: bytes[cursor...])
+			return String(decoding: output, as: UTF8.self)
+		}
+	}
 
 	/// Test-visible evidence that no signature allocation happened yet.
 	var hasCachedSignature: Bool { signatureCache.hasValue }
@@ -58,19 +126,7 @@ public struct MarkdownBlockFragment: Sendable, Equatable {
 					cached = html
 					return html
 				}
-				let stamps = MarkdownBlockFragment.stampRegex.matches(
-					in: html, range: NSRange(html.startIndex..., in: html))
-				var rewritten = ""
-				rewritten.reserveCapacity(html.utf8.count)
-				var cursor = html.startIndex
-				for match in stamps {
-					guard let valueRange = Range(match.range(at: 1), in: html),
-					      let value = Int(html[valueRange]) else { continue }
-					rewritten += html[cursor..<valueRange.lowerBound]
-					rewritten += String(value - base)
-					cursor = valueRange.upperBound
-				}
-				rewritten += html[cursor...]
+				let rewritten = MarkdownBlockFragment.rewritingStamps(in: html, base: base)
 				cached = rewritten
 				return rewritten
 			}
@@ -99,7 +155,8 @@ extension MarkdownHTMLRenderer {
 				fragments.reserveCapacity(blocks.count)
 				for block in blocks {
 					if Task.isCancelled { break }
-					fragments.append(MarkdownBlockFragment(html: renderBlock(block)))
+					fragments.append(MarkdownBlockFragment(
+						html: renderBlock(block), mayContainStamps: includeSourceOffsets))
 				}
 				return fragments
 			}

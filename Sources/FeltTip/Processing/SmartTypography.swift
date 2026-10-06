@@ -66,6 +66,113 @@ public enum SmartTypography {
 		return processLine(line)
 	}
 
+	/// Byte-level twin of `applyLine` for pure-ASCII lines; `.notASCII` sends
+	/// the caller to the general path. Mirrors `isStructuralDashLine`, the
+	/// code-span and tag passthroughs, and every token rule.
+	static func applyASCIILine(_ line: String) -> ASCIILineResult {
+		applyASCIILine(Substring(line))
+	}
+
+	static func applyASCIILine(_ line: Substring) -> ASCIILineResult {
+		var line = line
+		return line.withUTF8 { bytes in
+			guard ASCIIByte.allASCII(bytes) else { return .notASCII }
+			if isStructuralDashLineASCII(bytes) { return .unchanged }
+			var builder = ASCIILineBuilder(source: bytes)
+			var i = 0
+			while i < bytes.count {
+				let b = bytes[i]
+				if b == 0x60, let close = ASCIIByte.indexOf(0x60, in: bytes, after: i) {
+					builder.keep(through: close + 1); i = close + 1; continue
+				}
+				if b == 0x3C, let close = ASCIIByte.indexOf(0x3E, in: bytes, after: i) {
+					builder.keep(through: close + 1); i = close + 1; continue
+				}
+				if let (replacement, after) = replacementASCII(bytes, at: i) {
+					builder.keep(through: i)
+					builder.replace(through: after, with: replacement)
+					i = after; continue
+				}
+				i += 1
+			}
+			return builder.finish()
+		}
+	}
+
+	private static func isStructuralDashLineASCII(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+		var first = 0
+		while first < bytes.count, bytes[first] == 0x20 || bytes[first] == 0x09 { first += 1 }
+		var last = bytes.count
+		while last > first, bytes[last - 1] == 0x20 || bytes[last - 1] == 0x09 { last -= 1 }
+		guard last > first else { return false }
+		var onlyBreak = true, hasDashOrEquals = false
+		var onlyTable = true, hasPipe = false, hasDash = false
+		for i in first..<last {
+			let c = bytes[i]
+			switch c {
+			case 0x2D: hasDashOrEquals = true; hasDash = true
+			case 0x3D: hasDashOrEquals = true; onlyTable = false
+			case 0x5F, 0x2A: onlyTable = false
+			case 0x20, 0x09: break
+			case 0x7C: hasPipe = true; onlyBreak = false
+			case 0x3A: onlyBreak = false
+			default: onlyBreak = false; onlyTable = false
+			}
+		}
+		if onlyBreak, hasDashOrEquals { return true }
+		if hasPipe, hasDash, onlyTable { return true }
+		return false
+	}
+
+	private static let copyright = Array("©".utf8), registered = Array("®".utf8)
+	private static let trademark = Array("™".utf8), phonogram = Array("℗".utf8)
+	private static let plusMinusSign = Array("±".utf8), ellipsisSign = Array("…".utf8)
+	private static let emDash = Array("—".utf8), enDash = Array("–".utf8)
+
+	private static func replacementASCII(
+		_ bytes: UnsafeBufferPointer<UInt8>, at i: Int
+	) -> ([UInt8], Int)? {
+		let b = bytes[i]
+		if b == 0x28 {
+			guard let close = ASCIIByte.indexOf(0x29, in: bytes, after: i) else { return nil }
+			let inner = bytes[(i + 1)..<close]
+			let after = close + 1
+			switch inner.count {
+			case 1:
+				switch inner[inner.startIndex] | 0x20 {
+				case 0x63: return (copyright, after)
+				case 0x72: return (registered, after)
+				case 0x70: return (phonogram, after)
+				default: return nil
+				}
+			case 2:
+				if inner[inner.startIndex] | 0x20 == 0x74, inner[inner.startIndex + 1] | 0x20 == 0x6D {
+					return (trademark, after)
+				}
+				return nil
+			default: return nil
+			}
+		}
+		if b == 0x2B, i + 1 < bytes.count, bytes[i + 1] == 0x2D {
+			return (plusMinusSign, i + 2)
+		}
+		if b == 0x2E {
+			var j = i
+			while j < bytes.count, bytes[j] == 0x2E { j += 1 }
+			guard j - i >= 3 else { return nil }
+			return (ellipsisSign + Array(repeating: 0x2E, count: j - i - 3), j)
+		}
+		if b == 0x2D {
+			var j = i
+			while j < bytes.count, bytes[j] == 0x2D { j += 1 }
+			let count = j - i
+			guard count >= 2 else { return nil }
+			if count >= 3 { return (emDash + Array(repeating: 0x2D, count: count - 3), j) }
+			return (enDash, j)
+		}
+		return nil
+	}
+
 	private static func processLine(_ line: String) -> String {
 		var result = ""
 		var i = line.startIndex

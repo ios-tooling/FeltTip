@@ -658,7 +658,7 @@ extension MarkdownWebView.Coordinator {
 			}
 			currentSource = newSource
 			currentRev += 1
-			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.count) rev=\(currentRev)")
+			log("applied start=\(edit.start) end=\(edit.end) newLen=\(newSource.utf16.count) rev=\(currentRev)")
 			// Post-edit caret in the new source, forwarded so the host's undo
 			// bookkeeping doesn't have to guess it from a text diff (which is
 			// ambiguous when the edit repeats the surrounding characters).

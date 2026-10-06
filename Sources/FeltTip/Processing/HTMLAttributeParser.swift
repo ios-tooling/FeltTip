@@ -60,17 +60,37 @@ public enum HTMLAttributeParser {
 	static func extractAttribute(_ name: String, from html: String) -> String? {
 		let ns = html as NSString
 		let range = NSRange(location: 0, length: ns.length)
-		let escaped = NSRegularExpression.escapedPattern(for: name)
-		if let pattern = try? NSRegularExpression(pattern: "\(escaped)=[\"']([^\"']*)[\"']", options: .caseInsensitive),
-		   let match = pattern.firstMatch(in: html, range: range) {
+		guard let patterns = attributePatterns(for: name) else { return nil }
+		if let match = patterns.quoted.firstMatch(in: html, range: range) {
 			return ns.substring(with: match.range(at: 1))
 		}
 		// Unquoted: width=300
-		if let pattern = try? NSRegularExpression(pattern: "\(escaped)=(\\S+)", options: .caseInsensitive),
-		   let match = pattern.firstMatch(in: html, range: range) {
+		if let match = patterns.unquoted.firstMatch(in: html, range: range) {
 			return ns.substring(with: match.range(at: 1))
 		}
 		return nil
+	}
+
+	/// Attribute regexes compiled once per attribute name. This is called
+	/// several times per `<img>` tag on every render; compiling per call made a
+	/// badge-heavy README pay thousands of regex compiles per keystroke.
+	private static let attributePatternLock = NSLock()
+	nonisolated(unsafe) private static var attributePatternCache:
+		[String: (quoted: NSRegularExpression, unquoted: NSRegularExpression)] = [:]
+
+	private static func attributePatterns(
+		for name: String
+	) -> (quoted: NSRegularExpression, unquoted: NSRegularExpression)? {
+		attributePatternLock.withLock {
+			if let cached = attributePatternCache[name] { return cached }
+			let escaped = NSRegularExpression.escapedPattern(for: name)
+			guard let quoted = try? NSRegularExpression(
+					pattern: "\(escaped)=[\"']([^\"']*)[\"']", options: .caseInsensitive),
+			      let unquoted = try? NSRegularExpression(
+					pattern: "\(escaped)=(\\S+)", options: .caseInsensitive) else { return nil }
+			attributePatternCache[name] = (quoted, unquoted)
+			return (quoted, unquoted)
+		}
 	}
 
 	static func extractDimensions(from html: String) -> (width: CGFloat?, height: CGFloat?) {

@@ -576,7 +576,9 @@ private enum InstantAttributedRenderer {
 	) {
 		let paragraphStart: Int
 		if output.length > 0 {
-			let previousBreak = (output.string as NSString).range(
+			// `mutableString` is a live proxy; `string` would copy the whole
+			// accumulated document once per block, making the build quadratic.
+			let previousBreak = output.mutableString.range(
 				of: "\n", options: .backwards,
 				range: NSRange(location: 0, length: output.length))
 			paragraphStart = previousBreak.location == NSNotFound

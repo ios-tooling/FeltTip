@@ -50,7 +50,7 @@ public enum SmartQuotes {
 		return output.joined(separator: "\n")
 	}
 
-	static func isLinkReferenceDefinition(_ trimmed: String) -> Bool {
+	static func isLinkReferenceDefinition(_ trimmed: some StringProtocol) -> Bool {
 		guard trimmed.hasPrefix("["), let close = trimmed.firstIndex(of: "]") else { return false }
 		let after = trimmed.index(after: close)
 		return after < trimmed.endIndex && trimmed[after] == ":"
@@ -59,7 +59,7 @@ public enum SmartQuotes {
 	/// Number of indented destination/title lines that may follow a reference
 	/// definition opener. Those lines must retain straight quote delimiters so
 	/// CommonMark can recognize an optional title.
-	static func referenceDefinitionContinuationLimit(_ trimmed: String) -> Int? {
+	static func referenceDefinitionContinuationLimit(_ trimmed: some StringProtocol) -> Int? {
 		guard isLinkReferenceDefinition(trimmed), let close = trimmed.firstIndex(of: "]") else {
 			return nil
 		}
@@ -77,6 +77,107 @@ public enum SmartQuotes {
 		// or the CommonMark parser stops recognising them.
 		if isLinkReferenceDefinition(trimmed) { return line }
 		return processLine(line)
+	}
+
+	/// Byte-level twin of `applyLine` for pure-ASCII lines, which is nearly
+	/// every line of English Markdown. Same segmentation (code spans, tags,
+	/// link destinations pass through), same opening/closing rules, computed
+	/// on UTF-8 bytes instead of grapheme clusters. Returns `.notASCII` so the
+	/// caller can fall back to `applyLine` for anything else.
+	static func applyASCIILine(_ line: String) -> ASCIILineResult {
+		applyASCIILine(Substring(line))
+	}
+
+	static func applyASCIILine(_ line: Substring) -> ASCIILineResult {
+		var line = line
+		return line.withUTF8 { bytes in
+			guard ASCIIByte.allASCII(bytes) else { return .notASCII }
+			// Trimmed line starting with `[label]:` is a reference definition.
+			var first = 0
+			while first < bytes.count, bytes[first] == 0x20 || bytes[first] == 0x09 { first += 1 }
+			if first < bytes.count, bytes[first] == 0x5B,
+			   let close = ASCIIByte.indexOf(0x5D, in: bytes, after: first),
+			   close + 1 < bytes.count, bytes[close + 1] == 0x3A {
+				return .unchanged
+			}
+			var builder = ASCIILineBuilder(source: bytes)
+			var segmentStart = 0
+			var i = 0
+			func flushPlain(upTo end: Int) {
+				replacePlainASCII(bytes, from: segmentStart, to: end, into: &builder)
+			}
+			while i < bytes.count {
+				let b = bytes[i]
+				if b == 0x60, let close = ASCIIByte.indexOf(0x60, in: bytes, after: i) {
+					flushPlain(upTo: i)
+					builder.keep(through: close + 1)
+					i = close + 1; segmentStart = i; continue
+				}
+				if b == 0x3C, let close = ASCIIByte.indexOf(0x3E, in: bytes, after: i) {
+					flushPlain(upTo: i)
+					builder.keep(through: close + 1)
+					i = close + 1; segmentStart = i; continue
+				}
+				if b == 0x28, i > 0, bytes[i - 1] == 0x5D,
+				   let close = matchingCloseParenASCII(bytes, after: i) {
+					flushPlain(upTo: i)
+					builder.keep(through: close + 1)
+					i = close + 1; segmentStart = i; continue
+				}
+				i += 1
+			}
+			flushPlain(upTo: bytes.count)
+			return builder.finish()
+		}
+	}
+
+	private static let leftDouble = Array("“".utf8), rightDouble = Array("”".utf8)
+	private static let leftSingle = Array("‘".utf8), rightSingle = Array("’".utf8)
+
+	/// `replacePlain` on the plain segment `bytes[start..<end]`. Quote-opening
+	/// and apostrophe rules look only inside the segment, as the general path
+	/// does with its segment string.
+	private static func replacePlainASCII(
+		_ bytes: UnsafeBufferPointer<UInt8>, from start: Int, to end: Int,
+		into builder: inout ASCIILineBuilder
+	) {
+		var i = start
+		while i < end {
+			let b = bytes[i]
+			if b == 0x22 {
+				builder.keep(through: i)
+				builder.replace(through: i + 1, with: opensQuoteASCII(bytes, at: i, segmentStart: start) ? leftDouble : rightDouble)
+			} else if b == 0x27 {
+				builder.keep(through: i)
+				if i > start, i < end - 1, ASCIIByte.isLetter(bytes[i - 1]), ASCIIByte.isLetter(bytes[i + 1]) {
+					builder.replace(through: i + 1, with: rightSingle)
+				} else {
+					builder.replace(through: i + 1, with: opensQuoteASCII(bytes, at: i, segmentStart: start) ? leftSingle : rightSingle)
+				}
+			}
+			i += 1
+		}
+	}
+
+	private static func opensQuoteASCII(_ bytes: UnsafeBufferPointer<UInt8>, at i: Int, segmentStart: Int) -> Bool {
+		guard i > segmentStart else { return true }
+		let prev = bytes[i - 1]
+		return ASCIIByte.isWhitespace(prev) || prev == 0x28 || prev == 0x5B || prev == 0x7B
+	}
+
+	private static func matchingCloseParenASCII(_ bytes: UnsafeBufferPointer<UInt8>, after start: Int) -> Int? {
+		var depth = 1
+		var j = start + 1
+		while j < bytes.count {
+			let c = bytes[j]
+			if c == 0x28 { depth += 1 }
+			else if c == 0x29 {
+				depth -= 1
+				if depth == 0 { return j }
+			}
+			j += 1
+		}
+		return nil
 	}
 
 	private static func processLine(_ line: String) -> String {

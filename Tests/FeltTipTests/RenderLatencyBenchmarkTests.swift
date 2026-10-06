@@ -34,10 +34,14 @@ import Testing
 		let start = CFAbsoluteTimeGetCurrent()
 		let blocks = MarkdownBlockParser.parse(text)
 		let elapsed = CFAbsoluteTimeGetCurrent() - start
-		let stages = MarkdownPreprocessor.recordedTimings
-			.sorted { $0.value > $1.value }
-			.map { String(format: "%@=%.0f", $0.key, $0.value) }
-			.joined(separator: " ")
+		// The stage timings are a process-wide record; a parallel suite's parse
+		// can reset them, so only report them when they survived intact.
+		let timings = MarkdownPreprocessor.recordedTimings
+		let stages = timings.values.reduce(0, +) > 0
+			? timings.sorted { $0.value > $1.value }
+				.map { String(format: "%@=%.0f", $0.key, $0.value) }
+				.joined(separator: " ")
+			: "stage timings unavailable under parallel load"
 		report("display parse", elapsed, extra: "(\(blocks.count) blocks; \(stages))")
 		#expect(!blocks.isEmpty)
 		#expect(elapsed < 2.0)

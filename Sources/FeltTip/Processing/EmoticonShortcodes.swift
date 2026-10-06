@@ -53,6 +53,73 @@ public enum EmoticonShortcodes {
 		return processLine(line)
 	}
 
+	/// Byte-level twin of `applyLine` for pure-ASCII lines (`.notASCII`
+	/// otherwise): code spans pass through, and a token is replaced only at a
+	/// word boundary on both sides, longest spelling first.
+	static func applyASCIILine(_ line: String) -> ASCIILineResult {
+		applyASCIILine(Substring(line))
+	}
+
+	static func applyASCIILine(_ line: Substring) -> ASCIILineResult {
+		var line = line
+		return line.withUTF8 { bytes in
+			guard ASCIIByte.allASCII(bytes) else { return .notASCII }
+			var builder = ASCIILineBuilder(source: bytes)
+			var i = 0
+			while i < bytes.count {
+				let b = bytes[i]
+				if b == 0x60, let close = ASCIIByte.indexOf(0x60, in: bytes, after: i) {
+					builder.keep(through: close + 1); i = close + 1; continue
+				}
+				// Every spelling starts with `:` `;` `8` or `=`; anything else
+				// cannot open a token, so skip the 23-way match for it.
+				if b == 0x3A || b == 0x3B || b == 0x38 || b == 0x3D,
+				   isWordBoundaryBeforeASCII(bytes, i),
+				   let (emoji, after) = matchEmoticonASCII(bytes, at: i),
+				   isWordBoundaryAtASCII(bytes, after) {
+					builder.keep(through: i)
+					builder.replace(through: after, with: emoji)
+					i = after; continue
+				}
+				i += 1
+			}
+			return builder.finish()
+		}
+	}
+
+	private static func isWordBoundaryBeforeASCII(_ bytes: UnsafeBufferPointer<UInt8>, _ i: Int) -> Bool {
+		guard i > 0 else { return true }
+		let prev = bytes[i - 1]
+		return ASCIIByte.isWhitespace(prev) || prev == 0x28 || prev == 0x5B
+	}
+
+	private static func isWordBoundaryAtASCII(_ bytes: UnsafeBufferPointer<UInt8>, _ i: Int) -> Bool {
+		guard i < bytes.count else { return true }
+		let c = bytes[i]
+		return ASCIIByte.isWhitespace(c) || c == 0x2E || c == 0x2C || c == 0x21 || c == 0x3F || c == 0x29 || c == 0x5D
+	}
+
+	/// Spellings as bytes, in the same longest-first order as `tokens`.
+	/// Every spelling is two or three bytes.
+	private static let tokenBytes: [(first: UInt8, second: UInt8, third: UInt8?, emoji: [UInt8])] = tokens.map {
+		let t = Array($0.0.utf8)
+		return (t[0], t[1], t.count > 2 ? t[2] : nil, Array($0.1.utf8))
+	}
+
+	private static func matchEmoticonASCII(_ bytes: UnsafeBufferPointer<UInt8>, at i: Int) -> ([UInt8], Int)? {
+		guard i + 1 < bytes.count else { return nil }
+		let first = bytes[i], second = bytes[i + 1]
+		let third: UInt8? = i + 2 < bytes.count ? bytes[i + 2] : nil
+		for token in tokenBytes where token.first == first && token.second == second {
+			if let needed = token.third {
+				if third == needed { return (token.emoji, i + 3) }
+			} else {
+				return (token.emoji, i + 2)
+			}
+		}
+		return nil
+	}
+
 	private static func processLine(_ line: String) -> String {
 		var result = ""
 		var i = line.startIndex

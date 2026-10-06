@@ -6,7 +6,10 @@ import Foundation
 /// metadata.
 enum KramdownAttributeListProcessor {
 	static func isStandaloneAttributeList(_ line: String) -> Bool {
-		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		isStandaloneAttributeList(trimmed: line.trimmingCharacters(in: .whitespaces))
+	}
+
+	static func isStandaloneAttributeList(trimmed: some StringProtocol) -> Bool {
 		guard trimmed.hasPrefix("{:"), trimmed.hasSuffix("}") else { return false }
 		let content = trimmed.dropFirst(2).dropLast()
 		let tokens = content.split(whereSeparator: { $0.isWhitespace })
