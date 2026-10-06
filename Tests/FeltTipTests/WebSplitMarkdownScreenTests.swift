@@ -254,6 +254,41 @@ struct WebSplitMarkdownScreenTests {
 			"rapidly resized preview settled at \(reversedRenderedFraction)")
 	}
 
+	@Test("A small rendered-pane scroll drives the source pane in a long document")
+	func smallRenderedScrollDrivesRawPane() async throws {
+		let source = (0..<1_600).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let model = SplitSelectionModel()
+		model.scrollTarget = MarkdownScrollTarget(topFraction: 0.8, token: 1)
+		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+
+		let rawEditor = try #require(try await waitForRawEditor(in: hosting))
+		let webView = try #require(try await waitForWebView(in: hosting))
+		try await waitForSplitViewport(
+			0.8, rawEditor: rawEditor, webView: webView, hosting: hosting)
+		// Let the initial WebKit/TextKit reflow restore finish so this assertion
+		// isolates an ordinary small user scroll in a settled split view.
+		try await Task.sleep(for: .milliseconds(2_000))
+
+		let renderedFraction = try #require(await scrollWebView(webView, byFraction: -0.005))
+		for _ in 0..<80 where abs(scrollFraction(of: rawEditor) - renderedFraction) > 0.002 {
+			hosting.layoutSubtreeIfNeeded()
+			try await Task.sleep(for: .milliseconds(25))
+		}
+
+		let rawFraction = scrollFraction(of: rawEditor)
+		#expect(abs(rawFraction - renderedFraction) <= 0.002,
+			"rendered settled at \(renderedFraction), source stayed at \(rawFraction)")
+	}
+
 	private func waitForRawEditor(in view: NSView) async throws -> NSTextView? {
 		for _ in 0..<120 {
 			if let editor = findRawEditor(in: view) { return editor }
@@ -308,6 +343,25 @@ struct WebSplitMarkdownScreenTests {
 		  const root = document.scrollingElement || document.documentElement;
 		  const max = Math.max(0, root.scrollHeight - root.clientHeight);
 		  return max > 0 ? root.scrollTop / max : 0;
+		})()
+		"""
+		guard let value = try? await webView.evaluateJavaScript(script) else { return nil }
+		return (value as? NSNumber)?.doubleValue
+	}
+
+	private func scrollWebView(_ webView: WKWebView, byFraction delta: Double) async -> Double? {
+		let script = """
+		(() => {
+		  const root = document.scrollingElement || document.documentElement;
+		  const max = Math.max(0, root.scrollHeight - root.clientHeight);
+		  root.scrollTop += max * \(delta);
+		  const top = max > 0 ? root.scrollTop / max : 0;
+		  window.webkit.messageHandlers.mdedit.postMessage({
+		    type: 'scroll', y: root.scrollTop, top,
+		    visible: Math.min(1, root.clientHeight / root.scrollHeight),
+		    content: Math.min(1, root.scrollHeight / root.clientHeight)
+		  });
+		  return top;
 		})()
 		"""
 		guard let value = try? await webView.evaluateJavaScript(script) else { return nil }

@@ -110,7 +110,8 @@
   }, { passive: true });
 	scheduleVisibleSourceReport();
   window.__mdScrollToFraction = function (f) {
-    var maxY = scrollDimensions().maxY;
+    var dims = scrollDimensions();
+    var maxY = dims.maxY;
     // Top-anchored fraction of the scrollable range — the same units
     // report() emits, so a drive→echo round trip is the identity and the
     // panes agree at both ends of the document.
@@ -118,6 +119,18 @@
     var y = fraction * maxY;
     driven = { y: y, fraction: fraction, until: Date.now() + 500 };
     window.scrollTo(0, y);
+    // Acknowledge the drive immediately. The ordinary scroll event is muted
+    // above to prevent feedback, but the native host still needs to know that
+    // its restore landed before it can accept a subsequent user gesture.
+    try {
+      window.webkit.messageHandlers.mdedit.postMessage({
+        type: 'scrollTargetApplied', top: fraction
+      });
+    } catch (e) {}
+    // The target is synchronous from the page's point of view. Mark it settled
+    // now so a user gesture arriving before WebKit dispatches the drive's
+    // scroll event is reported instead of being mistaken for convergence.
+    driven.settled = true;
   };
   window.__mdScrollByPixels = function (dy) {
     var target = Math.max(0, (window.scrollY || 0) + dy);

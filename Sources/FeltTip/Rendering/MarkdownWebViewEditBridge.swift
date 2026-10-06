@@ -26,6 +26,12 @@ extension MarkdownWebView.Coordinator {
 			bridgeIncidents.append("rejected message from untrusted frame/origin")
 			return
 		}
+		if body["type"] as? String == "scrollTargetApplied" {
+			if let top = body["top"] as? Double {
+				parent.onScrollTargetApplied?(CGFloat(top))
+			}
+			return
+		}
 		// Scroll position report — remembered so reloads don't jump to top, and
 		// forwarded to the host (as top/visible/content fractions) for sync.
 		if body["type"] as? String == "scroll" {

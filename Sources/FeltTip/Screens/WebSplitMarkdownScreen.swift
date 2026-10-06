@@ -273,6 +273,7 @@ public struct WebSplitMarkdownScreen: View {
 			.initialScrollFraction(initialScrollFraction)
 			.scrollTarget(previewScrollTarget)
 			.onScrollFractionChanged { top, _, _ in didScroll(.formatted, fraction: Double(top)) }
+			.onScrollTargetApplied { fraction in renderedScrollTargetApplied(Double(fraction)) }
 			.onSelectionChanged { range in
 				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] preview selection -> rawMirror=%@", String(describing: range)) }
 				previewMirror = nil
@@ -350,7 +351,10 @@ public struct WebSplitMarkdownScreen: View {
 		// Claiming sourcehood requires genuine movement: a report at (or next
 		// to) the already-synced position is an echo of our own sync or layout
 		// noise, and driving the other pane from it causes visible snap-backs.
-		if scrollSource != source, abs(fraction - scrollFraction) < 0.01 {
+		// A single wheel/trackpad step in a very long document can move less
+		// than one percent. Treat only effectively identical reports as echoes;
+		// the pane-specific drive gates already suppress their own callbacks.
+		if scrollSource != source, abs(fraction - scrollFraction) < 0.000_1 {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] echo %@ %.4f", "\(source)", fraction) }
 			return
 		}
@@ -384,6 +388,13 @@ public struct WebSplitMarkdownScreen: View {
 			guard !Task.isCancelled else { return }
 			scrollSource = .none
 		}
+	}
+
+	private func renderedScrollTargetApplied(_ fraction: Double) {
+		guard let target = hostRestoreGuard.target,
+			abs(target - fraction) <= MarkdownSplitHostRestoreGuard.settleTolerance else { return }
+		hostRestoreGuard.cancel()
+		finishHostRestore()
 	}
 
 	private func restoreScroll(to target: MarkdownScrollTarget?) {
