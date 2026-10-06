@@ -415,15 +415,33 @@ public struct WebSplitMarkdownScreen: View {
 		// resize settles; tokenizing it makes both long-lived panes accept the
 		// same fraction again, including divider drags.
 		resizeRestoreTask?.cancel()
+		let anchor = settledScrollFraction
 		resizeRestoreTask = Task { @MainActor in
-			try? await Task.sleep(for: .milliseconds(100))
+			try? await Task.sleep(for: .milliseconds(120))
 			guard !Task.isCancelled else { return }
-			resizeScrollToken -= 1
-			let target = MarkdownScrollTarget(
-				topFraction: settledScrollFraction, token: resizeScrollToken)
-			resizeScrollTarget = target
-			beginHostRestore(to: target)
+			applyResizeRestore(anchor: anchor)
+			// A severe width reduction can keep changing TextKit's document frame
+			// after the first debounced pass. Reassert the pre-resize anchor with a
+			// fresh token after that lazy reflow window; a new resize cancels us.
+			try? await Task.sleep(for: .milliseconds(480))
+			guard !Task.isCancelled else { return }
+			applyResizeRestore(anchor: anchor)
+			// WebKit can finish a second, later reflow after a rapid divider
+			// reversal. One final token converges that last geometry without a
+			// permanent observer or polling loop.
+			try? await Task.sleep(for: .milliseconds(900))
+			guard !Task.isCancelled else { return }
+			applyResizeRestore(anchor: anchor)
+			resizeRestoreTask = nil
 		}
+	}
+
+	private func applyResizeRestore(anchor: Double) {
+		resizeScrollToken -= 1
+		let target = MarkdownScrollTarget(
+			topFraction: anchor, token: resizeScrollToken)
+		resizeScrollTarget = target
+		beginHostRestore(to: target)
 	}
 
 	private func finishHostRestore() {

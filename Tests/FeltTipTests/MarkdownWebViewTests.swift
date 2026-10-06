@@ -205,6 +205,8 @@ import Testing
 		#expect(script.contains("function scrollDimensions()"))
 		#expect(script.contains("new ResizeObserver(invalidateDimensions)"))
 		#expect(script.contains("window.addEventListener('resize', invalidateDimensions"))
+		#expect(script.contains("driven = { y: y, fraction: fraction"))
+		#expect(script.contains("var fraction = driven.fraction"))
 		#expect(script.components(separatedBy: "invalidateDimensions();").count >= 3)
 	}
 

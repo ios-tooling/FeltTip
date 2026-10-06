@@ -214,6 +214,35 @@ struct WebSplitMarkdownScreenTests {
 		#expect(abs(rawFraction - 0.5) <= 0.05, "resized source settled at \(rawFraction)")
 		#expect(abs(renderedFraction - 0.5) <= 0.05,
 			"resized preview settled at \(renderedFraction)")
+
+		window.setContentSize(NSSize(width: 600, height: 700))
+		hosting.layoutSubtreeIfNeeded()
+		try await Task.sleep(for: .milliseconds(800))
+		try await waitForSplitViewport(
+			0.5, rawEditor: rawEditor, webView: webView, hosting: hosting)
+
+		let narrowedRawFraction = scrollFraction(of: rawEditor)
+		let narrowedRenderedFraction = try #require(await webScrollFraction(of: webView))
+		#expect(abs(narrowedRawFraction - 0.5) <= 0.05,
+			"narrowed source settled at \(narrowedRawFraction)")
+		#expect(abs(narrowedRenderedFraction - 0.5) <= 0.05,
+			"narrowed preview settled at \(narrowedRenderedFraction)")
+
+		window.setContentSize(NSSize(width: 1_300, height: 700))
+		hosting.layoutSubtreeIfNeeded()
+		try await Task.sleep(for: .milliseconds(100))
+		window.setContentSize(NSSize(width: 750, height: 700))
+		hosting.layoutSubtreeIfNeeded()
+		try await Task.sleep(for: .milliseconds(1_800))
+		try await waitForSplitViewport(
+			0.5, rawEditor: rawEditor, webView: webView, hosting: hosting)
+
+		let reversedRawFraction = scrollFraction(of: rawEditor)
+		let reversedRenderedFraction = try #require(await webScrollFraction(of: webView))
+		#expect(abs(reversedRawFraction - 0.5) <= 0.05,
+			"rapidly resized source settled at \(reversedRawFraction)")
+		#expect(abs(reversedRenderedFraction - 0.5) <= 0.05,
+			"rapidly resized preview settled at \(reversedRenderedFraction)")
 	}
 
 	private func waitForRawEditor(in view: NSView) async throws -> NSTextView? {

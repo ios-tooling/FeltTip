@@ -5,7 +5,22 @@
   // force WebKit to flush layout. Cache dimensions across scroll frames and
   // invalidate only when viewport/content geometry actually changes.
   var dimensions = null;
-  function invalidateDimensions() { dimensions = null; }
+  var driven = null;
+  var drivenResizeTimer = null;
+  function invalidateDimensions() {
+    dimensions = null;
+    if (!driven || driven.fraction == null) { return; }
+    var fraction = driven.fraction;
+    if (drivenResizeTimer != null) { window.clearTimeout(drivenResizeTimer); }
+    drivenResizeTimer = window.setTimeout(function () {
+      drivenResizeTimer = null;
+      dimensions = null;
+      var maxY = scrollDimensions().maxY;
+      var y = fraction * maxY;
+      driven = { y: y, fraction: fraction, until: Date.now() + 500 };
+      window.scrollTo(0, y);
+    }, 80);
+  }
   function scrollDimensions() {
     if (!dimensions) {
       var height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, 1);
@@ -28,7 +43,6 @@
   // and yanks the pane the user is actually scrolling. The echo is
   // consumed when the position settles at the target (or after a grace
   // period, if the user interrupted the drive).
-  var driven = null;
 	var visibleSourceTimer = null;
 	var lastVisibleSourceOffset = null;
 	function reportVisibleSourceOffset() {
@@ -100,8 +114,9 @@
     // Top-anchored fraction of the scrollable range — the same units
     // report() emits, so a drive→echo round trip is the identity and the
     // panes agree at both ends of the document.
-    var y = Math.max(0, Math.min(1, f)) * maxY;
-    driven = { y: y, until: Date.now() + 500 };
+    var fraction = Math.max(0, Math.min(1, f));
+    var y = fraction * maxY;
+    driven = { y: y, fraction: fraction, until: Date.now() + 500 };
     window.scrollTo(0, y);
   };
   window.__mdScrollByPixels = function (dy) {
