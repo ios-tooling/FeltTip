@@ -138,6 +138,11 @@ struct WebSplitMarkdownScreenTests {
 		let rawEditor = try #require(try await waitForRawEditor(in: hosting))
 		for (token, expected) in [(1, 0.75), (2, 0.2)] {
 			if token > 1 {
+				// Schedule a delayed resize restore at the previous position,
+				// then supersede it with a newer explicit host target.
+				window.setContentSize(NSSize(width: 700, height: 400))
+				hosting.layoutSubtreeIfNeeded()
+				try await Task.sleep(for: .milliseconds(50))
 				model.scrollTarget = MarkdownScrollTarget(topFraction: expected, token: token)
 			}
 			for _ in 0..<80 where abs(scrollFraction(of: rawEditor) - expected) > 0.05 {
@@ -148,6 +153,10 @@ struct WebSplitMarkdownScreenTests {
 				abs(scrollFraction(of: rawEditor) - expected) <= 0.05,
 				"target \(expected), actual \(scrollFraction(of: rawEditor))")
 		}
+		// The stale resize task has three delayed passes; prove none can
+		// resurrect the superseded 0.75 viewport after the immediate assertion.
+		try await Task.sleep(for: .milliseconds(1_800))
+		#expect(abs(scrollFraction(of: rawEditor) - 0.2) <= 0.05)
 	}
 
 	@Test("Split restores a collapsed source selection after large-document layout")

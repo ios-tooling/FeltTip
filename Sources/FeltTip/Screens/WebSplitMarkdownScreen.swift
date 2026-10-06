@@ -226,8 +226,14 @@ public struct WebSplitMarkdownScreen: View {
 		}
 		.onAppear { restoreInitialScroll() }
 		.onChange(of: scrollTarget) { _, target in
+			let resizeWasSettling = resizeRestoreTask != nil
+			resizeRestoreTask?.cancel()
+			resizeRestoreTask = nil
 			resizeScrollTarget = nil
 			restoreScroll(to: target)
+			if resizeWasSettling, let target {
+				scheduleResizeRestore(anchor: Double(target.topFraction))
+			}
 		}
 		.onChange(of: text) { _, _ in suspendSyncWhileEditing() }
 	}
@@ -414,8 +420,11 @@ public struct WebSplitMarkdownScreen: View {
 		// scroll event occurred. Reapply the shared normalized viewport after the
 		// resize settles; tokenizing it makes both long-lived panes accept the
 		// same fraction again, including divider drags.
+		scheduleResizeRestore(anchor: settledScrollFraction)
+	}
+
+	private func scheduleResizeRestore(anchor: Double) {
 		resizeRestoreTask?.cancel()
-		let anchor = settledScrollFraction
 		resizeRestoreTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(120))
 			guard !Task.isCancelled else { return }
