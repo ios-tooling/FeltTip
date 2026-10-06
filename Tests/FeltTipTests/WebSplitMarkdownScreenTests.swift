@@ -143,10 +143,10 @@ struct WebSplitMarkdownScreenTests {
 
 	private func scrollFraction(of editor: NSTextView) -> Double {
 		guard let scrollView = editor.enclosingScrollView else { return 0 }
-		let scrollableHeight = max(
-			0, (scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
-		guard scrollableHeight > 0 else { return 0 }
-		return scrollView.contentView.bounds.origin.y / scrollableHeight
+		return MarkdownScrollGeometry.fraction(
+			originY: scrollView.contentView.bounds.origin.y,
+			documentFrame: scrollView.documentView?.frame ?? .zero,
+			visibleHeight: scrollView.contentView.bounds.height)
 	}
 }
 

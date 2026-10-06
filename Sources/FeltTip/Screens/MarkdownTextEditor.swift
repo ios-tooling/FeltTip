@@ -166,7 +166,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 		context.coordinator.scheduleIncrementalLayout(
 			for: textView,
-			revealStartWhenComplete: shouldRevealInitialCaret)
+			revealStartWhenComplete: shouldRevealInitialCaret
+		) { [weak scrollView, weak coordinator = context.coordinator] in
+			guard let scrollView, let coordinator else { return }
+			coordinator.restoreScrollTargetAfterLayout(in: scrollView)
+		}
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
 		// re-styling to the paragraph that actually changed.
@@ -635,7 +639,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// chunks spread across runloop turns instead.
 		func scheduleIncrementalLayout(
 			for textView: NSTextView,
-			revealStartWhenComplete: Bool = false
+			revealStartWhenComplete: Bool = false,
+			completion: (@MainActor () -> Void)? = nil
 		) {
 			prelayoutTask?.cancel()
 			guard let layoutManager = textView.layoutManager else { return }
@@ -656,8 +661,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					location = end
 					try? await Task.sleep(for: .milliseconds(10))
 				}
-				guard !Task.isCancelled, revealStartWhenComplete, let textView else { return }
-				textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+				guard !Task.isCancelled else { return }
+				if revealStartWhenComplete, let textView {
+					textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+				}
+				completion?()
 			}
 		}
 
@@ -775,9 +783,20 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak scrollView] in
 				guard let self, let scrollView,
 					self.lastScrollTargetToken == token else { return }
-				self.applyScrollFraction(Double(target.topFraction), to: scrollView)
-				self.revealExtendedSelectionTarget(in: scrollView)
+				self.restoreScrollTargetAfterLayout(in: scrollView)
 			}
+		}
+
+		/// Reapply the latest host target after TextKit has established the final
+		/// document frame. A large editor can shift its frame origin while its
+		/// incremental pre-layout runs; a target applied to the provisional frame
+		/// otherwise drifts even though its token was already consumed.
+		fileprivate func restoreScrollTargetAfterLayout(in scrollView: NSScrollView) {
+			guard let target = parent.scrollTarget,
+				lastScrollTargetToken == nil || lastScrollTargetToken == target.token else { return }
+			lastScrollTargetToken = target.token
+			applyScrollFraction(Double(target.topFraction), to: scrollView)
+			revealExtendedSelectionTarget(in: scrollView)
 		}
 
 		fileprivate func revealExtendedSelectionTarget(in scrollView: NSScrollView) {

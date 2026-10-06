@@ -387,6 +387,43 @@ struct EditorSelectionHandoffTests {
 			"The initial selection reveal was lost during late layout at \(fraction)")
 	}
 
+	@Test func rawEditorRestoresCollapsedCaretViewportAfterLateLayout() async throws {
+		let source = (0..<1_600).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let caret = (source as NSString).range(of: "Sector 800").location
+		var text = source
+		var heading: String?
+		let root = RawMarkdownScreen(
+			text: Binding(get: { text }, set: { text = $0 }),
+			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
+			fontSize: 14,
+			syncScrollFraction: 0.5,
+			scrollTarget: MarkdownScrollTarget(topFraction: 0.5, token: 1),
+			selectionTarget: MarkdownSelectionTarget(
+				range: NSRange(location: caret, length: 0), token: 1)
+		)
+		let hosting = NSHostingView(rootView: root)
+		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
+		let scrollView = try #require(textView.enclosingScrollView)
+		for _ in 0..<120 where !caretIsVisible(caret, in: textView, scrollView: scrollView) {
+			hosting.layoutSubtreeIfNeeded()
+			try await Task.sleep(for: .milliseconds(25))
+		}
+
+		#expect(textView.selectedRange() == NSRange(location: caret, length: 0))
+		#expect(caretIsVisible(caret, in: textView, scrollView: scrollView),
+			"The restored caret was left outside the settled viewport")
+	}
+
 	@Test func unicodeSelectionRoundTripsThroughStyledAndRawHandoffs() async throws {
 		let source = "Alpha 😀 cafe\u{301} 👩‍💻 omega"
 		let selected = (source as NSString).range(of: "😀 cafe\u{301} 👩‍💻")
@@ -499,6 +536,23 @@ struct EditorSelectionHandoffTests {
 			try await Task.sleep(for: .milliseconds(25))
 		}
 		return nil
+	}
+
+	private func caretIsVisible(
+		_ location: Int, in textView: NSTextView, scrollView: NSScrollView
+	) -> Bool {
+		guard let layoutManager = textView.layoutManager else { return false }
+		layoutManager.ensureLayout(forCharacterRange: NSRange(location: location, length: 0))
+		let glyph = layoutManager.glyphRange(
+			forCharacterRange: NSRange(location: location, length: 0),
+			actualCharacterRange: nil)
+		guard glyph.location < layoutManager.numberOfGlyphs else { return false }
+		let textRect = layoutManager.boundingRect(
+			forGlyphRange: NSRange(location: glyph.location, length: 1),
+			in: textView.textContainer!)
+			.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+		let clipRect = textView.convert(textRect, to: scrollView.contentView)
+		return scrollView.contentView.bounds.intersects(clipRect)
 	}
 }
 
