@@ -433,6 +433,38 @@
     }
     return null;
   }
+  // A host selection can include Markdown syntax that has no rendered DOM
+  // position (for example the leading `## ` in a heading). Map an extended
+  // selection to the first and last visible runs that overlap its source
+  // range. Collapsed carets deliberately keep using `spotFor` and the richer
+  // hidden-syntax handling below.
+  function firstVisibleSpotInRange(start, end) {
+    var spans = document.querySelectorAll('[data-s]');
+    for (var i = 0; i < spans.length; i++) {
+      var base = parseInt(spans[i].getAttribute('data-s'), 10);
+      var len = textLength(spans[i]);
+      if (!Number.isFinite(base) || !len || base >= end || base + len <= start) {
+        continue;
+      }
+      var spot = locate(spans[i], Math.max(0, start - base));
+      if (spot) { spot.span = spans[i]; return spot; }
+    }
+    return null;
+  }
+  function lastVisibleSpotInRange(start, end) {
+    var spans = document.querySelectorAll('[data-s]');
+    var result = null;
+    for (var i = 0; i < spans.length; i++) {
+      var base = parseInt(spans[i].getAttribute('data-s'), 10);
+      var len = textLength(spans[i]);
+      if (!Number.isFinite(base) || !len || base >= end || base + len <= start) {
+        continue;
+      }
+      var spot = locate(spans[i], Math.min(len, end - base));
+      if (spot) { spot.span = spans[i]; result = spot; }
+    }
+    return result;
+  }
   // Show the other pane's selection as a highlight overlay, without
   // touching this page's real selection. The ::highlight(md-mirror) rule
   // ships in the theme stylesheet (MarkdownHTMLRenderer.css(for:)), so the
@@ -1264,9 +1296,12 @@
       !visibleWrapperText;
     var start = useAfterEmptyUnderlineHome || useSourceNeutralCaretHome ||
       useBeforeEmptyUnderlineHome
-      ? null : mappedStart;
+      ? null : length
+      ? mappedStart || firstVisibleSpotInRange(offset, offset + length)
+      : mappedStart;
     if (start && length) {
-      var end = spotFor(offset + length) || start;
+      var end = spotFor(offset + length) ||
+        lastVisibleSpotInRange(offset, offset + length) || start;
       document.body.focus({ preventScroll: true });
       var sel = window.getSelection(), r = document.createRange();
       r.setStart(start.node, start.offset);

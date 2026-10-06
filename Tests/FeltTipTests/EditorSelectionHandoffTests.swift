@@ -174,6 +174,24 @@ struct EditorSelectionHandoffTests {
 		}
 	}
 
+	@Test func styledViewMapsAWholeMarkdownHeadingSelectionToItsVisibleText() async throws {
+		let source = "# Earlier heading\n\nParagraph.\n\n## Sector 016\n\nTail."
+		let selected = (source as NSString).range(of: "## Sector 016")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(MarkdownSelectionTarget(range: selected, token: 1))
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+
+		try await harness.waitUntil("visible heading selection") {
+			try await harness.evaluate("window.getSelection().toString()") == "Sector 016"
+		}
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "Sector 016")
+	}
+
 	@Test func styledViewRestoresSelectionAfterHiddenKramdownAttributeLine() async throws {
 		let source = """
 		# Before
