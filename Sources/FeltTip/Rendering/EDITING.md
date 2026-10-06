@@ -143,6 +143,38 @@ hidden inline syntax (such as the opening `**` of a restored paragraph) snaps
 to the nearest rendered run on that line; only a truly empty source line gets a
 synthetic empty paragraph as its caret home.
 
+### Viewport sync
+
+Scroll positions travel between panes and hosts as a **fraction of the
+scrollable range**, always inside a token-gated `MarkdownScrollTarget`; a fresh
+token re-applies even an unchanged fraction, and editors deduplicate by token.
+`WebSplitMarkdownScreen` only relays: a scroll in one pane becomes a drive of
+the other, a host restore drives both, and it sits out active editing. There
+is no lockout or echo filter at that level because each pane suppresses the
+echo of its own drive (the raw editor's sync flag and reported-offset check,
+the page's `driven` state).
+
+Each pane owns a single **viewport anchor** and re-applies it whenever its
+geometry changes rather than on a timer:
+
+- The raw editor's anchor is a fraction or, after an extended selection
+  handoff, the selected range. Document frame changes (TextKit's lazy layout,
+  a rewrap after resize) and viewport size changes replay it, coalesced per
+  runloop turn and skipped for half a second after a text edit so the caret
+  keeps leading the viewport while typing. Wheel, trackpad, and scroller drags
+  are detected through `NSScrollView` live-scroll notifications; any other
+  clip-origin change inside the short geometry window after a drive or layout
+  change is treated as layout noise and corrected back to the anchor instead of
+  being adopted. A scroll target delivered in the same update as an extended
+  selection handoff is consumed unapplied — the selection is the stronger
+  anchor.
+- The page keeps `lastFraction` and re-drives it after a window resize; content
+  growth under a host drive keeps the driven fraction. It never reports its
+  position at install, since a freshly loaded page is at the top only because
+  the host has not restored it yet.
+- The web coordinator leaves host scroll targets unconsumed while a navigation
+  is in flight and applies them once the control script exists.
+
 ### Paste
 
 The page posts `op: 'paste'` with its range and any verified syntax boundaries

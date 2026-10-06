@@ -5,16 +5,27 @@
   // force WebKit to flush layout. Cache dimensions across scroll frames and
   // invalidate only when viewport/content geometry actually changes.
   var dimensions = null;
+  // While a host-driven scroll is in flight, its echo must not report as
+  // a user scroll — in a split view that echo would claim scroll-sourcehood
+  // and yank the pane the user is actually scrolling. The echo is consumed
+  // when the position settles at the target (or after a grace period, if
+  // the user interrupted the drive).
   var driven = null;
   // The page's viewport anchor: the fraction of the scrollable range the
   // reader last settled at, by their own scroll or a host drive. Geometry
   // changes re-apply it so the pane keeps its place without the host's help.
   var lastFraction = null;
   var fractionRestoreTimers = [];
+  // Every fraction drive — host target, resize restore, content growth —
+  // goes through here. The drive is synchronous from the page's point of
+  // view, so it is marked settled at once: a user gesture arriving before
+  // WebKit dispatches the drive's scroll event is reported instead of being
+  // mistaken for convergence.
   function driveToFraction(fraction) {
     dimensions = null;
     var y = fraction * scrollDimensions().maxY;
-    driven = { y: y, fraction: fraction, until: Date.now() + 500 };
+    driven = { y: y, fraction: fraction, until: Date.now() + 500, settled: true };
+    lastFraction = fraction;
     window.scrollTo(0, y);
   }
   // `fraction` is read when each timer fires, so a user scroll during the
@@ -61,11 +72,6 @@
     geometryObserver.observe(document.documentElement);
     geometryObserver.observe(document.body);
   }
-  // While a host-driven scroll is in flight, its echo must not report as
-  // a user scroll — in a split view that echo claims scroll-sourcehood
-  // and yanks the pane the user is actually scrolling. The echo is
-  // consumed when the position settles at the target (or after a grace
-  // period, if the user interrupted the drive).
 	var visibleSourceTimer = null;
 	var lastVisibleSourceOffset = null;
 	function reportVisibleSourceOffset() {
@@ -138,13 +144,7 @@
     // Top-anchored fraction of the scrollable range — the same units
     // report() emits, so a drive→echo round trip is the identity and the
     // panes agree at both ends of the document.
-    var fraction = Math.max(0, Math.min(1, f));
-    driveToFraction(fraction);
-    lastFraction = fraction;
-    // The target is synchronous from the page's point of view. Mark it settled
-    // now so a user gesture arriving before WebKit dispatches the drive's
-    // scroll event is reported instead of being mistaken for convergence.
-    driven.settled = true;
+    driveToFraction(Math.max(0, Math.min(1, f)));
   };
   // Scroll the run rendering a source offset into view (outline
   // navigation). Heading offsets point at their `#` markers, which no run

@@ -128,8 +128,7 @@ public struct WebSplitMarkdownScreen: View {
 	/// both editors deduplicate by token.
 	@State private var rawScrollTarget: MarkdownScrollTarget?
 	@State private var previewScrollTarget: MarkdownScrollTarget?
-	@State private var rawScrollToken = 0
-	@State private var previewScrollToken = 0
+	@State private var syncCounter = 0
 	@State private var isEditing = false
 	@State private var editLockoutTask: Task<Void, Never>?
 	/// Cross-pane selection mirroring: the focused pane's selection shows as
@@ -243,18 +242,19 @@ public struct WebSplitMarkdownScreen: View {
 	private enum ScrollSource { case raw, formatted }
 
 	private func hostToken(_ token: Int) -> Int { token &* 2 }
-	private func syncToken(_ token: Int) -> Int { token &* 2 &+ 1 }
+
+	private func nextSyncTarget(_ fraction: Double) -> MarkdownScrollTarget {
+		syncCounter += 1
+		return MarkdownScrollTarget(
+			topFraction: CGFloat(fraction), token: syncCounter &* 2 &+ 1)
+	}
 
 	private func driveRawPane(to fraction: Double) {
-		rawScrollToken += 1
-		rawScrollTarget = MarkdownScrollTarget(
-			topFraction: CGFloat(fraction), token: syncToken(rawScrollToken))
+		rawScrollTarget = nextSyncTarget(fraction)
 	}
 
 	private func drivePreviewPane(to fraction: Double) {
-		previewScrollToken += 1
-		previewScrollTarget = MarkdownScrollTarget(
-			topFraction: CGFloat(fraction), token: syncToken(previewScrollToken))
+		previewScrollTarget = nextSyncTarget(fraction)
 	}
 
 	/// One pane scrolled: drive the other to the same fraction. Each pane

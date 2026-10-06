@@ -168,12 +168,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 		context.coordinator.scheduleIncrementalLayout(
-			for: textView,
-			revealStartWhenComplete: shouldRevealInitialCaret
-		) { [weak scrollView, weak coordinator = context.coordinator] in
-			guard let scrollView, let coordinator else { return }
-			coordinator.replayViewportAnchor(in: scrollView)
-		}
+			for: textView, revealStartWhenComplete: shouldRevealInitialCaret)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
 		// re-styling to the paragraph that actually changed.
@@ -251,7 +246,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						// the clip origin on its own (clamping, a frame-origin shift).
 						// Unless the user is actually scrolling, that is layout noise:
 						// put the view back on its anchor instead of adopting it.
-						if coordinator.isLayoutInducedScroll {
+						if coordinator.takeScrollIsLayoutNoise() {
 							coordinator.replayViewportAnchor(in: scrollView)
 							return
 						}
@@ -296,11 +291,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				coordinator.viewportSizeChanged(
 					to: scrollView.contentView.bounds.size, in: scrollView)
 			}
-		}
-		scrollView.onViewportSizeChanged = { [weak scrollView, weak coordinator = context.coordinator] in
-			guard let scrollView, let coordinator else { return }
-			coordinator.viewportSizeChanged(
-				to: scrollView.contentView.bounds.size, in: scrollView)
 		}
 		// Wheel, trackpad, and scroller drags are the one unambiguous "the user
 		// is scrolling" signal AppKit offers; they always outrank a restore.
@@ -711,7 +701,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			case selection(NSRange)
 		}
 
-		var isLayoutInducedScroll: Bool {
+		/// Classifies the clip-origin change being reported this turn, consuming
+		/// the per-turn live-scroll mark.
+		func takeScrollIsLayoutNoise() -> Bool {
 			let live = isLiveScrolling || liveScrolledThisTurn
 			liveScrolledThisTurn = false
 			return !live && CFAbsoluteTimeGetCurrent() < geometryWindowDeadline
@@ -744,8 +736,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// chunks spread across runloop turns instead.
 		func scheduleIncrementalLayout(
 			for textView: NSTextView,
-			revealStartWhenComplete: Bool = false,
-			completion: (@MainActor () -> Void)? = nil
+			revealStartWhenComplete: Bool = false
 		) {
 			prelayoutTask?.cancel()
 			guard let layoutManager = textView.layoutManager else { return }
@@ -770,7 +761,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				if revealStartWhenComplete, let textView {
 					textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
 				}
-				completion?()
 			}
 		}
 
@@ -1266,15 +1256,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 /// the leading characters. This insets the content view by the ruler's thickness
 /// after the standard tiling so the text always starts to the right of the gutter.
 private final class RulerInsetScrollView: NSScrollView {
-	var onViewportSizeChanged: (() -> Void)?
-
-	override func setFrameSize(_ newSize: NSSize) {
-		let changed = abs(newSize.width - frame.width) > 0.5
-			|| abs(newSize.height - frame.height) > 0.5
-		super.setFrameSize(newSize)
-		if changed { onViewportSizeChanged?() }
-	}
-
 	override var isFindBarVisible: Bool {
 		didSet {
 			guard oldValue, !isFindBarVisible,
