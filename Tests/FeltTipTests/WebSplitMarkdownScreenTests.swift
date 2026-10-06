@@ -8,6 +8,27 @@ import WebKit
 
 @MainActor
 struct WebSplitMarkdownScreenTests {
+	@Test("Negative TextKit origins round-trip through split scroll synchronization")
+	func negativeDocumentOriginScrollGeometryRoundTrips() {
+		let frame = CGRect(x: 0, y: -54_700, width: 600, height: 125_000)
+		let visibleHeight: CGFloat = 900
+
+		for expected in [0.0, 0.025, 0.5, 0.975, 1.0] {
+			let origin = MarkdownScrollGeometry.originY(
+				fraction: expected, documentFrame: frame, visibleHeight: visibleHeight)
+			let actual = MarkdownScrollGeometry.fraction(
+				originY: origin, documentFrame: frame, visibleHeight: visibleHeight)
+
+			#expect(abs(actual - expected) < 0.000_001)
+		}
+		#expect(MarkdownScrollGeometry.fraction(
+			originY: frame.minY, documentFrame: frame,
+			visibleHeight: visibleHeight) == 0)
+		#expect(MarkdownScrollGeometry.originY(
+			fraction: 0, documentFrame: frame,
+			visibleHeight: visibleHeight) == frame.minY)
+	}
+
 	@Test("Split editing closes scroll sync before the host changes its binding")
 	func editClosesScrollSyncBeforeHostUpdate() {
 		var syncIsSuspended = false

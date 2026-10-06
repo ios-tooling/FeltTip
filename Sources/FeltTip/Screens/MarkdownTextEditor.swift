@@ -5,6 +5,31 @@
 
 #if os(macOS)
 import SwiftUI
+
+/// Converts between AppKit clip-view origins and normalized scroll positions.
+/// TextKit can temporarily position a large document at a negative Y origin,
+/// so both directions must use the document frame's actual minimum rather
+/// than assuming the scrollable range begins at zero.
+enum MarkdownScrollGeometry {
+	static func fraction(
+		originY: CGFloat, documentFrame: CGRect, visibleHeight: CGFloat
+	) -> Double {
+		let minY = documentFrame.minY
+		let maxY = max(minY, documentFrame.maxY - visibleHeight)
+		let span = maxY - minY
+		guard span > 0 else { return 0 }
+		return Double(min(1, max(0, (originY - minY) / span)))
+	}
+
+	static func originY(
+		fraction: Double, documentFrame: CGRect, visibleHeight: CGFloat
+	) -> CGFloat {
+		let minY = documentFrame.minY
+		let maxY = max(minY, documentFrame.maxY - visibleHeight)
+		let clamped = min(1, max(0, fraction))
+		return minY + CGFloat(clamped) * (maxY - minY)
+	}
+}
 @preconcurrency import AppKit
 
 public struct MarkdownTextEditor: NSViewRepresentable {
@@ -189,18 +214,21 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						coordinator.scrollReportScheduled = false
 						(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
 						guard !coordinator.isSyncScroll else { return }
-						let docHeight = scrollView.documentView?.frame.height ?? 0
+						let documentFrame = scrollView.documentView?.frame ?? .zero
 						let visibleHeight = scrollView.contentView.bounds.height
 						let offset = scrollView.contentView.bounds.origin.y
 						// Only an actual origin change is a scroll — size/layout churn
 						// at a stable position is not the user scrolling this pane.
 						guard abs(offset - coordinator.lastReportedScrollOffset) > 0.5 else { return }
 						coordinator.lastReportedScrollOffset = offset
-						let fraction = docHeight > visibleHeight ? offset / (docHeight - visibleHeight) : 0
+						let fraction = MarkdownScrollGeometry.fraction(
+							originY: offset,
+							documentFrame: documentFrame,
+							visibleHeight: visibleHeight)
 						if MarkdownSplitSyncLog.enabled {
-							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, docHeight, fraction)
+							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, documentFrame.height, fraction)
 						}
-						coordinator.parent.onScrollFractionChanged?(min(1, max(0, fraction)))
+						coordinator.parent.onScrollFractionChanged?(fraction)
 
 						guard let textView, coordinator.parent.onVisibleHeadingChanged != nil else { return }
 
@@ -708,11 +736,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		func applyScrollFraction(_ fraction: Double, to scrollView: NSScrollView) {
 			isSyncScroll = true
-			let docHeight = scrollView.documentView?.frame.height ?? 0
+			let documentFrame = scrollView.documentView?.frame ?? .zero
 			let visibleHeight = scrollView.contentView.bounds.height
-			let offset = fraction * max(0, docHeight - visibleHeight)
+			let offset = MarkdownScrollGeometry.originY(
+				fraction: fraction,
+				documentFrame: documentFrame,
+				visibleHeight: visibleHeight)
 			if MarkdownSplitSyncLog.enabled {
-				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, offset, docHeight)
+				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, offset, documentFrame.height)
 			}
 			// Preserve x: with a line-number gutter the resting origin is
 			// -contentInsets.left, and scrolling to x: 0 slid the text
