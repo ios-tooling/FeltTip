@@ -3,29 +3,14 @@
 //  FeltTip
 //
 //  Source editor (left) paired with the WebKit-based rendered preview (right),
-//  with synced scrolling between the panes. Mirrors SplitMarkdownScreen's
-//  scroll-sync machinery but uses MarkdownWebView for the preview, so rich
-//  content (mermaid, images, embedded HTML) renders with full fidelity.
+//  with synced scrolling between the panes. The split only relays: a scroll in
+//  one pane becomes a token-gated drive of the other, and a host restore
+//  drives both. Each pane owns its own viewport through layout and resize and
+//  suppresses the echo of its own drive, so there is no arbitration here
+//  beyond sitting out active editing.
 //
 
 import SwiftUI
-
-@MainActor
-enum MarkdownSplitEditRelay {
-	static func forward(
-		_ newText: String,
-		caret: Int?,
-		beginEditing: () -> Void,
-		report: ((String, Int?) -> Void)?,
-		write: (String) -> Void
-	) {
-		// The renderer can synchronously publish layout-driven scroll callbacks
-		// while the host is accepting this edit. Close the sync gate before the
-		// host changes its binding, rather than waiting for SwiftUI's onChange.
-		beginEditing()
-		if let report { report(newText, caret) } else { write(newText) }
-	}
-}
 
 /// Pane selected by the compact iOS source/rendered switch. Hosts can persist
 /// this per document while regular-width layouts continue to show both panes.
@@ -135,8 +120,6 @@ public struct WebSplitMarkdownScreen: View {
 
 	#if os(macOS)
 	@State private var scrollFraction: Double = 0
-	@State private var scrollSource: ScrollSource = .none
-	@State private var lockoutTask: Task<Void, Never>?
 	@State private var didRestoreScroll = false
 	/// Each pane's current drive, held as state rather than derived so it
 	/// never flips back to an already-consumed host target once a pane sync
@@ -153,7 +136,6 @@ public struct WebSplitMarkdownScreen: View {
 	/// an inactive highlight in the other.
 	@State private var previewMirror: NSRange?
 	@State private var rawMirror: NSRange?
-	private static let scrollLockoutMs: Int = 200
 	private static let editLockoutMs: Int = 700
 
 	public var body: some View {
@@ -203,7 +185,6 @@ public struct WebSplitMarkdownScreen: View {
 	/// active editing entirely and resumes after a pause.
 	private func suspendSyncWhileEditing() {
 		isEditing = true
-		scrollSource = .none
 		// Edits shift offsets; a stale mirror would highlight the wrong text.
 		previewMirror = nil
 		rawMirror = nil
@@ -216,12 +197,11 @@ public struct WebSplitMarkdownScreen: View {
 	}
 
 	private func relaySourceEdit(_ newText: String, caret: Int?) {
-		MarkdownSplitEditRelay.forward(
-			newText,
-			caret: caret,
-			beginEditing: suspendSyncWhileEditing,
-			report: onSourceEdit,
-			write: { text = $0 })
+		// The renderer can synchronously publish layout-driven scroll callbacks
+		// while the host is accepting this edit. Close the sync gate before the
+		// host changes its binding, rather than waiting for SwiftUI's onChange.
+		suspendSyncWhileEditing()
+		if let onSourceEdit { onSourceEdit(newText, caret) } else { text = newText }
 	}
 
 	private var preview: MarkdownWebView {
@@ -260,7 +240,7 @@ public struct WebSplitMarkdownScreen: View {
 		return view
 	}
 
-	private enum ScrollSource { case none, raw, formatted }
+	private enum ScrollSource { case raw, formatted }
 
 	private func hostToken(_ token: Int) -> Int { token &* 2 }
 	private func syncToken(_ token: Int) -> Int { token &* 2 &+ 1 }
@@ -277,40 +257,22 @@ public struct WebSplitMarkdownScreen: View {
 			topFraction: CGFloat(fraction), token: syncToken(previewScrollToken))
 	}
 
-	/// While one pane is the active source, drop the other pane's scroll
-	/// callbacks so the two don't ping-pong. Each pane already suppresses the
-	/// echo of its own drive (the raw editor's sync flag, the page's `driven`
-	/// state), so a host restore needs no arbitration here at all.
+	/// One pane scrolled: drive the other to the same fraction. Each pane
+	/// suppresses the echo of its own drive (the raw editor's sync flag and
+	/// reported-offset check, the page's `driven` state), so no lockout or
+	/// value-based echo filter is needed here; the only thing worth dropping is
+	/// the layout churn of active editing.
 	private func didScroll(_ source: ScrollSource, fraction: Double) {
 		if isEditing {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] editing, drop %@ %.4f", "\(source)", fraction) }
 			return
 		}
-		if scrollSource != .none && scrollSource != source {
-			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] drop %@ %.4f (source %@)", "\(source)", fraction, "\(scrollSource)") }
-			return
-		}
-		// Claiming sourcehood requires genuine movement: a report at (or next
-		// to) the already-synced position is an echo of our own sync or layout
-		// noise, and driving the other pane from it causes visible snap-backs.
-		// A single wheel/trackpad step in a very long document can move less
-		// than one percent. Treat only effectively identical reports as echoes;
-		// the pane-specific drive gates already suppress their own callbacks.
-		if scrollSource != source, abs(fraction - scrollFraction) < 0.000_1 {
-			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] echo %@ %.4f", "\(source)", fraction) }
-			return
-		}
-		if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] claim %@ %.4f", "\(source)", fraction) }
-		scrollSource = source
+		if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] sync from %@ %.4f", "\(source)", fraction) }
 		scrollFraction = fraction
 		onScrollFractionChanged?(fraction)
-		if source == .raw { drivePreviewPane(to: fraction) }
-		if source == .formatted { driveRawPane(to: fraction) }
-		lockoutTask?.cancel()
-		lockoutTask = Task { @MainActor in
-			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
-			guard !Task.isCancelled else { return }
-			scrollSource = .none
+		switch source {
+		case .raw: drivePreviewPane(to: fraction)
+		case .formatted: driveRawPane(to: fraction)
 		}
 	}
 
