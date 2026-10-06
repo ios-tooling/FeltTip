@@ -335,7 +335,12 @@ struct EditorSelectionHandoffTests {
 		// Cursor/status publication re-renders Marker after the initial handoff.
 		// Model that later pass with another stale normalized fraction.
 		model.syncFraction = 0.8
-		try await Task.sleep(for: .milliseconds(200))
+		try await Task.sleep(for: .milliseconds(100))
+		// A sidebar/window resize can schedule several delayed viewport restores.
+		// None of them may outlive and hide the stronger selection handoff.
+		window.setContentSize(NSSize(width: 430, height: 400))
+		hosting.layoutSubtreeIfNeeded()
+		try await Task.sleep(for: .milliseconds(1_200))
 		hosting.layoutSubtreeIfNeeded()
 
 		#expect(textView.selectedRange() == selected)

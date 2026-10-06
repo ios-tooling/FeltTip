@@ -202,6 +202,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		) { [weak scrollView, weak textView, weak coordinator = context.coordinator] _ in
 			MainActor.assumeIsolated {
 				guard let scrollView, let coordinator, !coordinator.isSyncScroll else { return }
+				if coordinator.viewportSizeChanged(
+					to: scrollView.contentView.bounds.size, in: scrollView) {
+					(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+					return
+				}
 
 				// Coalesce ALL reactions — including the ruler invalidation — to
 				// the end of the runloop turn, and read the SETTLED offset.
@@ -233,6 +238,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 							originY: offset,
 							documentFrame: documentFrame,
 							visibleHeight: visibleHeight)
+						coordinator.lastStableScrollFraction = fraction
 						if MarkdownSplitSyncLog.enabled {
 							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, documentFrame.height, fraction)
 						}
@@ -254,6 +260,23 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				}
 			}
 		}
+		scrollView.postsFrameChangedNotifications = true
+		context.coordinator.viewportObserver = NotificationCenter.default.addObserver(
+			forName: NSView.frameDidChangeNotification,
+			object: scrollView,
+			queue: .main
+		) { [weak scrollView, weak coordinator = context.coordinator] _ in
+			MainActor.assumeIsolated {
+				guard let scrollView, let coordinator else { return }
+				coordinator.viewportSizeChanged(
+					to: scrollView.contentView.bounds.size, in: scrollView)
+			}
+		}
+		scrollView.onViewportSizeChanged = { [weak scrollView, weak coordinator = context.coordinator] in
+			guard let scrollView, let coordinator else { return }
+			coordinator.viewportSizeChanged(
+				to: scrollView.contentView.bounds.size, in: scrollView)
+		}
 
 		if let target = scrollTarget {
 			// SwiftUI is not required to call updateNSView after this initial
@@ -265,6 +288,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						coordinator.parent.scrollTarget?.token == target.token else { return }
 					coordinator.applyScrollTarget(target, to: scrollView)
 				}
+			}
+		}
+		RunLoop.main.perform { [weak scrollView, weak coordinator = context.coordinator] in
+			MainActor.assumeIsolated {
+				guard let scrollView, let coordinator else { return }
+				let size = scrollView.contentView.bounds.size
+				guard size.width > 0, size.height > 0 else { return }
+				coordinator.lastViewportSize = size
 			}
 		}
 
@@ -368,6 +399,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		if let target = selectionTarget,
 		   target.token != context.coordinator.lastSelectionTargetToken {
+			context.coordinator.cancelViewportRestore()
 			context.coordinator.lastSelectionTargetToken = target.token
 			let length = (textView.string as NSString).length
 			let location = min(max(0, target.range.location), length)
@@ -614,6 +646,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var parent: MarkdownTextEditor
 		var lastScrolledID: String?
 		var scrollObserver: Any?
+		var viewportObserver: Any?
 		var lastScrollTime: CFAbsoluteTime = 0
 		var lastReportedHeading: String?
 		var lastAppliedFraction: Double = -1
@@ -627,6 +660,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// selection does not permanently disable ordinary split-pane scrolling.
 		var pinnedSelectionTargetToken: Int?
 		var isSyncScroll = false
+		var lastViewportSize: CGSize = .zero
+		var lastStableScrollFraction: Double = 0
+		var viewportRestoreTask: Task<Void, Never>?
+		var viewportRestoreAnchor: Double?
 		/// Last bounds origin reported as a scroll. `boundsDidChange` also
 		/// fires when TextKit's document-height estimate flaps during layout
 		/// (constant offset, different fraction); reporting those as scrolls
@@ -756,6 +793,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		func applyScrollFraction(_ fraction: Double, to scrollView: NSScrollView) {
 			isSyncScroll = true
+			lastStableScrollFraction = max(0, min(1, fraction))
 			let documentFrame = scrollView.documentView?.frame ?? .zero
 			let visibleHeight = scrollView.contentView.bounds.height
 			let offset = MarkdownScrollGeometry.originY(
@@ -779,8 +817,44 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			DispatchQueue.main.async { [weak self] in self?.isSyncScroll = false }
 		}
 
+		/// Preserve the same normalized viewport when the containing layout
+		/// changes width or height. TextKit keeps the old pixel offset while its
+		/// document height changes, which otherwise makes opening a sidebar jump
+		/// dozens of sections in a long raw document.
+		@discardableResult
+		func viewportSizeChanged(to size: CGSize, in scrollView: NSScrollView) -> Bool {
+			guard size.width > 0, size.height > 0 else { return false }
+			guard lastViewportSize != .zero else {
+				lastViewportSize = size
+				return true
+			}
+			guard abs(size.width - lastViewportSize.width) > 0.5
+				|| abs(size.height - lastViewportSize.height) > 0.5 else { return false }
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw viewport %.1fx%.1f -> %.1fx%.1f stable=%.4f anchor=%@",
+					lastViewportSize.width, lastViewportSize.height, size.width, size.height,
+					lastStableScrollFraction, String(describing: viewportRestoreAnchor))
+			}
+			lastViewportSize = size
+			viewportRestoreTask?.cancel()
+			let anchor = viewportRestoreAnchor ?? lastStableScrollFraction
+			viewportRestoreAnchor = anchor
+			viewportRestoreTask = Task { @MainActor [weak self, weak scrollView] in
+				for delay in [120, 480, 900] {
+					try? await Task.sleep(for: .milliseconds(delay))
+					guard !Task.isCancelled, let self, let scrollView else { return }
+					self.applyScrollFraction(self.viewportRestoreAnchor ?? anchor, to: scrollView)
+					self.revealExtendedSelectionTarget(in: scrollView)
+				}
+				self?.viewportRestoreTask = nil
+				self?.viewportRestoreAnchor = nil
+			}
+			return true
+		}
+
 		func applyScrollTarget(_ target: MarkdownScrollTarget, to scrollView: NSScrollView) {
 			guard target.token != lastScrollTargetToken else { return }
+			cancelViewportRestore()
 			lastScrollTargetToken = target.token
 			applyScrollFraction(Double(target.topFraction), to: scrollView)
 			revealExtendedSelectionTarget(in: scrollView)
@@ -865,6 +939,18 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			layoutManager.ensureLayout(forCharacterRange: range)
 			textView.scrollRangeToVisible(range)
 			lastReportedScrollOffset = scrollView.contentView.bounds.origin.y
+			let fraction = MarkdownScrollGeometry.fraction(
+				originY: lastReportedScrollOffset,
+				documentFrame: scrollView.documentView?.frame ?? .zero,
+				visibleHeight: scrollView.contentView.bounds.height)
+			lastStableScrollFraction = fraction
+			if viewportRestoreAnchor != nil { viewportRestoreAnchor = fraction }
+		}
+
+		fileprivate func cancelViewportRestore() {
+			viewportRestoreTask?.cancel()
+			viewportRestoreTask = nil
+			viewportRestoreAnchor = nil
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching
@@ -989,7 +1075,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		isolated deinit {
 			prelayoutTask?.cancel()
 			headingIndexTask?.cancel()
+			viewportRestoreTask?.cancel()
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
+			if let obs = viewportObserver { NotificationCenter.default.removeObserver(obs) }
 			headingDebounceTimer?.invalidate()
 			highlightDebounceTimer?.invalidate()
 		}
@@ -1135,6 +1223,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 /// the leading characters. This insets the content view by the ruler's thickness
 /// after the standard tiling so the text always starts to the right of the gutter.
 private final class RulerInsetScrollView: NSScrollView {
+	var onViewportSizeChanged: (() -> Void)?
+
+	override func setFrameSize(_ newSize: NSSize) {
+		let changed = abs(newSize.width - frame.width) > 0.5
+			|| abs(newSize.height - frame.height) > 0.5
+		super.setFrameSize(newSize)
+		if changed { onViewportSizeChanged?() }
+	}
+
 	override var isFindBarVisible: Bool {
 		didSet {
 			guard oldValue, !isFindBarVisible,
