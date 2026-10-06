@@ -30,6 +30,9 @@ struct AdaptiveMarkdownPanes: View {
 	@State private var pane: MarkdownCompactPane
 	@State private var scrollFraction: Double = 0
 	@State private var didSeedScroll = false
+	/// Bumped whenever the source pane should adopt `scrollFraction`: the
+	/// initial seed and each compact switch back to it.
+	@State private var sourceScrollToken = 0
 
 	init(
 		text: Binding<String>,
@@ -54,21 +57,29 @@ struct AdaptiveMarkdownPanes: View {
 			if sizeClass == .compact {
 				CompactMarkdownPanes(
 					pane: $pane, text: $text, selectedHeadingID: $selectedHeadingID,
-					scrollFraction: $scrollFraction, context: context,
-					onScrollFractionChanged: onScrollFractionChanged)
+					scrollFraction: $scrollFraction, sourceScrollTarget: sourceScrollTarget,
+					context: context, onScrollFractionChanged: onScrollFractionChanged)
 			} else {
 				RegularMarkdownPanes(
 					text: $text, selectedHeadingID: $selectedHeadingID,
-					scrollFraction: $scrollFraction, context: context,
-					onScrollFractionChanged: onScrollFractionChanged)
+					scrollFraction: $scrollFraction, sourceScrollTarget: sourceScrollTarget,
+					context: context, onScrollFractionChanged: onScrollFractionChanged)
 			}
 		}
 		.onAppear {
 			guard !didSeedScroll, let initialScrollFraction else { return }
 			didSeedScroll = true
 			scrollFraction = initialScrollFraction
+			sourceScrollToken += 1
 		}
-		.onChange(of: pane) { _, pane in onPaneChanged?(pane) }
+		.onChange(of: pane) { _, pane in
+			onPaneChanged?(pane)
+			if pane == .source { sourceScrollToken += 1 }
+		}
+	}
+
+	private var sourceScrollTarget: MarkdownScrollTarget {
+		MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: sourceScrollToken)
 	}
 }
 
@@ -77,6 +88,7 @@ private struct CompactMarkdownPanes: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
 	@Binding var scrollFraction: Double
+	let sourceScrollTarget: MarkdownScrollTarget
 	let context: MarkdownPaneContext
 	var onScrollFractionChanged: ((Double) -> Void)?
 
@@ -96,8 +108,8 @@ private struct CompactMarkdownPanes: View {
 			case .source:
 				SourceMarkdownPane(
 					text: $text, selectedHeadingID: $selectedHeadingID,
-					scrollFraction: $scrollFraction, context: context,
-					onScrollFractionChanged: onScrollFractionChanged)
+					scrollFraction: $scrollFraction, scrollTarget: sourceScrollTarget,
+					context: context, onScrollFractionChanged: onScrollFractionChanged)
 			}
 		}
 	}
@@ -107,6 +119,7 @@ private struct RegularMarkdownPanes: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
 	@Binding var scrollFraction: Double
+	let sourceScrollTarget: MarkdownScrollTarget
 	let context: MarkdownPaneContext
 	var onScrollFractionChanged: ((Double) -> Void)?
 
@@ -114,8 +127,8 @@ private struct RegularMarkdownPanes: View {
 		HStack(spacing: 0) {
 			SourceMarkdownPane(
 				text: $text, selectedHeadingID: $selectedHeadingID,
-				scrollFraction: $scrollFraction, context: context,
-				onScrollFractionChanged: onScrollFractionChanged)
+				scrollFraction: $scrollFraction, scrollTarget: sourceScrollTarget,
+				context: context, onScrollFractionChanged: onScrollFractionChanged)
 			Divider()
 			RenderedMarkdownPane(
 				text: text, context: context, scrollFraction: scrollFraction)

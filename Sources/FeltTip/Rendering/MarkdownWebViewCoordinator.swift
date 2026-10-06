@@ -93,7 +93,6 @@ extension MarkdownWebView {
 		/// Scroll-control tokens already applied, so a state-driven binding that
 		/// survives unrelated re-renders doesn't re-scroll.
 		private var lastScrollTargetToken: Int?
-		private var lastScrollDeltaToken: Int?
 		private var lastSourceScrollToken: Int?
 		/// Caret-restore token already applied, so a binding that survives
 		/// unrelated re-renders doesn't re-place the caret.
@@ -1425,14 +1424,9 @@ extension MarkdownWebView {
 			}
 		}
 
-		/// Apply token-gated scroll controls (target/delta) from the host.
+		/// Apply token-gated scroll controls from the host.
 		func applyScrollControls(to webView: WKWebView) {
 			applyScrollTarget(to: webView)
-			if let delta = parent.scrollDelta, delta.token != lastScrollDeltaToken {
-				lastScrollDeltaToken = delta.token
-				log("scroll control: byPixels \(delta.deltaY) token \(delta.token)")
-				webView.evaluateJavaScript("window.__mdScrollByPixels && window.__mdScrollByPixels(\(delta.deltaY));", completionHandler: nil)
-			}
 			if let target = parent.sourceScrollTarget, target.token != lastSourceScrollToken {
 				lastSourceScrollToken = target.token
 				log("scroll control: toSourceOffset \(target.offset) token \(target.token)")

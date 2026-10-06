@@ -83,8 +83,6 @@ public struct MarkdownWebView: UXViewRepresentable {
 	var onVisibleSourceOffsetChanged: (@MainActor @Sendable (Int) -> Void)?
 	/// Drive the page so `topFraction` sits at the viewport center; token-gated.
 	var scrollTarget: MarkdownScrollTarget?
-	/// Apply a relative pixel scroll from outside; token-gated.
-	var scrollDelta: MarkdownScrollDelta?
 	/// Scroll a source offset's rendered run into view (token-gated). Drives
 	/// outline/table-of-contents navigation.
 	var sourceScrollTarget: MarkdownSourceScrollTarget?
@@ -248,13 +246,6 @@ public struct MarkdownWebView: UXViewRepresentable {
 	public func scrollTarget(_ target: MarkdownScrollTarget?) -> Self {
 		var copy = self
 		copy.scrollTarget = target
-		return copy
-	}
-
-	/// Apply a relative pixel scroll delta from outside (token-gated).
-	public func scrollDelta(_ delta: MarkdownScrollDelta?) -> Self {
-		var copy = self
-		copy.scrollDelta = delta
 		return copy
 	}
 

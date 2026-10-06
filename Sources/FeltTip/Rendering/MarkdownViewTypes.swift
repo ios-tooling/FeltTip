@@ -37,19 +37,6 @@ public struct MarkdownScrollTarget: Equatable, Sendable {
 	}
 }
 
-/// A relative scroll request expressed in pixels (positive `deltaY` scrolls
-/// content down), paired with a token so two updates with the same delta across
-/// separate gestures both fire.
-public struct MarkdownScrollDelta: Equatable, Sendable {
-	public let deltaY: CGFloat
-	public let token: Int
-
-	public init(deltaY: CGFloat, token: Int) {
-		self.deltaY = deltaY
-		self.token = token
-	}
-}
-
 /// A request to place the insertion point at a source (UTF-16) offset, paired
 /// with a token so repeated requests for the same offset (e.g. undo then redo
 /// back to the same place) all fire instead of being deduped by SwiftUI

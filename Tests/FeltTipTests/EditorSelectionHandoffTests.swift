@@ -436,11 +436,7 @@ struct EditorSelectionHandoffTests {
 
 		hosting.layoutSubtreeIfNeeded()
 		let textView = try #require(try await waitForTextView(in: hosting))
-		try await Task.sleep(for: .milliseconds(200))
-		// Cursor/status publication re-renders Marker after the initial handoff.
-		// Model that later pass with another stale normalized fraction.
-		model.syncFraction = 0.8
-		try await Task.sleep(for: .milliseconds(100))
+		try await Task.sleep(for: .milliseconds(300))
 		// A sidebar/window resize can schedule several delayed viewport restores.
 		// None of them may outlive and hide the stronger selection handoff.
 		window.setContentSize(NSSize(width: 430, height: 400))
@@ -474,9 +470,6 @@ struct EditorSelectionHandoffTests {
 		hosting.layoutSubtreeIfNeeded()
 		let textView = try #require(try await waitForTextView(in: hosting))
 		try await Task.sleep(for: .milliseconds(100))
-		// Reproduce Marker restoring the raw pane's viewport from its previous
-		// visit while the incoming extended selection is still settling.
-		model.syncFraction = 0.8
 		window.setContentSize(NSSize(width: 430, height: 400))
 		hosting.layoutSubtreeIfNeeded()
 		try await Task.sleep(for: .milliseconds(1_200))
@@ -518,7 +511,7 @@ struct EditorSelectionHandoffTests {
 		try await Task.sleep(for: .milliseconds(500))
 		// Once the handoff's late-layout window has elapsed, a real split-pane
 		// scroll must be allowed to move the selection offscreen.
-		model.syncFraction = 0.65
+		model.scrollTarget = MarkdownScrollTarget(topFraction: 0.65, token: 2)
 		for _ in 0..<40 {
 			hosting.layoutSubtreeIfNeeded()
 			let scrollView = try #require(textView.enclosingScrollView)
@@ -589,7 +582,6 @@ struct EditorSelectionHandoffTests {
 			text: Binding(get: { text }, set: { text = $0 }),
 			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
 			fontSize: 14,
-			syncScrollFraction: 0.5,
 			scrollTarget: MarkdownScrollTarget(topFraction: 0.5, token: 1),
 			selectionTarget: MarkdownSelectionTarget(
 				range: NSRange(location: caret, length: 0), token: 1)
@@ -764,7 +756,7 @@ struct EditorSelectionHandoffTests {
 private final class RawSelectionViewportModel {
 	var text: String
 	var heading: String?
-	var syncFraction = 0.9
+	var scrollTarget = MarkdownScrollTarget(topFraction: 0.9, token: 1)
 	let selected: NSRange
 
 	init(source: String, selected: NSRange) {
@@ -781,8 +773,7 @@ private struct RawSelectionViewportHost: View {
 			text: $model.text,
 			selectedHeadingID: $model.heading,
 			fontSize: 14,
-			syncScrollFraction: model.syncFraction,
-			scrollTarget: MarkdownScrollTarget(topFraction: 0.9, token: 1),
+			scrollTarget: model.scrollTarget,
 			selectionTarget: MarkdownSelectionTarget(range: model.selected, token: 1)
 		)
 	}

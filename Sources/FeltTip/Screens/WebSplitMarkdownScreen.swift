@@ -176,6 +176,12 @@ public struct WebSplitMarkdownScreen: View {
 	/// Bumped each time the raw pane drives the scroll, so the token-gated
 	/// `scrollTarget` on the web preview re-applies the latest fraction.
 	@State private var previewScrollToken = 0
+	/// Mirror image for the raw pane: bumped when the rendered pane drives.
+	@State private var rawScrollToken = 0
+	/// The raw pane's current drive. Held as state rather than derived so it
+	/// never flips back to an already-consumed host target once a pane sync
+	/// has moved the raw editor elsewhere; late layout replays read it too.
+	@State private var rawScrollTarget: MarkdownScrollTarget?
 	@State private var isEditing = false
 	@State private var editLockoutTask: Task<Void, Never>?
 	/// Cross-pane selection mirroring: the focused pane's selection shows as
@@ -194,8 +200,7 @@ public struct WebSplitMarkdownScreen: View {
 				fontSize: fontSize,
 				onVisibleHeadingChanged: { id in if let id { onVisibleSectionChanged?(id) } },
 				onScrollFractionChanged: { didScroll(.raw, fraction: $0) },
-				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
-				scrollTarget: effectiveScrollTarget,
+				scrollTarget: rawScrollTarget,
 				typewriterMode: typewriterMode,
 				focusModeEnabled: focusModeEnabled,
 				theme: theme,
@@ -309,19 +314,28 @@ public struct WebSplitMarkdownScreen: View {
 		resizeScrollTarget ?? scrollTarget
 	}
 
-	/// Host and pane-sync targets use disjoint token spaces. MarkdownWebView
-	/// deduplicates by token, so sharing a sequence could otherwise make a raw
-	/// pane scroll accidentally suppress the next host restore.
+	/// Host and pane-sync targets use disjoint token spaces (even and odd).
+	/// Both editors deduplicate by token, so sharing a sequence could otherwise
+	/// make a pane sync accidentally suppress the next host restore.
+	private func hostToken(_ token: Int) -> Int { token &* 2 }
+	private func syncToken(_ token: Int) -> Int { token &* 2 &+ 1 }
+
+	private func driveRawPane(to fraction: Double) {
+		rawScrollToken += 1
+		rawScrollTarget = MarkdownScrollTarget(
+			topFraction: CGFloat(fraction), token: syncToken(rawScrollToken))
+	}
+
 	private var previewScrollTarget: MarkdownScrollTarget? {
 		if scrollSource == .host, let scrollTarget = effectiveScrollTarget {
 			return MarkdownScrollTarget(
 				topFraction: scrollTarget.topFraction,
-				token: scrollTarget.token &* 2)
+				token: hostToken(scrollTarget.token))
 		}
 		guard scrollSource == .raw else { return nil }
 		return MarkdownScrollTarget(
 			topFraction: CGFloat(scrollFraction),
-			token: previewScrollToken &* 2 &+ 1)
+			token: syncToken(previewScrollToken))
 	}
 
 	/// Lockout mirrors SplitMarkdownScreen: while one pane is the active source,
@@ -363,6 +377,7 @@ public struct WebSplitMarkdownScreen: View {
 		scrollFraction = fraction
 		onScrollFractionChanged?(fraction)
 		if source == .raw { previewScrollToken += 1 }
+		if source == .formatted { driveRawPane(to: fraction) }
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
@@ -382,6 +397,9 @@ public struct WebSplitMarkdownScreen: View {
 		didRestoreScroll = true
 		scrollFraction = fraction
 		scrollSource = .formatted
+		// The preview applies `initialScrollFraction` itself; the raw pane
+		// needs a drive to the same place.
+		driveRawPane(to: fraction)
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
@@ -407,6 +425,8 @@ public struct WebSplitMarkdownScreen: View {
 		scrollFraction = Double(target.topFraction)
 		settledScrollFraction = scrollFraction
 		scrollSource = .host
+		rawScrollTarget = MarkdownScrollTarget(
+			topFraction: target.topFraction, token: hostToken(target.token))
 		hostRestoreGuard.begin(at: scrollFraction)
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in

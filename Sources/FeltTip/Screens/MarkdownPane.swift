@@ -59,6 +59,9 @@ struct SourceMarkdownPane: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
 	@Binding var scrollFraction: Double
+	/// Token-gated drive to the shared fraction, minted when this pane is
+	/// (re)shown so it opens where the rendered pane left off.
+	let scrollTarget: MarkdownScrollTarget
 	let context: MarkdownPaneContext
 	var onScrollFractionChanged: ((Double) -> Void)?
 
@@ -71,7 +74,7 @@ struct SourceMarkdownPane: View {
 				scrollFraction = fraction
 				onScrollFractionChanged?(fraction)
 			},
-			syncScrollFraction: scrollFraction,
+			scrollTarget: scrollTarget,
 			typewriterMode: context.typewriterMode,
 			theme: context.theme,
 			onCursorPositionChanged: context.onCursorPositionChanged,

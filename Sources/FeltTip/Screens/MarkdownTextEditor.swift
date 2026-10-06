@@ -51,7 +51,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	var fontSize: CGFloat = 13
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
-	var syncScrollFraction: Double?
+	/// Token-gated viewport drive: host restores and split-pane sync both
+	/// arrive here. A fresh token re-applies even an unchanged fraction.
 	var scrollTarget: MarkdownScrollTarget?
 	var typewriterMode: Bool = false
 	var focusModeEnabled: Bool = false
@@ -74,7 +75,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	/// highlight (temporary layout attributes — the real selection, text
 	/// storage, and undo state are untouched).
 	var mirroredSelection: NSRange?
-	var scrollToCharacterOffset: Int?
 	var caretTarget: MarkdownCaretTarget?
 	/// Token-gated source selection installed when this editor takes over from
 	/// another mode. Applied even before first-responder handoff completes.
@@ -86,7 +86,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		fontSize: CGFloat = 13,
 		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
-		syncScrollFraction: Double? = nil,
 		scrollTarget: MarkdownScrollTarget? = nil,
 		typewriterMode: Bool = false,
 		focusModeEnabled: Bool = false,
@@ -96,7 +95,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		onSelectionChanged: ((NSRange?) -> Void)? = nil,
 		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		mirroredSelection: NSRange? = nil,
-		scrollToCharacterOffset: Int? = nil,
 		caretTarget: MarkdownCaretTarget? = nil,
 		selectionTarget: MarkdownSelectionTarget? = nil
 	) {
@@ -105,7 +103,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.fontSize = fontSize
 		self.onVisibleHeadingChanged = onVisibleHeadingChanged
 		self.onScrollFractionChanged = onScrollFractionChanged
-		self.syncScrollFraction = syncScrollFraction
 		self.scrollTarget = scrollTarget
 		self.typewriterMode = typewriterMode
 		self.focusModeEnabled = focusModeEnabled
@@ -115,7 +112,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		self.onSelectionChanged = onSelectionChanged
 		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.mirroredSelection = mirroredSelection
-		self.scrollToCharacterOffset = scrollToCharacterOffset
 		self.caretTarget = caretTarget
 		self.selectionTarget = selectionTarget
 	}
@@ -155,9 +151,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.setSelectedRange(NSRange(location: 0, length: 0))
 		let shouldRevealInitialCaret = selectionTarget == nil
 			&& caretTarget == nil
-			&& scrollToCharacterOffset == nil
 			&& selectedHeadingID == nil
-			&& syncScrollFraction == nil
 			&& scrollTarget == nil
 		context.coordinator.lineIndex.rebuild(for: text)
 		// Assigning the string can report a selection before the line index is
@@ -456,24 +450,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// example when the cursor/status model updates); never let that stale
 			// fraction hide the selection again.
 			context.coordinator.revealExtendedSelectionTarget(in: scrollView)
-		} else {
-			if let fraction = syncScrollFraction,
-			   fraction != context.coordinator.lastAppliedFraction {
-				context.coordinator.lastAppliedFraction = fraction
-				context.coordinator.applyScrollFraction(fraction, to: scrollView)
-			}
-
-			if let target = scrollTarget {
-				context.coordinator.applyScrollTarget(target, to: scrollView)
-			}
-		}
-
-		if let offset = scrollToCharacterOffset, offset != context.coordinator.lastScrolledOffset {
-			context.coordinator.lastScrolledOffset = offset
-			context.coordinator.isSyncScroll = true
-			let clampedOffset = min(offset, (textView.string as NSString).length)
-			textView.scrollRangeToVisible(NSRange(location: clampedOffset, length: 0))
-			context.coordinator.isSyncScroll = false
+		} else if let target = scrollTarget {
+			context.coordinator.applyScrollTarget(target, to: scrollView)
 		}
 	}
 
@@ -663,11 +641,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrolledID: String?
 		var scrollObserver: Any?
 		var viewportObserver: Any?
-		var lastScrollTime: CFAbsoluteTime = 0
 		var lastReportedHeading: String?
-		var lastAppliedFraction: Double = -1
 		var lastScrollTargetToken: Int?
-		var lastScrolledOffset: Int = -1
 		var lastCaretToken: Int?
 		var lastSelectionTargetToken: Int?
 		/// An extended handoff selection temporarily outranks the stale viewport

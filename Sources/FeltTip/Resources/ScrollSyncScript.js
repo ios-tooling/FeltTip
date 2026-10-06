@@ -132,11 +132,6 @@
     // scroll event is reported instead of being mistaken for convergence.
     driven.settled = true;
   };
-  window.__mdScrollByPixels = function (dy) {
-    var target = Math.max(0, (window.scrollY || 0) + dy);
-    driven = { y: target, until: Date.now() + 500 };
-    window.scrollBy(0, dy);
-  };
   // Scroll the run rendering a source offset into view (outline
   // navigation). Heading offsets point at their `#` markers, which no run
   // covers, so target the first run ending at or after the offset.

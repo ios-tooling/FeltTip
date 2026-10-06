@@ -22,7 +22,9 @@ extension MarkdownUITextEditor {
 		private var lastCaretToken: Int?
 		private var lastSelectionToken: Int?
 		private var lastMirroredSelection: NSRange?
-		private var lastSyncedFraction: Double?
+		/// Fraction most recently driven by a host scroll target, so its echo
+		/// through `scrollViewDidScroll` is not reported back as a user scroll.
+		private var lastAppliedScrollFraction: Double?
 		private var lastScrollTargetToken: Int?
 		private var lastThemeSignature: Int?
 		private var needsFullHighlight = true
@@ -92,7 +94,7 @@ extension MarkdownUITextEditor {
 			guard span > 0 else { return }
 			let fraction = min(max(0, scrollView.contentOffset.y / span), 1)
 			// Don't echo a fraction we just applied from the other pane.
-			guard lastSyncedFraction.map({ abs($0 - fraction) > 0.0001 }) ?? true else { return }
+			guard lastAppliedScrollFraction.map({ abs($0 - fraction) > 0.0001 }) ?? true else { return }
 			onScrollFractionChanged(Double(fraction))
 		}
 
@@ -134,20 +136,11 @@ extension MarkdownUITextEditor {
 			sink.setBackground(UXColor(wash), in: range)
 		}
 
-		func applySyncScrollFraction(to textView: UITextView) {
-			guard let fraction = parent.syncScrollFraction,
-			      lastSyncedFraction.map({ abs($0 - fraction) > 0.0001 }) ?? true else { return }
-			lastSyncedFraction = fraction
-			let span = textView.contentSize.height - textView.bounds.height
-			guard span > 0 else { return }
-			textView.setContentOffset(
-				CGPoint(x: 0, y: CGFloat(fraction) * span), animated: false)
-		}
-
 		func applyScrollTarget(to textView: UITextView) {
 			guard let target = parent.scrollTarget,
 			      target.token != lastScrollTargetToken else { return }
 			lastScrollTargetToken = target.token
+			lastAppliedScrollFraction = Double(target.topFraction)
 			let span = textView.contentSize.height - textView.bounds.height
 			guard span > 0 else { return }
 			textView.setContentOffset(

@@ -12,7 +12,6 @@ public struct RawMarkdownScreen: View {
 	var fontSize: CGFloat
 	var onVisibleHeadingChanged: ((String?) -> Void)?
 	var onScrollFractionChanged: ((Double) -> Void)?
-	var syncScrollFraction: Double?
 	var scrollTarget: MarkdownScrollTarget?
 	var typewriterMode: Bool = false
 	var focusModeEnabled: Bool = false
@@ -22,7 +21,6 @@ public struct RawMarkdownScreen: View {
 	var onSelectionChanged: ((NSRange?) -> Void)?
 	var onSourceSelectionChanged: ((NSRange?) -> Void)?
 	var mirroredSelection: NSRange?
-	var scrollToCharacterOffset: Int?
 	var caretTarget: MarkdownCaretTarget?
 	var selectionTarget: MarkdownSelectionTarget?
 
@@ -32,7 +30,6 @@ public struct RawMarkdownScreen: View {
 		fontSize: CGFloat,
 		onVisibleHeadingChanged: ((String?) -> Void)? = nil,
 		onScrollFractionChanged: ((Double) -> Void)? = nil,
-		syncScrollFraction: Double? = nil,
 		scrollTarget: MarkdownScrollTarget? = nil,
 		typewriterMode: Bool = false,
 		focusModeEnabled: Bool = false,
@@ -42,7 +39,6 @@ public struct RawMarkdownScreen: View {
 		onSelectionChanged: ((NSRange?) -> Void)? = nil,
 		onSourceSelectionChanged: ((NSRange?) -> Void)? = nil,
 		mirroredSelection: NSRange? = nil,
-		scrollToCharacterOffset: Int? = nil,
 		caretTarget: MarkdownCaretTarget? = nil,
 		selectionTarget: MarkdownSelectionTarget? = nil
 	) {
@@ -51,7 +47,6 @@ public struct RawMarkdownScreen: View {
 		self.fontSize = fontSize
 		self.onVisibleHeadingChanged = onVisibleHeadingChanged
 		self.onScrollFractionChanged = onScrollFractionChanged
-		self.syncScrollFraction = syncScrollFraction
 		self.scrollTarget = scrollTarget
 		self.typewriterMode = typewriterMode
 		self.focusModeEnabled = focusModeEnabled
@@ -61,7 +56,6 @@ public struct RawMarkdownScreen: View {
 		self.onSelectionChanged = onSelectionChanged
 		self.onSourceSelectionChanged = onSourceSelectionChanged
 		self.mirroredSelection = mirroredSelection
-		self.scrollToCharacterOffset = scrollToCharacterOffset
 		self.caretTarget = caretTarget
 		self.selectionTarget = selectionTarget
 	}
@@ -74,7 +68,6 @@ public struct RawMarkdownScreen: View {
 			fontSize: fontSize,
 			onVisibleHeadingChanged: onVisibleHeadingChanged,
 			onScrollFractionChanged: onScrollFractionChanged,
-			syncScrollFraction: syncScrollFraction,
 			scrollTarget: scrollTarget,
 			typewriterMode: typewriterMode,
 			focusModeEnabled: focusModeEnabled,
@@ -84,7 +77,6 @@ public struct RawMarkdownScreen: View {
 			onSelectionChanged: onSelectionChanged,
 			onSourceSelectionChanged: onSourceSelectionChanged,
 			mirroredSelection: mirroredSelection,
-			scrollToCharacterOffset: scrollToCharacterOffset,
 			caretTarget: caretTarget,
 			selectionTarget: selectionTarget
 		)
@@ -97,7 +89,6 @@ public struct RawMarkdownScreen: View {
 			focusModeEnabled: focusModeEnabled,
 			syntaxHighlightingEnabled: syntaxHighlightingEnabled,
 			onScrollFractionChanged: onScrollFractionChanged,
-			syncScrollFraction: syncScrollFraction,
 			scrollTarget: scrollTarget,
 			onCursorPositionChanged: onCursorPositionChanged,
 			onSourceEdit: onSourceEdit,
