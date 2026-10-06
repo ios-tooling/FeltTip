@@ -121,6 +121,51 @@ struct WebSplitMarkdownScreenTests {
 		#expect(!(window.firstResponder is WKWebView))
 	}
 
+	@Test("Split keeps a whole heading selection and both panes at its viewport")
+	func splitKeepsWholeHeadingSelectionAndViewport() async throws {
+		let source = (0...420).map { index in
+			"## Sector \(String(format: "%03d", index))\n\nTransfer sentence \(index)."
+		}.joined(separator: "\n\n")
+		let selected = (source as NSString).range(of: "## Sector 016")
+		let expectedFraction = 0.04
+		let model = SplitSelectionModel()
+		model.target = MarkdownSelectionTarget(range: selected, token: 1)
+		model.scrollTarget = MarkdownScrollTarget(
+			topFraction: expectedFraction, token: 1)
+		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 500)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+
+		let rawEditor = try #require(try await waitForRawEditor(in: hosting))
+		let webView = try #require(try await waitForWebView(in: hosting))
+		for _ in 0..<120 where rawEditor.selectedRange() != selected {
+			hosting.layoutSubtreeIfNeeded()
+			try await Task.sleep(for: .milliseconds(25))
+		}
+		for _ in 0..<160 {
+			hosting.layoutSubtreeIfNeeded()
+			let raw = scrollFraction(of: rawEditor)
+			let rendered = await webScrollFraction(of: webView)
+			if rawEditor.selectedRange() == selected,
+			   abs(raw - expectedFraction) <= 0.03,
+			   let rendered, abs(rendered - expectedFraction) <= 0.03 { break }
+			try await Task.sleep(for: .milliseconds(25))
+		}
+
+		let rawFraction = scrollFraction(of: rawEditor)
+		let renderedFraction = try #require(await webScrollFraction(of: webView))
+		#expect(rawEditor.selectedRange() == selected)
+		#expect(abs(rawFraction - renderedFraction) <= 0.03,
+			"source=\(rawFraction), rendered=\(renderedFraction)")
+		#expect(rawFraction < 0.1,
+			"Sector 016 selection was hidden by a stale viewport at \(rawFraction)")
+	}
+
 	@Test("A long-lived split view reapplies repeated host scroll targets")
 	func splitReappliesHostScrollTargets() async throws {
 		let source = (0..<250).map { "Line \($0): enough text to create a scrollable document." }.joined(separator: "\n")

@@ -192,6 +192,65 @@ struct EditorSelectionHandoffTests {
 		#expect(try await harness.evaluate("window.getSelection().toString()") == "Sector 016")
 	}
 
+	@Test func styledViewScrollsAWholeHeadingSelectionIntoViewInALongDocument() async throws {
+		let source = (0...420).map { index in
+			"## Sector \(String(format: "%03d", index))\n\nTransfer sentence \(index)."
+		}.joined(separator: "\n\n")
+		let selected = (source as NSString).range(of: "## Sector 016")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("window.scrollTo(0, document.documentElement.scrollHeight)")
+
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(MarkdownSelectionTarget(range: selected, token: 1))
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+
+		try await harness.waitUntil("Sector 016 selection") {
+			try await harness.evaluate("window.getSelection().toString()") == "Sector 016"
+		}
+		let visibility = try await harness.evaluate("""
+				(function () {
+				  var selection = window.getSelection()
+				  if (!selection || !selection.rangeCount ||
+				      selection.toString() !== 'Sector 016') return 'no'
+				  var rect = selection.getRangeAt(0).getBoundingClientRect()
+				  return rect.bottom > 0 && rect.top < window.innerHeight ? 'yes' : 'no'
+				})()
+				""")
+		#expect(visibility == "yes")
+		let fractionString = try #require(try await harness.evaluate("""
+			(function () {
+			  var root = document.scrollingElement || document.documentElement
+			  var max = Math.max(0, root.scrollHeight - root.clientHeight)
+			  return String(max > 0 ? root.scrollTop / max : 0)
+			})()
+			"""))
+		let fraction = try #require(Double(fractionString))
+		#expect(fraction < 0.1,
+			"Sector 016 handoff stayed near a stale lower viewport at \(fraction)")
+	}
+
+	@Test func styledMirrorMapsAWholeMarkdownHeadingSelectionToVisibleText() async throws {
+		let source = "# Before\n\n## Sector 016\n\nAfter"
+		let selected = (source as NSString).range(of: "## Sector 016")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+
+		try await harness.run(
+			"window.__mdMirrorSelection(\(selected.location), \(selected.length))")
+		let mirrored = try await harness.evaluate("""
+			(function () {
+			  var highlight = CSS.highlights.get('md-mirror')
+			  if (!highlight || highlight.size !== 1) return ''
+			  return Array.from(highlight)[0].toString()
+			})()
+			""")
+
+		#expect(mirrored == "Sector 016")
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "")
+	}
+
 	@Test func styledViewRestoresSelectionAfterHiddenKramdownAttributeLine() async throws {
 		let source = """
 		# Before

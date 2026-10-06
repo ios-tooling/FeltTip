@@ -483,8 +483,9 @@
   window.__mdMirrorSelection = function (offset, length) {
     if (!window.Highlight || !CSS.highlights) { return; }
     if (offset == null || !length) { CSS.highlights.delete('md-mirror'); repaintMirror(); return; }
-    var start = spotFor(offset);
-    var end = spotFor(offset + length);
+    var selectionEnd = offset + length;
+    var start = spotFor(offset) || firstVisibleSpotInRange(offset, selectionEnd);
+    var end = spotFor(selectionEnd) || lastVisibleSpotInRange(offset, selectionEnd);
     if (!start || !end) { CSS.highlights.delete('md-mirror'); repaintMirror(); return; }
     // A mirror means the OTHER pane is active — this page's leftover real
     // selection (e.g. restored by a style toggle) would read as a second
