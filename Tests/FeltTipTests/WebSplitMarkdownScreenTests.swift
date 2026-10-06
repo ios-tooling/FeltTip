@@ -68,6 +68,31 @@ struct WebSplitMarkdownScreenTests {
 		#expect(writtenText == "updated")
 	}
 
+	@Test("A delayed rendered zero cannot override an in-flight host restore")
+	func delayedRenderedZeroStaysInsideHostRestoreGate() {
+		var gate = MarkdownSplitHostRestoreGuard()
+		gate.begin(at: 0.5)
+
+		let consumedStaleReport = gate.consumeRenderedReport(0)
+		#expect(consumedStaleReport)
+		#expect(gate.target == 0.5)
+		let consumedSettledReport = gate.consumeRenderedReport(0.46)
+		#expect(consumedSettledReport)
+		#expect(gate.target == nil)
+		let consumedPostSettlementReport = gate.consumeRenderedReport(0)
+		#expect(!consumedPostSettlementReport)
+	}
+
+	@Test("Cancelling a host restore immediately releases rendered reports")
+	func cancelledHostRestoreReleasesRenderedReports() {
+		var gate = MarkdownSplitHostRestoreGuard()
+		gate.begin(at: 0.5)
+		gate.cancel()
+
+		let consumedCancelledReport = gate.consumeRenderedReport(0.2)
+		#expect(!consumedCancelledReport)
+	}
+
 	@Test("A source-pane selection handoff does not move focus into the preview")
 	func sourceSelectionHandoffKeepsRawEditorFocused() async throws {
 		let source = "# Before\n\n{: .callout}\n\nParagraph LOCAL target\n"
@@ -123,6 +148,36 @@ struct WebSplitMarkdownScreenTests {
 				abs(scrollFraction(of: rawEditor) - expected) <= 0.05,
 				"target \(expected), actual \(scrollFraction(of: rawEditor))")
 		}
+	}
+
+	@Test("Split restores a collapsed source selection after large-document layout")
+	func splitRestoresCollapsedSourceViewportAfterLateLayout() async throws {
+		let source = (0..<1_600).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let caret = (source as NSString).range(of: "Sector 800").location
+		let model = SplitSelectionModel()
+		model.target = MarkdownSelectionTarget(
+			range: NSRange(location: caret, length: 0), token: 1)
+		model.scrollTarget = MarkdownScrollTarget(topFraction: 0.5, token: 1)
+		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+
+		let rawEditor = try #require(try await waitForRawEditor(in: hosting))
+		for _ in 0..<120 where abs(scrollFraction(of: rawEditor) - 0.5) > 0.05 {
+			hosting.layoutSubtreeIfNeeded()
+			try await Task.sleep(for: .milliseconds(25))
+		}
+
+		#expect(rawEditor.selectedRange() == NSRange(location: caret, length: 0))
+		#expect(abs(scrollFraction(of: rawEditor) - 0.5) <= 0.05,
+			"collapsed handoff settled at \(scrollFraction(of: rawEditor))")
 	}
 
 	private func waitForRawEditor(in view: NSView) async throws -> NSTextView? {

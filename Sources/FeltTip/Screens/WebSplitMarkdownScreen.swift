@@ -27,6 +27,35 @@ enum MarkdownSplitEditRelay {
 	}
 }
 
+/// Suppresses a rendered pane's provisional scroll reports while a host
+/// restore is landing. WebKit can report its old offset well after the normal
+/// cross-pane lockout expires, especially while a large document is laying
+/// out. The guard retires only when the rendered pane reaches the requested
+/// neighborhood (or its bounded fallback expires).
+struct MarkdownSplitHostRestoreGuard: Equatable {
+	private(set) var target: Double?
+	static let settleTolerance = 0.08
+
+	mutating func begin(at fraction: Double) {
+		target = fraction
+	}
+
+	mutating func cancel() {
+		target = nil
+	}
+
+	/// Returns true while this report belongs to the in-flight host restore.
+	/// The report that confirms settlement is consumed too, so it cannot turn
+	/// around and drive the already-restored source pane.
+	mutating func consumeRenderedReport(_ fraction: Double) -> Bool {
+		guard let target else { return false }
+		if abs(fraction - target) <= Self.settleTolerance {
+			self.target = nil
+		}
+		return true
+	}
+}
+
 /// Pane selected by the compact iOS source/rendered switch. Hosts can persist
 /// this per document while regular-width layouts continue to show both panes.
 public enum MarkdownCompactPane: String, CaseIterable, Identifiable, Sendable {
@@ -137,6 +166,7 @@ public struct WebSplitMarkdownScreen: View {
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 	@State private var lockoutTask: Task<Void, Never>?
+	@State private var hostRestoreGuard = MarkdownSplitHostRestoreGuard()
 	@State private var didRestoreScroll = false
 	/// Bumped each time the raw pane drives the scroll, so the token-gated
 	/// `scrollTarget` on the web preview re-applies the latest fraction.
@@ -148,6 +178,7 @@ public struct WebSplitMarkdownScreen: View {
 	@State private var previewMirror: NSRange?
 	@State private var rawMirror: NSRange?
 	private static let scrollLockoutMs: Int = 200
+	private static let hostRestoreTimeoutMs: Int = 2_000
 	private static let editLockoutMs: Int = 700
 
 	public var body: some View {
@@ -276,11 +307,19 @@ public struct WebSplitMarkdownScreen: View {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] editing, drop %@ %.4f", "\(source)", fraction) }
 			return
 		}
-		// Both panes briefly report their pre-restore offsets while a host target
-		// is landing. Those are echoes, not user scrolls; allowing the first one
-		// to claim sourcehood would immediately synchronize both panes back to
-		// their old (often zero) position.
-		if scrollSource == .host { return }
+		// WebKit can publish its provisional pre-restore offset after the ordinary
+		// lockout expires. Keep consuming rendered reports until it reaches the
+		// requested neighborhood. A real source-pane scroll is allowed to cancel
+		// the restore immediately so the UI never ignores the user's wheel/trackpad.
+		if source == .formatted, hostRestoreGuard.consumeRenderedReport(fraction) {
+			if hostRestoreGuard.target == nil { finishHostRestore() }
+			return
+		}
+		if scrollSource == .host {
+			guard source == .raw else { return }
+			hostRestoreGuard.cancel()
+			finishHostRestore()
+		}
 		if scrollSource != .none && scrollSource != source {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] drop %@ %.4f (source %@)", "\(source)", fraction, "\(scrollSource)") }
 			return
@@ -328,12 +367,20 @@ public struct WebSplitMarkdownScreen: View {
 		didRestoreScroll = true
 		scrollFraction = Double(target.topFraction)
 		scrollSource = .host
+		hostRestoreGuard.begin(at: scrollFraction)
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
-			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
+			try? await Task.sleep(for: .milliseconds(Self.hostRestoreTimeoutMs))
 			guard !Task.isCancelled else { return }
+			hostRestoreGuard.cancel()
 			scrollSource = .none
 		}
+	}
+
+	private func finishHostRestore() {
+		lockoutTask?.cancel()
+		lockoutTask = nil
+		scrollSource = .none
 	}
 	#else
 	public var body: some View {
