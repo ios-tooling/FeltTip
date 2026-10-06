@@ -16,6 +16,35 @@ import Testing
 @Suite("Editor selection handoff", .serialized)
 @MainActor
 struct EditorSelectionHandoffTests {
+	@Test func selectionHandoffCancelsAnOlderDeferredReloadCaret() async throws {
+		let source = "First paragraph.\n\nSelected words in the replacement page."
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let selected = (source as NSString).range(of: "Selected words")
+		try await harness.run("window.__mdRestoreScrollThenCaret(5000, 0, 0)")
+		harness.coordinator.parent = harness.coordinator.parent.selectionTarget(
+			MarkdownSelectionTarget(range: selected, token: 902))
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+		try await harness.run("document.body.style.minHeight = '6000px'")
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(try await harness.evaluate("window.getSelection().toString()") == "Selected words")
+	}
+
+	@Test func selectionArrivingDuringNavigationWaitsForTheReplacementPage() async throws {
+		let source = "First paragraph.\n\nSelected words in the replacement page."
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		let selected = (source as NSString).range(of: "Selected words")
+		harness.coordinator.isNavigating = true
+		harness.coordinator.parent = harness.coordinator.parent.selectionTarget(
+			MarkdownSelectionTarget(range: selected, token: 901))
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+		// Model navigation discarding any selection placed in the outgoing DOM.
+		try await harness.run("window.getSelection().removeAllRanges()")
+		harness.coordinator.completePageSetup(in: harness.webView)
+		try await harness.waitUntil("deferred handoff on replacement page") {
+			try await harness.evaluate("window.getSelection().toString()") == "Selected words"
+		}
+	}
+
 	@Test func styledViewReportsCollapsedAndExtendedSourceRangesSeparatelyFromMirrors() async throws {
 		let source = "Zero alpha **bravo** charlie omega"
 		let harness = try await CoordinatorBridgeHarness(source: source)

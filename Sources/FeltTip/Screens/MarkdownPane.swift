@@ -31,6 +31,8 @@ struct RenderedMarkdownPane: View {
 	let text: String
 	let context: MarkdownPaneContext
 	let scrollFraction: Double
+	var scrollTarget: MarkdownScrollTarget?
+	var onScrollFractionChanged: ((Double) -> Void)?
 
 	var body: some View {
 		var view = MarkdownWebView(
@@ -40,6 +42,9 @@ struct RenderedMarkdownPane: View {
 			.formattingBar(context.editablePreview)
 			.contentReloadToken(context.contentReloadToken)
 			.initialScrollFraction(scrollFraction)
+			.scrollTarget(scrollTarget)
+			.onScrollFractionChanged { top, _, _ in onScrollFractionChanged?(Double(top)) }
+			.onSourceSelectionChanged { context.onSourceSelectionChanged?($0) }
 			.caretTarget(context.caretTarget)
 			.selectionTarget(context.selectionTarget)
 		if let onSourceEdit = context.onSourceEdit {
@@ -58,7 +63,6 @@ struct RenderedMarkdownPane: View {
 struct SourceMarkdownPane: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
-	@Binding var scrollFraction: Double
 	/// Token-gated drive to the shared fraction, minted when this pane is
 	/// (re)shown so it opens where the rendered pane left off.
 	let scrollTarget: MarkdownScrollTarget
@@ -70,10 +74,7 @@ struct SourceMarkdownPane: View {
 			text: $text,
 			selectedHeadingID: $selectedHeadingID,
 			fontSize: context.fontSize,
-			onScrollFractionChanged: { fraction in
-				scrollFraction = fraction
-				onScrollFractionChanged?(fraction)
-			},
+			onScrollFractionChanged: onScrollFractionChanged,
 			scrollTarget: scrollTarget,
 			typewriterMode: context.typewriterMode,
 			theme: context.theme,

@@ -263,13 +263,15 @@ public struct WebSplitMarkdownScreen: View {
 	/// value-based echo filter is needed here; the only thing worth dropping is
 	/// the layout churn of active editing.
 	private func didScroll(_ source: ScrollSource, fraction: Double) {
+		// Persistence follows the active viewport even while cross-pane sync
+		// is suspended. Otherwise a short scroll after typing is lost.
+		scrollFraction = fraction
+		onScrollFractionChanged?(fraction)
 		if isEditing {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] editing, drop %@ %.4f", "\(source)", fraction) }
 			return
 		}
 		if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] sync from %@ %.4f", "\(source)", fraction) }
-		scrollFraction = fraction
-		onScrollFractionChanged?(fraction)
 		switch source {
 		case .raw: drivePreviewPane(to: fraction)
 		case .formatted: driveRawPane(to: fraction)
@@ -323,6 +325,7 @@ public struct WebSplitMarkdownScreen: View {
 			initialPane: initialCompactPane,
 			onPaneChanged: onCompactPaneChanged,
 			initialScrollFraction: initialScrollFraction,
+			scrollTarget: scrollTarget,
 			onScrollFractionChanged: onScrollFractionChanged)
 	}
 	#endif

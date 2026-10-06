@@ -270,6 +270,26 @@ struct WebSplitMarkdownScreenTests {
 			"rendered settled at \(renderedFraction), source stayed at \(rawFraction)")
 	}
 
+	@Test("A scroll immediately after an edit still updates host persistence")
+	func editingLockoutKeepsPositionReporting() async throws {
+		let source = "# Heading\n\nParagraph"
+		let model = SplitSelectionModel()
+		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+		let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+		let editor = try #require(try await waitForRawEditor(in: hosting))
+		let coordinator = try #require(editor.delegate as? MarkdownTextEditor.Coordinator)
+		// Exercise the pane callbacks in the same turn: no timer can expire
+		// between accepting the edit and publishing the user's viewport.
+		coordinator.parent.onSourceEdit?(source + "!", source.utf16.count + 1)
+		coordinator.parent.onScrollFractionChanged?(0.72)
+		#expect(model.savedScrollFraction == 0.72)
+	}
+
 	private func waitForRawEditor(in view: NSView) async throws -> NSTextView? {
 		for _ in 0..<120 {
 			if let editor = findRawEditor(in: view) { return editor }
@@ -362,6 +382,7 @@ struct WebSplitMarkdownScreenTests {
 private final class SplitSelectionModel {
 	var target: MarkdownSelectionTarget?
 	var scrollTarget: MarkdownScrollTarget?
+	var savedScrollFraction: Double?
 }
 
 private struct SplitSelectionHost: View {
@@ -385,6 +406,7 @@ private struct SplitSelectionHost: View {
 			editablePreview: true,
 			selectionTargetPane: .source,
 			scrollTarget: model.scrollTarget,
+			onScrollFractionChanged: { model.savedScrollFraction = $0 },
 			selectionTarget: model.target)
 	}
 }

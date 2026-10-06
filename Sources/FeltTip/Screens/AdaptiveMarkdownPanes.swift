@@ -24,15 +24,16 @@ struct AdaptiveMarkdownPanes: View {
 	@Binding var selectedHeadingID: String?
 	let context: MarkdownPaneContext
 	var onPaneChanged: ((MarkdownCompactPane) -> Void)?
-	var initialScrollFraction: Double?
+	var scrollTarget: MarkdownScrollTarget?
 	var onScrollFractionChanged: ((Double) -> Void)?
 
 	@State private var pane: MarkdownCompactPane
-	@State private var scrollFraction: Double = 0
-	@State private var didSeedScroll = false
-	/// Bumped whenever the source pane should adopt `scrollFraction`: the
-	/// initial seed and each compact switch back to it.
-	@State private var sourceScrollToken = 0
+	@State private var scrollFraction: Double
+	// Keep each drive independent: a report must only drive the OTHER pane.
+	@State private var sourceScrollTarget: MarkdownScrollTarget
+	@State private var renderedScrollTarget: MarkdownScrollTarget
+	@State private var scrollToken = 0
+	@State private var lastHostScrollToken: Int?
 
 	init(
 		text: Binding<String>,
@@ -41,13 +42,20 @@ struct AdaptiveMarkdownPanes: View {
 		initialPane: MarkdownCompactPane,
 		onPaneChanged: ((MarkdownCompactPane) -> Void)?,
 		initialScrollFraction: Double?,
+		scrollTarget: MarkdownScrollTarget? = nil,
 		onScrollFractionChanged: ((Double) -> Void)?
 	) {
 		_text = text
 		_selectedHeadingID = selectedHeadingID
 		self.context = context
 		self.onPaneChanged = onPaneChanged
-		self.initialScrollFraction = initialScrollFraction
+		self.scrollTarget = scrollTarget
+		let fraction = Double(scrollTarget?.topFraction ?? CGFloat(initialScrollFraction ?? 0))
+		_scrollFraction = State(initialValue: fraction)
+		let seed = MarkdownScrollTarget(topFraction: CGFloat(fraction), token: 0)
+		_sourceScrollTarget = State(initialValue: seed)
+		_renderedScrollTarget = State(initialValue: seed)
+		_lastHostScrollToken = State(initialValue: scrollTarget?.token)
 		self.onScrollFractionChanged = onScrollFractionChanged
 		_pane = State(initialValue: initialPane)
 	}
@@ -57,29 +65,48 @@ struct AdaptiveMarkdownPanes: View {
 			if sizeClass == .compact {
 				CompactMarkdownPanes(
 					pane: $pane, text: $text, selectedHeadingID: $selectedHeadingID,
-					scrollFraction: $scrollFraction, sourceScrollTarget: sourceScrollTarget,
-					context: context, onScrollFractionChanged: onScrollFractionChanged)
+					scrollFraction: scrollFraction, sourceScrollTarget: sourceScrollTarget,
+					renderedScrollTarget: renderedScrollTarget,
+					context: context, onScroll: didScroll)
 			} else {
 				RegularMarkdownPanes(
 					text: $text, selectedHeadingID: $selectedHeadingID,
-					scrollFraction: $scrollFraction, sourceScrollTarget: sourceScrollTarget,
-					context: context, onScrollFractionChanged: onScrollFractionChanged)
+					scrollFraction: scrollFraction, sourceScrollTarget: sourceScrollTarget,
+					renderedScrollTarget: renderedScrollTarget,
+					context: context, onScroll: didScroll)
 			}
 		}
-		.onAppear {
-			guard !didSeedScroll, let initialScrollFraction else { return }
-			didSeedScroll = true
-			scrollFraction = initialScrollFraction
-			sourceScrollToken += 1
+		.onChange(of: scrollTarget) { _, target in
+			guard let target, target.token != lastHostScrollToken else { return }
+			lastHostScrollToken = target.token
+			scrollFraction = Double(target.topFraction)
+			let drive = nextTarget(scrollFraction)
+			sourceScrollTarget = drive
+			renderedScrollTarget = drive
 		}
 		.onChange(of: pane) { _, pane in
 			onPaneChanged?(pane)
-			if pane == .source { sourceScrollToken += 1 }
+			drive(pane, to: scrollFraction)
 		}
 	}
 
-	private var sourceScrollTarget: MarkdownScrollTarget {
-		MarkdownScrollTarget(topFraction: CGFloat(scrollFraction), token: sourceScrollToken)
+	private func nextTarget(_ fraction: Double) -> MarkdownScrollTarget {
+		scrollToken &+= 1
+		return MarkdownScrollTarget(topFraction: CGFloat(fraction), token: scrollToken)
+	}
+
+	private func drive(_ pane: MarkdownCompactPane, to fraction: Double) {
+		let target = nextTarget(fraction)
+		switch pane {
+		case .source: sourceScrollTarget = target
+		case .rendered: renderedScrollTarget = target
+		}
+	}
+
+	private func didScroll(_ pane: MarkdownCompactPane, fraction: Double) {
+		scrollFraction = fraction
+		onScrollFractionChanged?(fraction)
+		drive(pane == .source ? .rendered : .source, to: fraction)
 	}
 }
 
@@ -87,10 +114,11 @@ private struct CompactMarkdownPanes: View {
 	@Binding var pane: MarkdownCompactPane
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
-	@Binding var scrollFraction: Double
+	let scrollFraction: Double
 	let sourceScrollTarget: MarkdownScrollTarget
+	let renderedScrollTarget: MarkdownScrollTarget
 	let context: MarkdownPaneContext
-	var onScrollFractionChanged: ((Double) -> Void)?
+	var onScroll: (MarkdownCompactPane, Double) -> Void
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -104,12 +132,14 @@ private struct CompactMarkdownPanes: View {
 			switch pane {
 			case .rendered:
 				RenderedMarkdownPane(
-					text: text, context: context, scrollFraction: scrollFraction)
+					text: text, context: context, scrollFraction: scrollFraction,
+					scrollTarget: renderedScrollTarget,
+					onScrollFractionChanged: { onScroll(.rendered, $0) })
 			case .source:
 				SourceMarkdownPane(
 					text: $text, selectedHeadingID: $selectedHeadingID,
-					scrollFraction: $scrollFraction, scrollTarget: sourceScrollTarget,
-					context: context, onScrollFractionChanged: onScrollFractionChanged)
+					scrollTarget: sourceScrollTarget,
+					context: context, onScrollFractionChanged: { onScroll(.source, $0) })
 			}
 		}
 	}
@@ -118,20 +148,23 @@ private struct CompactMarkdownPanes: View {
 private struct RegularMarkdownPanes: View {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
-	@Binding var scrollFraction: Double
+	let scrollFraction: Double
 	let sourceScrollTarget: MarkdownScrollTarget
+	let renderedScrollTarget: MarkdownScrollTarget
 	let context: MarkdownPaneContext
-	var onScrollFractionChanged: ((Double) -> Void)?
+	var onScroll: (MarkdownCompactPane, Double) -> Void
 
 	var body: some View {
 		HStack(spacing: 0) {
 			SourceMarkdownPane(
 				text: $text, selectedHeadingID: $selectedHeadingID,
-				scrollFraction: $scrollFraction, scrollTarget: sourceScrollTarget,
-				context: context, onScrollFractionChanged: onScrollFractionChanged)
+				scrollTarget: sourceScrollTarget,
+				context: context, onScrollFractionChanged: { onScroll(.source, $0) })
 			Divider()
 			RenderedMarkdownPane(
-				text: text, context: context, scrollFraction: scrollFraction)
+				text: text, context: context, scrollFraction: scrollFraction,
+					scrollTarget: renderedScrollTarget,
+					onScrollFractionChanged: { onScroll(.rendered, $0) })
 		}
 	}
 }

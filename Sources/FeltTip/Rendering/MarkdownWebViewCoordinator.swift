@@ -545,7 +545,8 @@ extension MarkdownWebView {
 		) {
 			guard let selection else { return }
 			webView.evaluateJavaScript(
-				"window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments(selection)));"
+				"window.__mdCancelPendingScrollRestore && window.__mdCancelPendingScrollRestore(); "
+				+ "window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments(selection)));"
 			) { _, _ in completion?() }
 		}
 
@@ -1253,6 +1254,9 @@ extension MarkdownWebView {
 			// unconsumed; it is the host's latest viewport and intentionally wins
 			// over the one-time initial position above.
 			applyScrollTarget(to: webView)
+			// Targets arriving during navigation remain unconsumed until the new
+			// DOM is ready. Apply after viewport restoration so a handoff is visible.
+			applySelectionTarget(to: webView)
 			if didStartInitialRender, !didSignalInitialRenderReady {
 				didSignalInitialRenderReady = true
 				parent.onInitialRenderReady?()
@@ -1364,7 +1368,7 @@ extension MarkdownWebView {
 			// it is revealed. Do not consume the token while hidden: placing the
 			// selection focuses the page, `updateUXView` immediately resigns it, and
 			// the visible update would otherwise mistake that target for applied.
-			guard !parent.isInactive,
+			guard !parent.isInactive, !isNavigating,
 			      let target = parent.selectionTarget,
 			      target.token != lastSelectionTargetToken else { return }
 			lastSelectionTargetToken = target.token

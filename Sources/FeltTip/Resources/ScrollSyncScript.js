@@ -11,6 +11,19 @@
   // when the position settles at the target (or after a grace period, if
   // the user interrupted the drive).
   var driven = null;
+  var pendingRestoreTimer = null;
+  var restoreGeneration = 0;
+  function cancelPendingRestore() {
+    restoreGeneration++;
+    if (pendingRestoreTimer != null) { window.clearTimeout(pendingRestoreTimer); }
+    pendingRestoreTimer = null;
+  }
+  window.__mdCancelPendingScrollRestore = cancelPendingRestore;
+  // A reload retry must not move the viewport or caret after the reader
+  // has taken over, including gestures that have not emitted scroll yet.
+  ['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach(function (name) {
+    window.addEventListener(name, cancelPendingRestore, { passive: true });
+  });
   // The page's viewport anchor: the fraction of the scrollable range the
   // reader last settled at, by their own scroll or a host drive. Geometry
   // changes re-apply it so the pane keeps its place without the host's help.
@@ -125,6 +138,7 @@
       if (driven.settled || Date.now() > driven.until) { driven = null; }
       else { return; }   // still converging on the target
     }
+    cancelPendingRestore();
     lastFraction = top;
     var visible = Math.max(0, Math.min(1, vis / h));
     var content = vis > 0 ? Math.min(1, h / vis) : 1;
@@ -144,12 +158,14 @@
     // Top-anchored fraction of the scrollable range — the same units
     // report() emits, so a drive→echo round trip is the identity and the
     // panes agree at both ends of the document.
+    cancelPendingRestore();
     driveToFraction(Math.max(0, Math.min(1, f)));
   };
   // Scroll the run rendering a source offset into view (outline
   // navigation). Heading offsets point at their `#` markers, which no run
   // covers, so target the first run ending at or after the offset.
   window.__mdScrollToSourceOffset = function (offset) {
+    cancelPendingRestore();
     var spans = document.querySelectorAll('[data-s]');
     var best = null;
     for (var i = 0; i < spans.length; i++) {
@@ -178,8 +194,12 @@
     boundaryPreviousCharacterOffset, boundaryPreviousCharacter,
     boundaryNextCharacterOffset, boundaryNextCharacter
   ) {
+    cancelPendingRestore();
+    var generation = restoreGeneration;
     var deadline = Date.now() + 1000;
     function attempt() {
+      if (generation !== restoreGeneration) { return; }
+      pendingRestoreTimer = null;
       var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
       if (maxY >= y || Date.now() > deadline) {
         var target = Math.min(y, Math.max(maxY, 0));
@@ -200,7 +220,7 @@
       } else {
         // setTimeout, not requestAnimationFrame: rAF doesn't run in
         // occluded windows, and the restore must not depend on visibility.
-        window.setTimeout(attempt, 16);
+        pendingRestoreTimer = window.setTimeout(attempt, 16);
       }
     }
     attempt();

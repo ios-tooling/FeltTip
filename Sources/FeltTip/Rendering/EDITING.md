@@ -149,8 +149,9 @@ Scroll positions travel between panes and hosts as a **fraction of the
 scrollable range**, always inside a token-gated `MarkdownScrollTarget`; a fresh
 token re-applies even an unchanged fraction, and editors deduplicate by token.
 `WebSplitMarkdownScreen` only relays: a scroll in one pane becomes a drive of
-the other, a host restore drives both, and it sits out active editing. There
-is no lockout or echo filter at that level because each pane suppresses the
+the other, a host restore drives both, and cross-pane synchronization sits out
+active editing. Position reports still reach the host for persistence during
+that pause. There is no scroll-source lockout or echo filter at that level because each pane suppresses the
 echo of its own drive (the raw editor's sync flag and reported-offset check,
 the page's `driven` state).
 
@@ -172,8 +173,15 @@ geometry changes rather than on a timer:
   growth under a host drive keeps the driven fraction. It never reports its
   position at install, since a freshly loaded page is at the top only because
   the host has not restored it yet.
-- The web coordinator leaves host scroll targets unconsumed while a navigation
-  is in flight and applies them once the control script exists.
+- The web coordinator leaves host scroll and selection targets unconsumed while
+  a navigation is in flight and applies them once the control scripts exist.
+  Deferred pixel/caret reload restores are cancelled by newer host targets,
+  selection handoffs, or reader interaction, so an old retry cannot take over.
+- On iOS, the adaptive layout retains separate tokenized targets for source and
+  rendered panes. Either pane reports the shared position to the host and drives
+  the other; compact switches transfer that position into the newly mounted pane.
+  UIKit waits for a usable viewport before consuming a scroll target. Both editors
+  report zero-length source selections as caret positions for handoff.
 
 ### Paste
 

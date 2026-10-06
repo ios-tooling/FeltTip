@@ -38,7 +38,11 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 	var selectionTarget: MarkdownSelectionTarget?
 
 	func makeUIView(context: Context) -> UITextView {
-		let textView = UITextView()
+		let textView = MarkdownScrollingTextView()
+		textView.onLayout = { [weak coordinator = context.coordinator, weak textView] in
+			guard let textView else { return }
+			coordinator?.applyScrollTarget(to: textView)
+		}
 		textView.delegate = context.coordinator
 		textView.alwaysBounceVertical = true
 		textView.keyboardDismissMode = .interactive
@@ -82,5 +86,14 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 	}
 
 	func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+}
+/// A target received before SwiftUI supplies a viewport must wait for layout.
+private final class MarkdownScrollingTextView: UITextView {
+	var onLayout: (() -> Void)?
+
+	override func layoutSubviews() {
+		super.layoutSubviews()
+		onLayout?()
+	}
 }
 #endif

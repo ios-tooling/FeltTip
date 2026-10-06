@@ -75,7 +75,7 @@ extension MarkdownUITextEditor {
 			let range = textView.selectedRange
 			let reported: NSRange? = range.length > 0 ? range : nil
 			parent.onSelectionChanged?(reported)
-			parent.onSourceSelectionChanged?(reported)
+			parent.onSourceSelectionChanged?(range)
 			if parent.typewriterMode { centerCaret(in: textView) }
 			applyFocusMode(to: textView)
 		}
@@ -95,6 +95,7 @@ extension MarkdownUITextEditor {
 			let fraction = min(max(0, scrollView.contentOffset.y / span), 1)
 			// Don't echo a fraction we just applied from the other pane.
 			guard lastAppliedScrollFraction.map({ abs($0 - fraction) > 0.0001 }) ?? true else { return }
+			lastAppliedScrollFraction = nil
 			onScrollFractionChanged(Double(fraction))
 		}
 
@@ -139,10 +140,10 @@ extension MarkdownUITextEditor {
 		func applyScrollTarget(to textView: UITextView) {
 			guard let target = parent.scrollTarget,
 			      target.token != lastScrollTargetToken else { return }
+			let span = textView.contentSize.height - textView.bounds.height
+			guard textView.bounds.width > 0, textView.bounds.height > 0, span > 0 else { return }
 			lastScrollTargetToken = target.token
 			lastAppliedScrollFraction = Double(target.topFraction)
-			let span = textView.contentSize.height - textView.bounds.height
-			guard span > 0 else { return }
 			textView.setContentOffset(
 				CGPoint(x: 0, y: target.topFraction * span), animated: false)
 		}
