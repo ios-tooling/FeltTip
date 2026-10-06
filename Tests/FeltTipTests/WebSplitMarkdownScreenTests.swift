@@ -180,6 +180,42 @@ struct WebSplitMarkdownScreenTests {
 			"collapsed handoff settled at \(scrollFraction(of: rawEditor))")
 	}
 
+	@Test("Split reapplies its shared viewport after the panes resize")
+	func splitReappliesViewportAfterResize() async throws {
+		let source = (0..<1_600).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let model = SplitSelectionModel()
+		model.scrollTarget = MarkdownScrollTarget(topFraction: 0.5, token: 1)
+		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+
+		let rawEditor = try #require(try await waitForRawEditor(in: hosting))
+		let webView = try #require(try await waitForWebView(in: hosting))
+		try await waitForSplitViewport(
+			0.5, rawEditor: rawEditor, webView: webView, hosting: hosting)
+
+		window.setContentSize(NSSize(width: 1_400, height: 700))
+		hosting.layoutSubtreeIfNeeded()
+		// Let WebKit finish its asynchronous reflow. Without the resize restore,
+		// it keeps the old pixel offset and only then exposes the drifted fraction.
+		try await Task.sleep(for: .milliseconds(300))
+		try await waitForSplitViewport(
+			0.5, rawEditor: rawEditor, webView: webView, hosting: hosting)
+
+		let rawFraction = scrollFraction(of: rawEditor)
+		let renderedFraction = try #require(await webScrollFraction(of: webView))
+		#expect(abs(rawFraction - 0.5) <= 0.05, "resized source settled at \(rawFraction)")
+		#expect(abs(renderedFraction - 0.5) <= 0.05,
+			"resized preview settled at \(renderedFraction)")
+	}
+
 	private func waitForRawEditor(in view: NSView) async throws -> NSTextView? {
 		for _ in 0..<120 {
 			if let editor = findRawEditor(in: view) { return editor }
@@ -194,6 +230,50 @@ struct WebSplitMarkdownScreenTests {
 			if let editor = findRawEditor(in: child) { return editor }
 		}
 		return nil
+	}
+
+	private func waitForWebView(in view: NSView) async throws -> WKWebView? {
+		for _ in 0..<120 {
+			if let webView = findWebView(in: view) { return webView }
+			try await Task.sleep(for: .milliseconds(25))
+		}
+		return nil
+	}
+
+	private func findWebView(in view: NSView) -> WKWebView? {
+		if let webView = view as? WKWebView { return webView }
+		for child in view.subviews {
+			if let webView = findWebView(in: child) { return webView }
+		}
+		return nil
+	}
+
+	private func waitForSplitViewport(
+		_ expected: Double,
+		rawEditor: NSTextView,
+		webView: WKWebView,
+		hosting: NSHostingView<SplitSelectionHost>
+	) async throws {
+		for _ in 0..<160 {
+			hosting.layoutSubtreeIfNeeded()
+			let raw = scrollFraction(of: rawEditor)
+			let rendered = await webScrollFraction(of: webView)
+			if abs(raw - expected) <= 0.05,
+			   let rendered, abs(rendered - expected) <= 0.05 { return }
+			try await Task.sleep(for: .milliseconds(25))
+		}
+	}
+
+	private func webScrollFraction(of webView: WKWebView) async -> Double? {
+		let script = """
+		(() => {
+		  const root = document.scrollingElement || document.documentElement;
+		  const max = Math.max(0, root.scrollHeight - root.clientHeight);
+		  return max > 0 ? root.scrollTop / max : 0;
+		})()
+		"""
+		guard let value = try? await webView.evaluateJavaScript(script) else { return nil }
+		return (value as? NSNumber)?.doubleValue
 	}
 
 	private func scrollFraction(of editor: NSTextView) -> Double {

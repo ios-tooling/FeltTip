@@ -164,9 +164,14 @@ public struct WebSplitMarkdownScreen: View {
 
 	#if os(macOS)
 	@State private var scrollFraction: Double = 0
+	@State private var settledScrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 	@State private var lockoutTask: Task<Void, Never>?
 	@State private var hostRestoreGuard = MarkdownSplitHostRestoreGuard()
+	@State private var resizeScrollTarget: MarkdownScrollTarget?
+	@State private var resizeScrollToken = 0
+	@State private var previewSize: CGSize = .zero
+	@State private var resizeRestoreTask: Task<Void, Never>?
 	@State private var didRestoreScroll = false
 	/// Bumped each time the raw pane drives the scroll, so the token-gated
 	/// `scrollTarget` on the web preview re-applies the latest fraction.
@@ -190,7 +195,7 @@ public struct WebSplitMarkdownScreen: View {
 				onVisibleHeadingChanged: { id in if let id { onVisibleSectionChanged?(id) } },
 				onScrollFractionChanged: { didScroll(.raw, fraction: $0) },
 				syncScrollFraction: scrollSource == .formatted ? scrollFraction : nil,
-				scrollTarget: scrollTarget,
+				scrollTarget: effectiveScrollTarget,
 				typewriterMode: typewriterMode,
 				focusModeEnabled: focusModeEnabled,
 				theme: theme,
@@ -213,9 +218,17 @@ public struct WebSplitMarkdownScreen: View {
 
 			preview
 				.frame(minWidth: 150, maxWidth: .infinity)
+				.onGeometryChange(for: CGSize.self) { proxy in
+					proxy.size
+				} action: { size in
+					previewSizeChanged(to: size)
+				}
 		}
 		.onAppear { restoreInitialScroll() }
-		.onChange(of: scrollTarget) { _, target in restoreScroll(to: target) }
+		.onChange(of: scrollTarget) { _, target in
+			resizeScrollTarget = nil
+			restoreScroll(to: target)
+		}
 		.onChange(of: text) { _, _ in suspendSyncWhileEditing() }
 	}
 
@@ -285,11 +298,15 @@ public struct WebSplitMarkdownScreen: View {
 
 	private enum ScrollSource { case none, raw, formatted, host }
 
+	private var effectiveScrollTarget: MarkdownScrollTarget? {
+		resizeScrollTarget ?? scrollTarget
+	}
+
 	/// Host and pane-sync targets use disjoint token spaces. MarkdownWebView
 	/// deduplicates by token, so sharing a sequence could otherwise make a raw
 	/// pane scroll accidentally suppress the next host restore.
 	private var previewScrollTarget: MarkdownScrollTarget? {
-		if scrollSource == .host, let scrollTarget {
+		if scrollSource == .host, let scrollTarget = effectiveScrollTarget {
 			return MarkdownScrollTarget(
 				topFraction: scrollTarget.topFraction,
 				token: scrollTarget.token &* 2)
@@ -340,6 +357,7 @@ public struct WebSplitMarkdownScreen: View {
 		lockoutTask = Task { @MainActor in
 			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
 			guard !Task.isCancelled else { return }
+			settledScrollFraction = scrollFraction
 			scrollSource = .none
 		}
 	}
@@ -364,8 +382,13 @@ public struct WebSplitMarkdownScreen: View {
 
 	private func restoreScroll(to target: MarkdownScrollTarget?) {
 		guard let target else { return }
+		beginHostRestore(to: target)
+	}
+
+	private func beginHostRestore(to target: MarkdownScrollTarget) {
 		didRestoreScroll = true
 		scrollFraction = Double(target.topFraction)
+		settledScrollFraction = scrollFraction
 		scrollSource = .host
 		hostRestoreGuard.begin(at: scrollFraction)
 		lockoutTask?.cancel()
@@ -374,6 +397,32 @@ public struct WebSplitMarkdownScreen: View {
 			guard !Task.isCancelled else { return }
 			hostRestoreGuard.cancel()
 			scrollSource = .none
+		}
+	}
+
+	private func previewSizeChanged(to size: CGSize) {
+		guard size.width > 0, size.height > 0 else { return }
+		guard previewSize != .zero else {
+			previewSize = size
+			return
+		}
+		guard abs(size.width - previewSize.width) > 0.5
+			|| abs(size.height - previewSize.height) > 0.5 else { return }
+		previewSize = size
+		// Both TextKit and WebKit reflow when their pane changes size. Their
+		// pixel offsets then describe different source locations even though no
+		// scroll event occurred. Reapply the shared normalized viewport after the
+		// resize settles; tokenizing it makes both long-lived panes accept the
+		// same fraction again, including divider drags.
+		resizeRestoreTask?.cancel()
+		resizeRestoreTask = Task { @MainActor in
+			try? await Task.sleep(for: .milliseconds(100))
+			guard !Task.isCancelled else { return }
+			resizeScrollToken -= 1
+			let target = MarkdownScrollTarget(
+				topFraction: settledScrollFraction, token: resizeScrollToken)
+			resizeScrollTarget = target
+			beginHostRestore(to: target)
 		}
 	}
 
