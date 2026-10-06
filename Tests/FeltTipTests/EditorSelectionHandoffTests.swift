@@ -347,6 +347,45 @@ struct EditorSelectionHandoffTests {
 			"The selected top title was hidden by a stale viewport restore at \(fraction)")
 	}
 
+	@Test func rawEditorReleasesExtendedSelectionAfterTheHandoffSettles() async throws {
+		let source = (0..<420).map { index in
+			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
+		}.joined(separator: "\n\n")
+		let selected = (source as NSString).range(of: "## Sector 0")
+		let model = RawSelectionViewportModel(source: source, selected: selected)
+		let hosting = NSHostingView(rootView: RawSelectionViewportHost(model: model))
+		hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.borderless],
+			backing: .buffered, defer: false)
+		window.contentView = hosting
+		window.orderFront(nil)
+
+		hosting.layoutSubtreeIfNeeded()
+		let textView = try #require(try await waitForTextView(in: hosting))
+		try await Task.sleep(for: .milliseconds(500))
+		// Once the handoff's late-layout window has elapsed, a real split-pane
+		// scroll must be allowed to move the selection offscreen.
+		model.syncFraction = 0.65
+		for _ in 0..<40 {
+			hosting.layoutSubtreeIfNeeded()
+			let scrollView = try #require(textView.enclosingScrollView)
+			let span = max(0,
+				(scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
+			let fraction = span > 0 ? scrollView.contentView.bounds.origin.y / span : 0
+			if abs(fraction - 0.65) < 0.05 { break }
+			try await Task.sleep(for: .milliseconds(25))
+		}
+
+		#expect(textView.selectedRange() == selected)
+		let scrollView = try #require(textView.enclosingScrollView)
+		let span = max(0,
+			(scrollView.documentView?.frame.height ?? 0) - scrollView.contentView.bounds.height)
+		let fraction = span > 0 ? scrollView.contentView.bounds.origin.y / span : 0
+		#expect(abs(fraction - 0.65) < 0.05,
+			"The persistent selection kept split scrolling pinned at \(fraction)")
+	}
+
 	@Test func rawEditorRevealsInitialExtendedSelectionAfterLateLayoutScroll() async throws {
 		let source = (0..<1_600).map { index in
 			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."

@@ -225,6 +225,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						// at a stable position is not the user scrolling this pane.
 						guard abs(offset - coordinator.lastReportedScrollOffset) > 0.5 else { return }
 						coordinator.lastReportedScrollOffset = offset
+						// A genuine source-pane scroll means the handoff has finished.
+						// Keep the selection itself, but stop forcing it back onscreen
+						// during every subsequent SwiftUI update.
+						coordinator.pinnedSelectionTargetToken = nil
 						let fraction = MarkdownScrollGeometry.fraction(
 							originY: offset,
 							documentFrame: documentFrame,
@@ -369,6 +373,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let location = min(max(0, target.range.location), length)
 			let selectedLength = min(max(0, target.range.length), length - location)
 			let range = NSRange(location: location, length: selectedLength)
+			context.coordinator.pinSelectionVisibility(target: target, range: range, in: textView)
 			textView.setSelectedRange(range)
 			textView.scrollRangeToVisible(range)
 			context.coordinator.scheduleExtendedSelectionReveal(
@@ -394,7 +399,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			Task { @MainActor in selectedHeadingID = nil }
 		}
 
-		if selectionTarget?.range.length ?? 0 > 0 {
+		if let target = selectionTarget,
+		   target.range.length > 0,
+		   context.coordinator.pinnedSelectionTargetToken == target.token {
 			// A selected source range is a stronger positional anchor than a
 			// normalized viewport captured before the selection moved the outgoing
 			// editor. SwiftUI can re-enter here after the initial handoff (for
@@ -614,6 +621,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrolledOffset: Int = -1
 		var lastCaretToken: Int?
 		var lastSelectionTargetToken: Int?
+		/// An extended handoff selection temporarily outranks the stale viewport
+		/// captured before the handoff. Release that protection after late TextKit
+		/// layout settles (or immediately when the user scrolls) so a persistent
+		/// selection does not permanently disable ordinary split-pane scrolling.
+		var pinnedSelectionTargetToken: Int?
 		var isSyncScroll = false
 		/// Last bounds origin reported as a scroll. `boundsDidChange` also
 		/// fires when TextKit's document-height estimate flaps during layout
@@ -801,6 +813,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		fileprivate func revealExtendedSelectionTarget(in scrollView: NSScrollView) {
 			guard let target = parent.selectionTarget, target.range.length > 0,
+				pinnedSelectionTargetToken == target.token,
 				let textView = scrollView.documentView as? NSTextView else { return }
 			let length = (textView.string as NSString).length
 			let location = min(max(0, target.range.location), length)
@@ -808,6 +821,25 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			revealSelectionRange(
 				NSRange(location: location, length: selectedLength),
 				in: textView, scrollView: scrollView)
+		}
+
+		fileprivate func pinSelectionVisibility(
+			target: MarkdownSelectionTarget, range: NSRange, in textView: NSTextView
+		) {
+			guard range.length > 0 else {
+				pinnedSelectionTargetToken = nil
+				return
+			}
+			pinnedSelectionTargetToken = target.token
+			// Cursor/status publication and TextKit's late layout can re-enter the
+			// representable after the handoff. Protect the selection through that
+			// window, then let normal split scrolling move it offscreen.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self, weak textView] in
+				guard let self, let textView,
+					self.pinnedSelectionTargetToken == target.token,
+					textView.selectedRange() == range else { return }
+				self.pinnedSelectionTargetToken = nil
+			}
 		}
 
 		fileprivate func scheduleExtendedSelectionReveal(
