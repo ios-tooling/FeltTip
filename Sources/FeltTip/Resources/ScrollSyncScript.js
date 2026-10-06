@@ -141,14 +141,6 @@
     var fraction = Math.max(0, Math.min(1, f));
     driveToFraction(fraction);
     lastFraction = fraction;
-    // Acknowledge the drive immediately. The ordinary scroll event is muted
-    // above to prevent feedback, but the native host still needs to know that
-    // its restore landed before it can accept a subsequent user gesture.
-    try {
-      window.webkit.messageHandlers.mdedit.postMessage({
-        type: 'scrollTargetApplied', top: fraction
-      });
-    } catch (e) {}
     // The target is synchronous from the page's point of view. Mark it settled
     // now so a user gesture arriving before WebKit dispatches the drive's
     // scroll event is reported instead of being mistaken for convergence.
@@ -434,5 +426,6 @@
     window.setTimeout(scheduleChangeMarkerRedraw, 300);
   };
   window.addEventListener('resize', scheduleChangeMarkerRedraw);
-  report();
+  // No report at install: a freshly loaded page sits at the top, and telling
+  // the host so would overwrite the position it is about to restore.
 })();

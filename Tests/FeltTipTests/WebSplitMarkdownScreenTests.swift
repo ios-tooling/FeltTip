@@ -68,31 +68,6 @@ struct WebSplitMarkdownScreenTests {
 		#expect(writtenText == "updated")
 	}
 
-	@Test("A delayed rendered zero cannot override an in-flight host restore")
-	func delayedRenderedZeroStaysInsideHostRestoreGate() {
-		var gate = MarkdownSplitHostRestoreGuard()
-		gate.begin(at: 0.5)
-
-		let consumedStaleReport = gate.consumeRenderedReport(0)
-		#expect(consumedStaleReport)
-		#expect(gate.target == 0.5)
-		let consumedSettledReport = gate.consumeRenderedReport(0.46)
-		#expect(consumedSettledReport)
-		#expect(gate.target == nil)
-		let consumedPostSettlementReport = gate.consumeRenderedReport(0)
-		#expect(!consumedPostSettlementReport)
-	}
-
-	@Test("Cancelling a host restore immediately releases rendered reports")
-	func cancelledHostRestoreReleasesRenderedReports() {
-		var gate = MarkdownSplitHostRestoreGuard()
-		gate.begin(at: 0.5)
-		gate.cancel()
-
-		let consumedCancelledReport = gate.consumeRenderedReport(0.2)
-		#expect(!consumedCancelledReport)
-	}
-
 	@Test("A source-pane selection handoff does not move focus into the preview")
 	func sourceSelectionHandoffKeepsRawEditorFocused() async throws {
 		let source = "# Before\n\n{: .callout}\n\nParagraph LOCAL target\n"

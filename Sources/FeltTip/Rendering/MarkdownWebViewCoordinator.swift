@@ -71,11 +71,11 @@ extension MarkdownWebView {
 		/// through a requestAnimationFrame throttle that headless test windows
 		/// don't reliably run.
 		var lastScrollY: Double = 0
-		/// A full navigation resets WKWebView's native scroll view before the new
-		/// page can ask us to restore it. Keep the pre-navigation offset separate
-		/// so that reset's synthetic `scrollY == 0` report cannot overwrite the
-		/// user's reading position while the replacement page is loading.
-		var pendingReloadScrollY: Double?
+		/// A full navigation is in flight: the old page is gone or going and the
+		/// new one has no control script yet. Scroll reports in this window are
+		/// WebKit's reset to zero, not the user, and host scroll targets wait
+		/// (unconsumed) until `completePageSetup` can actually apply them.
+		var isNavigating = false
 		/// Selection (offset + length; length 0 = caret) to restore after a
 		/// structural re-render. Style toggles restore the full selection so
 		/// repeated ⌘B/⌘I keep operating on the same text.
@@ -280,6 +280,7 @@ extension MarkdownWebView {
 		}
 
 		private func captureScrollThenLoadHTML(for text: String, into webView: WKWebView) {
+			isNavigating = true
 			reloadCaptureGeneration += 1
 			let generation = reloadCaptureGeneration
 			reloadCaptureTask?.cancel()
@@ -295,10 +296,7 @@ extension MarkdownWebView {
 				guard !Task.isCancelled, let self,
 				      generation == self.reloadCaptureGeneration else { return }
 				self.reloadCaptureTask = nil
-				if let capturedY {
-					self.lastScrollY = capturedY
-					self.pendingReloadScrollY = capturedY > 0 ? capturedY : nil
-				}
+				if let capturedY { self.lastScrollY = capturedY }
 				self.loadHTML(for: text, into: webView)
 			}
 		}
@@ -1107,6 +1105,7 @@ extension MarkdownWebView {
 		/// (lastRenderedText/currentSource/epoch), so a superseded render just
 		/// never navigates — the newer call's page wins.
 		func loadHTML(for text: String, into webView: WKWebView) {
+			isNavigating = true
 			let isInitialRender = !didStartInitialRender
 			startInitialRenderIfNeeded()
 			renderTask?.cancel()
@@ -1184,10 +1183,10 @@ extension MarkdownWebView {
 
 		public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
 			completePageSetup(in: webView)
-			pendingReloadScrollY = nil
 		}
 
 		func completePageSetup(in webView: WKWebView) {
+			isNavigating = false
 			guard isTrustedDocumentURL(webView.url) else {
 				log("refusing script injection into untrusted navigation \(webView.url?.absoluteString ?? "nil")")
 				return
@@ -1241,16 +1240,14 @@ extension MarkdownWebView {
 				didApplyInitialScroll = true
 				log("didFinish: initial scroll fraction \(initial)")
 				webView.evaluateJavaScript("window.__mdScrollToFraction && window.__mdScrollToFraction(\(initial));", completionHandler: nil)
-			} else if let restoreY = pendingReloadScrollY ?? (lastScrollY > 0 ? lastScrollY : nil) {
-				log("didFinish: restoring scrollY \(restoreY)")
-				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(restoreY), null, 0);", completionHandler: nil)
+			} else if lastScrollY > 0 {
+				log("didFinish: restoring scrollY \(lastScrollY)")
+				webView.evaluateJavaScript("window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), null, 0);", completionHandler: nil)
 			}
-			// updateUXView can deliver a host scroll target while the first page is
-			// still loading. Its early JavaScript call is necessarily a no-op, but
-			// the token has already been consumed. Reapply the absolute target now
-			// that the control script exists; it is the host's latest viewport and
-			// intentionally wins over the one-time initial position above.
-			applyScrollTarget(to: webView, force: true)
+			// A host scroll target that arrived during the navigation was left
+			// unconsumed; it is the host's latest viewport and intentionally wins
+			// over the one-time initial position above.
+			applyScrollTarget(to: webView)
 			if didStartInitialRender, !didSignalInitialRenderReady {
 				didSignalInitialRenderReady = true
 				parent.onInitialRenderReady?()
@@ -1266,6 +1263,7 @@ extension MarkdownWebView {
 			didFail navigation: WKNavigation!,
 			withError error: any Error
 		) {
+			isNavigating = false
 			finishInitialRenderIfNeeded()
 		}
 
@@ -1274,6 +1272,7 @@ extension MarkdownWebView {
 			didFailProvisionalNavigation navigation: WKNavigation!,
 			withError error: any Error
 		) {
+			isNavigating = false
 			finishInitialRenderIfNeeded()
 		}
 
@@ -1434,9 +1433,9 @@ extension MarkdownWebView {
 			}
 		}
 
-		private func applyScrollTarget(to webView: WKWebView, force: Bool = false) {
-			guard let target = parent.scrollTarget,
-				force || target.token != lastScrollTargetToken else { return }
+		private func applyScrollTarget(to webView: WKWebView) {
+			guard !isNavigating, let target = parent.scrollTarget,
+				target.token != lastScrollTargetToken else { return }
 			lastScrollTargetToken = target.token
 			log("scroll control: toFraction \(target.topFraction) token \(target.token)")
 			webView.evaluateJavaScript(

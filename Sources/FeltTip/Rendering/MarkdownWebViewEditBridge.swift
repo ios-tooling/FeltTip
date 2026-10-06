@@ -26,19 +26,12 @@ extension MarkdownWebView.Coordinator {
 			bridgeIncidents.append("rejected message from untrusted frame/origin")
 			return
 		}
-		if body["type"] as? String == "scrollTargetApplied" {
-			if let top = body["top"] as? Double {
-				parent.onScrollTargetApplied?(CGFloat(top))
-			}
-			return
-		}
 		// Scroll position report — remembered so reloads don't jump to top, and
 		// forwarded to the host (as top/visible/content fractions) for sync.
 		if body["type"] as? String == "scroll" {
 			// A full navigation resets the native scroll view to zero before the
-			// replacement page is ready. Preserve the pre-navigation snapshot until
-			// didFinish restores it; otherwise that synthetic event wins the race.
-			guard pendingReloadScrollY == nil else { return }
+			// replacement page is ready; that synthetic event is not a scroll.
+			guard !isNavigating else { return }
 			if let y = body["y"] as? Double { lastScrollY = y }
 			if let top = body["top"] as? Double,
 			   let visible = body["visible"] as? Double,
@@ -48,7 +41,7 @@ extension MarkdownWebView.Coordinator {
 			return
 		}
 		if body["type"] as? String == "visibleSourceOffset" {
-			guard pendingReloadScrollY == nil, let offset = body["offset"] as? Int else { return }
+			guard !isNavigating, let offset = body["offset"] as? Int else { return }
 			parent.onVisibleSourceOffsetChanged?(offset)
 			return
 		}

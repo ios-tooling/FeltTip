@@ -27,35 +27,6 @@ enum MarkdownSplitEditRelay {
 	}
 }
 
-/// Suppresses a rendered pane's provisional scroll reports while a host
-/// restore is landing. WebKit can report its old offset well after the normal
-/// cross-pane lockout expires, especially while a large document is laying
-/// out. The guard retires only when the rendered pane reaches the requested
-/// neighborhood (or its bounded fallback expires).
-struct MarkdownSplitHostRestoreGuard: Equatable {
-	private(set) var target: Double?
-	static let settleTolerance = 0.08
-
-	mutating func begin(at fraction: Double) {
-		target = fraction
-	}
-
-	mutating func cancel() {
-		target = nil
-	}
-
-	/// Returns true while this report belongs to the in-flight host restore.
-	/// The report that confirms settlement is consumed too, so it cannot turn
-	/// around and drive the already-restored source pane.
-	mutating func consumeRenderedReport(_ fraction: Double) -> Bool {
-		guard let target else { return false }
-		if abs(fraction - target) <= Self.settleTolerance {
-			self.target = nil
-		}
-		return true
-	}
-}
-
 /// Pane selected by the compact iOS source/rendered switch. Hosts can persist
 /// this per document while regular-width layouts continue to show both panes.
 public enum MarkdownCompactPane: String, CaseIterable, Identifiable, Sendable {
@@ -166,17 +137,16 @@ public struct WebSplitMarkdownScreen: View {
 	@State private var scrollFraction: Double = 0
 	@State private var scrollSource: ScrollSource = .none
 	@State private var lockoutTask: Task<Void, Never>?
-	@State private var hostRestoreGuard = MarkdownSplitHostRestoreGuard()
 	@State private var didRestoreScroll = false
-	/// Bumped each time the raw pane drives the scroll, so the token-gated
-	/// `scrollTarget` on the web preview re-applies the latest fraction.
-	@State private var previewScrollToken = 0
-	/// Mirror image for the raw pane: bumped when the rendered pane drives.
-	@State private var rawScrollToken = 0
-	/// The raw pane's current drive. Held as state rather than derived so it
+	/// Each pane's current drive, held as state rather than derived so it
 	/// never flips back to an already-consumed host target once a pane sync
-	/// has moved the raw editor elsewhere; late layout replays read it too.
+	/// has moved that pane elsewhere; late layout replays read it too. Host
+	/// restores and pane syncs use disjoint token spaces (even and odd), since
+	/// both editors deduplicate by token.
 	@State private var rawScrollTarget: MarkdownScrollTarget?
+	@State private var previewScrollTarget: MarkdownScrollTarget?
+	@State private var rawScrollToken = 0
+	@State private var previewScrollToken = 0
 	@State private var isEditing = false
 	@State private var editLockoutTask: Task<Void, Never>?
 	/// Cross-pane selection mirroring: the focused pane's selection shows as
@@ -184,7 +154,6 @@ public struct WebSplitMarkdownScreen: View {
 	@State private var previewMirror: NSRange?
 	@State private var rawMirror: NSRange?
 	private static let scrollLockoutMs: Int = 200
-	private static let hostRestoreTimeoutMs: Int = 2_000
 	private static let editLockoutMs: Int = 700
 
 	public var body: some View {
@@ -262,7 +231,6 @@ public struct WebSplitMarkdownScreen: View {
 			.initialScrollFraction(initialScrollFraction)
 			.scrollTarget(previewScrollTarget)
 			.onScrollFractionChanged { top, _, _ in didScroll(.formatted, fraction: Double(top)) }
-			.onScrollTargetApplied { fraction in renderedScrollTargetApplied(Double(fraction)) }
 			.onSelectionChanged { range in
 				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] preview selection -> rawMirror=%@", String(describing: range)) }
 				previewMirror = nil
@@ -292,11 +260,8 @@ public struct WebSplitMarkdownScreen: View {
 		return view
 	}
 
-	private enum ScrollSource { case none, raw, formatted, host }
+	private enum ScrollSource { case none, raw, formatted }
 
-	/// Host and pane-sync targets use disjoint token spaces (even and odd).
-	/// Both editors deduplicate by token, so sharing a sequence could otherwise
-	/// make a pane sync accidentally suppress the next host restore.
 	private func hostToken(_ token: Int) -> Int { token &* 2 }
 	private func syncToken(_ token: Int) -> Int { token &* 2 &+ 1 }
 
@@ -306,37 +271,20 @@ public struct WebSplitMarkdownScreen: View {
 			topFraction: CGFloat(fraction), token: syncToken(rawScrollToken))
 	}
 
-	private var previewScrollTarget: MarkdownScrollTarget? {
-		if scrollSource == .host, let scrollTarget {
-			return MarkdownScrollTarget(
-				topFraction: scrollTarget.topFraction,
-				token: hostToken(scrollTarget.token))
-		}
-		guard scrollSource == .raw else { return nil }
-		return MarkdownScrollTarget(
-			topFraction: CGFloat(scrollFraction),
-			token: syncToken(previewScrollToken))
+	private func drivePreviewPane(to fraction: Double) {
+		previewScrollToken += 1
+		previewScrollTarget = MarkdownScrollTarget(
+			topFraction: CGFloat(fraction), token: syncToken(previewScrollToken))
 	}
 
-	/// Lockout mirrors SplitMarkdownScreen: while one pane is the active source,
-	/// drop the other pane's echoed scroll callbacks so the two don't ping-pong.
+	/// While one pane is the active source, drop the other pane's scroll
+	/// callbacks so the two don't ping-pong. Each pane already suppresses the
+	/// echo of its own drive (the raw editor's sync flag, the page's `driven`
+	/// state), so a host restore needs no arbitration here at all.
 	private func didScroll(_ source: ScrollSource, fraction: Double) {
 		if isEditing {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] editing, drop %@ %.4f", "\(source)", fraction) }
 			return
-		}
-		// WebKit can publish its provisional pre-restore offset after the ordinary
-		// lockout expires. Keep consuming rendered reports until it reaches the
-		// requested neighborhood. A real source-pane scroll is allowed to cancel
-		// the restore immediately so the UI never ignores the user's wheel/trackpad.
-		if source == .formatted, hostRestoreGuard.consumeRenderedReport(fraction) {
-			if hostRestoreGuard.target == nil { finishHostRestore() }
-			return
-		}
-		if scrollSource == .host {
-			guard source == .raw else { return }
-			hostRestoreGuard.cancel()
-			finishHostRestore()
 		}
 		if scrollSource != .none && scrollSource != source {
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] drop %@ %.4f (source %@)", "\(source)", fraction, "\(scrollSource)") }
@@ -356,7 +304,7 @@ public struct WebSplitMarkdownScreen: View {
 		scrollSource = source
 		scrollFraction = fraction
 		onScrollFractionChanged?(fraction)
-		if source == .raw { previewScrollToken += 1 }
+		if source == .raw { drivePreviewPane(to: fraction) }
 		if source == .formatted { driveRawPane(to: fraction) }
 		lockoutTask?.cancel()
 		lockoutTask = Task { @MainActor in
@@ -375,50 +323,21 @@ public struct WebSplitMarkdownScreen: View {
 		guard let fraction = initialScrollFraction else { return }
 		didRestoreScroll = true
 		scrollFraction = fraction
-		scrollSource = .formatted
 		// The preview applies `initialScrollFraction` itself; the raw pane
 		// needs a drive to the same place.
 		driveRawPane(to: fraction)
-		lockoutTask?.cancel()
-		lockoutTask = Task { @MainActor in
-			try? await Task.sleep(for: .milliseconds(Self.scrollLockoutMs))
-			guard !Task.isCancelled else { return }
-			scrollSource = .none
-		}
 	}
 
-	private func renderedScrollTargetApplied(_ fraction: Double) {
-		guard let target = hostRestoreGuard.target,
-			abs(target - fraction) <= MarkdownSplitHostRestoreGuard.settleTolerance else { return }
-		hostRestoreGuard.cancel()
-		finishHostRestore()
-	}
-
+	/// A host restore drives both panes with the host's token. Neither pane
+	/// reports the drive back, so there is nothing to lock out.
 	private func restoreScroll(to target: MarkdownScrollTarget?) {
 		guard let target else { return }
-		beginHostRestore(to: target)
-	}
-
-	private func beginHostRestore(to target: MarkdownScrollTarget) {
 		didRestoreScroll = true
 		scrollFraction = Double(target.topFraction)
-		scrollSource = .host
-		rawScrollTarget = MarkdownScrollTarget(
+		let shared = MarkdownScrollTarget(
 			topFraction: target.topFraction, token: hostToken(target.token))
-		hostRestoreGuard.begin(at: scrollFraction)
-		lockoutTask?.cancel()
-		lockoutTask = Task { @MainActor in
-			try? await Task.sleep(for: .milliseconds(Self.hostRestoreTimeoutMs))
-			guard !Task.isCancelled else { return }
-			hostRestoreGuard.cancel()
-			scrollSource = .none
-		}
-	}
-
-	private func finishHostRestore() {
-		lockoutTask?.cancel()
-		lockoutTask = nil
-		scrollSource = .none
+		rawScrollTarget = shared
+		previewScrollTarget = shared
 	}
 	#else
 	public var body: some View {
