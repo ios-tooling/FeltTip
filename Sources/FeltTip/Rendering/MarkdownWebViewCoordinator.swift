@@ -100,6 +100,9 @@ extension MarkdownWebView {
 		private var lastCaretToken: Int?
 		/// Selection-handoff token already applied.
 		private var lastSelectionTargetToken: Int?
+		/// Expected report from a handoff still crossing the WebKit boundary.
+		/// Activation can otherwise publish the prewarmed page's old caret first.
+		private var guardedSelectionTarget: (range: NSRange, token: Int)?
 		private var lastFocusModeEnabled: Bool?
 		/// `initialScrollFraction` is applied only once, after the first render.
 		private var didApplyInitialScroll = false
@@ -1340,6 +1343,24 @@ extension MarkdownWebView {
 			selfEdit = nil
 		}
 
+		private func guardSelectionReports(for range: NSRange, token: Int) {
+			guardedSelectionTarget = (range, token)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+				guard self?.guardedSelectionTarget?.token == token else { return }
+				self?.guardedSelectionTarget = nil
+			}
+		}
+
+		func shouldPublishSelectionReport(_ range: NSRange?) -> Bool {
+			guard let guardedSelectionTarget else { return true }
+			guard range == guardedSelectionTarget.range else {
+				log("dropping pre-target selection \(String(describing: range)); awaiting \(guardedSelectionTarget.range)")
+				return false
+			}
+			self.guardedSelectionTarget = nil
+			return true
+		}
+
 		/// Install a selection handed off by another editor mode. A newly
 		/// mounted web view keeps it pending until its first stamped render;
 		/// an already-rendered view can apply it immediately.
@@ -1353,6 +1374,7 @@ extension MarkdownWebView {
 			      target.token != lastSelectionTargetToken else { return }
 			lastSelectionTargetToken = target.token
 			let selection = composedSelection(target.range, in: parent.text as NSString)
+			guardSelectionReports(for: selection, token: target.token)
 			if currentSource == parent.text {
 				placeCaretAfterUpdate(selection, into: webView)
 			} else {

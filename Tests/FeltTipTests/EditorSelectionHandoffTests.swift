@@ -254,6 +254,24 @@ struct EditorSelectionHandoffTests {
 		#expect(harness.lastReportedSelection == range)
 	}
 
+	@Test func activatedStyledViewDropsItsPrewarmedSelectionBeforeHandoffLands() async throws {
+		let source = "# Heading\n\nSector 333 remains selected\n"
+		let selected = (source as NSString).range(of: "Sector 333")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		harness.coordinator.parent = MarkdownWebView(
+			text: source, theme: .default, fontSize: 14
+		)
+		.editable(true)
+		.selectionTarget(MarkdownSelectionTarget(range: selected, token: 41))
+		harness.coordinator.applySelectionTarget(to: harness.webView)
+
+		#expect(!harness.coordinator.shouldPublishSelectionReport(
+			NSRange(location: 2, length: 0)))
+		#expect(harness.coordinator.shouldPublishSelectionReport(selected))
+		#expect(harness.coordinator.shouldPublishSelectionReport(
+			NSRange(location: selected.upperBound, length: 0)))
+	}
+
 	@Test func rawEditorInstallsAndClampsSelectionTargets() async throws {
 		var text = "0123456789"
 		var heading: String?

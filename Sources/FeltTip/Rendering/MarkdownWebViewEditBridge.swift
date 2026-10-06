@@ -112,9 +112,11 @@ extension MarkdownWebView.Coordinator {
 					in: source) {
 					range = expanded
 				}
+				guard shouldPublishSelectionReport(range) else { return }
 				parent.onSourceSelectionChanged?(range)
 				parent.onSelectionChanged?(length > 0 ? range : nil)
 			} else {
+				guard shouldPublishSelectionReport(nil) else { return }
 				parent.onSourceSelectionChanged?(nil)
 				parent.onSelectionChanged?(nil)
 			}
