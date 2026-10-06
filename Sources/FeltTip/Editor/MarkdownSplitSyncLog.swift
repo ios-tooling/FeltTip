@@ -9,5 +9,7 @@
 import Foundation
 
 enum MarkdownSplitSyncLog {
+	/// Also honors `FELTTIP_SPLITSYNC_LOG=1` so `swift test` runs can log.
 	static let enabled = UserDefaults.standard.bool(forKey: "FeltTipDebugEditing")
+		|| ProcessInfo.processInfo.environment["FELTTIP_SPLITSYNC_LOG"] != nil
 }

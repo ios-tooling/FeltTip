@@ -6,20 +6,43 @@
   // invalidate only when viewport/content geometry actually changes.
   var dimensions = null;
   var driven = null;
-  var drivenResizeTimer = null;
+  // The page's viewport anchor: the fraction of the scrollable range the
+  // reader last settled at, by their own scroll or a host drive. Geometry
+  // changes re-apply it so the pane keeps its place without the host's help.
+  var lastFraction = null;
+  var fractionRestoreTimers = [];
+  function driveToFraction(fraction) {
+    dimensions = null;
+    var y = fraction * scrollDimensions().maxY;
+    driven = { y: y, fraction: fraction, until: Date.now() + 500 };
+    window.scrollTo(0, y);
+  }
+  // `fraction` is read when each timer fires, so a user scroll during the
+  // window moves the anchor and later passes follow the reader, not the past.
+  function scheduleFractionRestore(fraction, delays) {
+    fractionRestoreTimers.forEach(window.clearTimeout);
+    fractionRestoreTimers = delays.map(function (delay) {
+      return window.setTimeout(function () {
+        var target = fraction();
+        if (target != null) { driveToFraction(target); }
+      }, delay);
+    });
+  }
+  // Content grew or shrank under a host drive (images, mermaid): keep the
+  // driven fraction. After a user scroll the page's pixel position is the
+  // truth and content changes must not move it.
   function invalidateDimensions() {
     dimensions = null;
-    if (!driven || driven.fraction == null) { return; }
-    var fraction = driven.fraction;
-    if (drivenResizeTimer != null) { window.clearTimeout(drivenResizeTimer); }
-    drivenResizeTimer = window.setTimeout(function () {
-      drivenResizeTimer = null;
-      dimensions = null;
-      var maxY = scrollDimensions().maxY;
-      var y = fraction * maxY;
-      driven = { y: y, fraction: fraction, until: Date.now() + 500 };
-      window.scrollTo(0, y);
-    }, 80);
+    if (driven && driven.fraction != null) {
+      scheduleFractionRestore(function () { return driven ? driven.fraction : null; }, [80]);
+    }
+  }
+  // The viewport itself changed size: WebKit keeps the old pixel offset,
+  // which now describes a different place in the document. Reassert the
+  // anchor, repeating because a severe reflow can settle in stages.
+  function restoreFractionAfterResize() {
+    dimensions = null;
+    scheduleFractionRestore(function () { return lastFraction; }, [120, 480, 900]);
   }
   function scrollDimensions() {
     if (!dimensions) {
@@ -32,7 +55,7 @@
   function docHeight() {
     return scrollDimensions().height;
   }
-  window.addEventListener('resize', invalidateDimensions, { passive: true });
+  window.addEventListener('resize', restoreFractionAfterResize, { passive: true });
   if (window.ResizeObserver) {
     var geometryObserver = new ResizeObserver(invalidateDimensions);
     geometryObserver.observe(document.documentElement);
@@ -78,23 +101,25 @@
     var h = dims.height;
     var vis = dims.visible;
     var y = window.scrollY || window.pageYOffset || 0;
-    if (driven) {
-      if (Math.abs(y - driven.y) < 3) {
-        // At the driven position: this and any repeat events are echoes.
-        // Stay armed — WebKit re-fires at a pinned position (e.g. clamped
-        // at the bottom), and one leaked echo re-claims scroll-sourcehood.
-        driven.settled = true;
-        return;
-      }
-      if (driven.settled || Date.now() > driven.until) { driven = null; }
-      else { return; }   // still converging on the target
-    }
     // `top` is the fraction of the SCROLLABLE range (offset / (content −
     // viewport)), matching MarkdownTextEditor's convention on both its
     // report and apply sides — full-height fractions max out below 1.0
     // and leave the synced pane short of the bottom.
     var maxY = dims.maxY;
     var top = maxY > 0 ? Math.max(0, Math.min(1, y / maxY)) : 0;
+    if (driven) {
+      if (Math.abs(y - driven.y) < 3) {
+        // At the driven position: this and any repeat events are echoes.
+        // Stay armed — WebKit re-fires at a pinned position (e.g. clamped
+        // at the bottom), and one leaked echo re-claims scroll-sourcehood.
+        driven.settled = true;
+        lastFraction = driven.fraction != null ? driven.fraction : top;
+        return;
+      }
+      if (driven.settled || Date.now() > driven.until) { driven = null; }
+      else { return; }   // still converging on the target
+    }
+    lastFraction = top;
     var visible = Math.max(0, Math.min(1, vis / h));
     var content = vis > 0 ? Math.min(1, h / vis) : 1;
     try {
@@ -110,15 +135,12 @@
   }, { passive: true });
 	scheduleVisibleSourceReport();
   window.__mdScrollToFraction = function (f) {
-    var dims = scrollDimensions();
-    var maxY = dims.maxY;
     // Top-anchored fraction of the scrollable range — the same units
     // report() emits, so a drive→echo round trip is the identity and the
     // panes agree at both ends of the document.
     var fraction = Math.max(0, Math.min(1, f));
-    var y = fraction * maxY;
-    driven = { y: y, fraction: fraction, until: Date.now() + 500 };
-    window.scrollTo(0, y);
+    driveToFraction(fraction);
+    lastFraction = fraction;
     // Acknowledge the drive immediately. The ordinary scroll event is muted
     // above to prevent feedback, but the native host still needs to know that
     // its restore landed before it can accept a subsequent user gesture.

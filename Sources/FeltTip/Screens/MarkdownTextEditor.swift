@@ -172,12 +172,26 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			revealStartWhenComplete: shouldRevealInitialCaret
 		) { [weak scrollView, weak coordinator = context.coordinator] in
 			guard let scrollView, let coordinator else { return }
-			coordinator.restoreScrollTargetAfterLayout(in: scrollView)
+			coordinator.replayViewportAnchor(in: scrollView)
 		}
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
 		// re-styling to the paragraph that actually changed.
 		textView.textStorage?.delegate = context.coordinator
+		// TextKit's lazy layout, a rewrap after a width change, and a late
+		// negative-origin shift all arrive as document frame changes. That is
+		// the real "layout settled" signal the viewport anchor replays on.
+		textView.postsFrameChangedNotifications = true
+		context.coordinator.documentFrameObserver = NotificationCenter.default.addObserver(
+			forName: NSView.frameDidChangeNotification,
+			object: textView,
+			queue: .main
+		) { [weak scrollView, weak coordinator = context.coordinator] _ in
+			MainActor.assumeIsolated {
+				guard let scrollView, let coordinator else { return }
+				coordinator.documentGeometryChanged(in: scrollView)
+			}
+		}
 
 		scrollView.documentView = textView
 		scrollView.hasVerticalScroller = true
@@ -233,16 +247,23 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						// at a stable position is not the user scrolling this pane.
 						guard abs(offset - coordinator.lastReportedScrollOffset) > 0.5 else { return }
 						coordinator.lastReportedScrollOffset = offset
-						// A genuine source-pane scroll means the handoff has finished.
-						// Keep the selection itself, but stop forcing it back onscreen
-						// during every subsequent SwiftUI update.
-						coordinator.cancelViewportRestore()
-						coordinator.pinnedSelectionTargetToken = nil
+						// Right after a drive or a geometry change, TextKit can move
+						// the clip origin on its own (clamping, a frame-origin shift).
+						// Unless the user is actually scrolling, that is layout noise:
+						// put the view back on its anchor instead of adopting it.
+						if coordinator.isLayoutInducedScroll {
+							coordinator.replayViewportAnchor(in: scrollView)
+							return
+						}
+						// A genuine scroll is the user's choice of viewport: it becomes
+						// the anchor and ends any restore in progress (including a
+						// handoff selection that was being kept onscreen).
+						coordinator.geometryWindowDeadline = 0
 						let fraction = MarkdownScrollGeometry.fraction(
 							originY: offset,
 							documentFrame: documentFrame,
 							visibleHeight: visibleHeight)
-						coordinator.lastStableScrollFraction = fraction
+						coordinator.viewportAnchor = .fraction(fraction)
 						if MarkdownSplitSyncLog.enabled {
 							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, documentFrame.height, fraction)
 						}
@@ -281,6 +302,28 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			coordinator.viewportSizeChanged(
 				to: scrollView.contentView.bounds.size, in: scrollView)
 		}
+		// Wheel, trackpad, and scroller drags are the one unambiguous "the user
+		// is scrolling" signal AppKit offers; they always outrank a restore.
+		context.coordinator.liveScrollObservers = [
+			NotificationCenter.default.addObserver(
+				forName: NSScrollView.willStartLiveScrollNotification, object: scrollView, queue: .main
+			) { [weak coordinator = context.coordinator] _ in
+				MainActor.assumeIsolated {
+					coordinator?.isLiveScrolling = true
+					coordinator?.liveScrolledThisTurn = true
+				}
+			},
+			NotificationCenter.default.addObserver(
+				forName: NSScrollView.didLiveScrollNotification, object: scrollView, queue: .main
+			) { [weak coordinator = context.coordinator] _ in
+				MainActor.assumeIsolated { coordinator?.liveScrolledThisTurn = true }
+			},
+			NotificationCenter.default.addObserver(
+				forName: NSScrollView.didEndLiveScrollNotification, object: scrollView, queue: .main
+			) { [weak coordinator = context.coordinator] _ in
+				MainActor.assumeIsolated { coordinator?.isLiveScrolling = false }
+			},
+		]
 
 		if let target = scrollTarget {
 			// SwiftUI is not required to call updateNSView after this initial
@@ -343,6 +386,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			(scrollView.verticalRulerView as? LineNumberRulerView)?.noteTextChanged()
 			let sel = textView.selectedRange()
 			let refreshIncrementalFind = scrollView.isFindBarVisible
+			// A host replacement (typing in the other split pane, undo/redo)
+			// reflows the document like local typing does; see `lastEditTime`.
+			context.coordinator.lastEditTime = CFAbsoluteTimeGetCurrent()
 			textView.string = text
 			// NSTextView keeps an internal NSTextFinder for its native find bar.
 			// Host-driven replacements (notably the app's custom undo/redo path)
@@ -401,25 +447,18 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
+		var appliedExtendedSelection = false
 		if let target = selectionTarget,
 		   target.token != context.coordinator.lastSelectionTargetToken {
-			context.coordinator.cancelViewportRestore()
 			context.coordinator.lastSelectionTargetToken = target.token
 			let length = (textView.string as NSString).length
 			let location = min(max(0, target.range.location), length)
 			let selectedLength = min(max(0, target.range.length), length - location)
 			let range = NSRange(location: location, length: selectedLength)
-			context.coordinator.pinSelectionVisibility(target: target, range: range, in: textView)
 			textView.setSelectedRange(range)
-			// Reveal synchronously through the same centered path used by the
-			// delayed layout replay. `scrollRangeToVisible` posts a bounds change
-			// before our replay; a host update can mistake that programmatic move
-			// for user scrolling, release the selection pin, and restore the stale
-			// viewport from the pane's previous visit.
-			context.coordinator.revealSelectionRange(
-				range, in: textView, scrollView: scrollView)
-			context.coordinator.scheduleExtendedSelectionReveal(
-				target: target, range: range, in: scrollView)
+			context.coordinator.anchorViewport(
+				toSelection: range, in: textView, scrollView: scrollView)
+			appliedExtendedSelection = range.length > 0
 			// Selection notifications are intentionally ignored while SwiftUI is
 			// driving this update, so publish the cursor position explicitly. Without
 			// this, hosts keep the styled editor's stale line/column until the user
@@ -441,17 +480,16 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			Task { @MainActor in selectedHeadingID = nil }
 		}
 
-		if let target = selectionTarget,
-		   target.range.length > 0,
-		   context.coordinator.pinnedSelectionTargetToken == target.token {
-			// A selected source range is a stronger positional anchor than a
-			// normalized viewport captured before the selection moved the outgoing
-			// editor. SwiftUI can re-enter here after the initial handoff (for
-			// example when the cursor/status model updates); never let that stale
-			// fraction hide the selection again.
-			context.coordinator.revealExtendedSelectionTarget(in: scrollView)
-		} else if let target = scrollTarget {
-			context.coordinator.applyScrollTarget(target, to: scrollView)
+		if let target = scrollTarget {
+			if appliedExtendedSelection {
+				// A selected source range is a stronger positional anchor than a
+				// normalized viewport captured before the outgoing editor revealed
+				// that selection. A target delivered alongside the handoff is that
+				// stale viewport: consume it unapplied. Later tokens apply normally.
+				context.coordinator.lastScrollTargetToken = target.token
+			} else {
+				context.coordinator.applyScrollTarget(target, to: scrollView)
+			}
 		}
 	}
 
@@ -645,16 +683,43 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastScrollTargetToken: Int?
 		var lastCaretToken: Int?
 		var lastSelectionTargetToken: Int?
-		/// An extended handoff selection temporarily outranks the stale viewport
-		/// captured before the handoff. Release that protection after late TextKit
-		/// layout settles (or immediately when the user scrolls) so a persistent
-		/// selection does not permanently disable ordinary split-pane scrolling.
-		var pinnedSelectionTargetToken: Int?
 		var isSyncScroll = false
 		var lastViewportSize: CGSize = .zero
-		var lastStableScrollFraction: Double = 0
-		var viewportRestoreTask: Task<Void, Never>?
-		var viewportRestoreAnchor: Double?
+		/// Where this pane's viewport belongs. A user scroll, a host scroll
+		/// target, and an extended selection handoff each replace it; every
+		/// geometry change (late TextKit layout, a rewrap, a resize) re-applies
+		/// whatever it currently is, so no replay can resurrect a superseded
+		/// position and no timer has to guess when layout is done.
+		var viewportAnchor: ViewportAnchor = .fraction(0)
+		var documentFrameObserver: Any?
+		var liveScrollObservers: [Any] = []
+		var isLiveScrolling = false
+		var liveScrolledThisTurn = false
+		/// Until this instant, a non-live clip-origin change is layout noise
+		/// following a drive or geometry change rather than a user scroll.
+		var geometryWindowDeadline: CFAbsoluteTime = 0
+		/// Frame changes caused by typing must not replay the anchor: the caret
+		/// is leading the viewport, and re-driving by fraction would pull the
+		/// text out from under it on every keystroke.
+		var lastEditTime: CFAbsoluteTime = 0
+		var geometryReplayScheduled = false
+		static let geometryWindow: CFAbsoluteTime = 0.5
+		static let editQuietPeriod: CFAbsoluteTime = 0.5
+
+		enum ViewportAnchor: Equatable {
+			case fraction(Double)
+			case selection(NSRange)
+		}
+
+		var isLayoutInducedScroll: Bool {
+			let live = isLiveScrolling || liveScrolledThisTurn
+			liveScrolledThisTurn = false
+			return !live && CFAbsoluteTimeGetCurrent() < geometryWindowDeadline
+		}
+
+		private func openGeometryWindow() {
+			geometryWindowDeadline = CFAbsoluteTimeGetCurrent() + Self.geometryWindow
+		}
 		/// Last bounds origin reported as a scroll. `boundsDidChange` also
 		/// fires when TextKit's document-height estimate flaps during layout
 		/// (constant offset, different fraction); reporting those as scrolls
@@ -784,7 +849,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 		func applyScrollFraction(_ fraction: Double, to scrollView: NSScrollView) {
 			isSyncScroll = true
-			lastStableScrollFraction = max(0, min(1, fraction))
 			let documentFrame = scrollView.documentView?.frame ?? .zero
 			let visibleHeight = scrollView.contentView.bounds.height
 			let offset = MarkdownScrollGeometry.originY(
@@ -822,119 +886,80 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard abs(size.width - lastViewportSize.width) > 0.5
 				|| abs(size.height - lastViewportSize.height) > 0.5 else { return false }
 			if MarkdownSplitSyncLog.enabled {
-				NSLog("[SplitSync] raw viewport %.1fx%.1f -> %.1fx%.1f stable=%.4f anchor=%@",
+				NSLog("[SplitSync] raw viewport %.1fx%.1f -> %.1fx%.1f anchor=%@",
 					lastViewportSize.width, lastViewportSize.height, size.width, size.height,
-					lastStableScrollFraction, String(describing: viewportRestoreAnchor))
+					String(describing: viewportAnchor))
 			}
 			lastViewportSize = size
-			viewportRestoreTask?.cancel()
-			let anchor = viewportRestoreAnchor ?? lastStableScrollFraction
-			let selectionToken = pinnedSelectionTargetToken
-			viewportRestoreAnchor = anchor
-			viewportRestoreTask = Task { @MainActor [weak self, weak scrollView] in
-				for delay in [120, 480, 900] {
-					try? await Task.sleep(for: .milliseconds(delay))
-					guard !Task.isCancelled, let self, let scrollView else { return }
-					self.applyScrollFraction(self.viewportRestoreAnchor ?? anchor, to: scrollView)
-					// A resize restore may outlive the short handoff pin. If it
-					// began while an extended selection owned the viewport, keep
-					// that exact selection centered throughout the restore. A real
-					// user scroll cancels this task in the bounds observer above.
-					if let selectionToken,
-						let target = self.parent.selectionTarget,
-						target.token == selectionToken,
-						let textView = scrollView.documentView as? NSTextView,
-						textView.selectedRange() == target.range {
-						self.revealSelectionRange(
-							target.range, in: textView, scrollView: scrollView)
-					} else {
-						self.revealExtendedSelectionTarget(in: scrollView)
-					}
-				}
-				self?.viewportRestoreTask = nil
-				self?.viewportRestoreAnchor = nil
-			}
+			documentGeometryChanged(in: scrollView)
 			return true
+		}
+
+		/// The document frame or the viewport changed: the clip origin now
+		/// describes a different place in the text, so re-apply the anchor.
+		/// Coalesced to the end of the runloop turn — TextKit can post several
+		/// frame changes while settling one layout pass.
+		func documentGeometryChanged(in scrollView: NSScrollView) {
+			guard CFAbsoluteTimeGetCurrent() - lastEditTime > Self.editQuietPeriod,
+				!isLiveScrolling, !geometryReplayScheduled else { return }
+			geometryReplayScheduled = true
+			RunLoop.main.perform { [weak self, weak scrollView] in
+				MainActor.assumeIsolated {
+					guard let self, let scrollView else { return }
+					self.geometryReplayScheduled = false
+					guard !self.isLiveScrolling else { return }
+					if MarkdownSplitSyncLog.enabled {
+						NSLog("[SplitSync] raw geometry doc=%.1f anchor=%@",
+							scrollView.documentView?.frame.height ?? 0, String(describing: self.viewportAnchor))
+					}
+					self.openGeometryWindow()
+					self.replayViewportAnchor(in: scrollView)
+				}
+			}
 		}
 
 		func applyScrollTarget(_ target: MarkdownScrollTarget, to scrollView: NSScrollView) {
 			guard target.token != lastScrollTargetToken else { return }
-			cancelViewportRestore()
 			lastScrollTargetToken = target.token
+			viewportAnchor = .fraction(Double(target.topFraction))
+			openGeometryWindow()
 			applyScrollFraction(Double(target.topFraction), to: scrollView)
-			revealExtendedSelectionTarget(in: scrollView)
-			// A target can arrive in the representable's first update, before
-			// TextKit has expanded the document view to its laid-out height. Replay
-			// once after the first layout settles so that the restore does not get
-			// consumed at y=0. A newer token supersedes this deferred pass. When a
-			// mode handoff also carries an extended selection, reveal it after both
-			// passes so the generic viewport target cannot hide the user's stronger
-			// positional anchor.
-			let token = target.token
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak scrollView] in
-				guard let self, let scrollView,
-					self.lastScrollTargetToken == token else { return }
-				self.restoreScrollTargetAfterLayout(in: scrollView)
-			}
 		}
 
-		/// Reapply the latest host target after TextKit has established the final
-		/// document frame. A large editor can shift its frame origin while its
-		/// incremental pre-layout runs; a target applied to the provisional frame
-		/// otherwise drifts even though its token was already consumed.
-		fileprivate func restoreScrollTargetAfterLayout(in scrollView: NSScrollView) {
-			guard let target = parent.scrollTarget,
-				lastScrollTargetToken == nil || lastScrollTargetToken == target.token else { return }
-			lastScrollTargetToken = target.token
-			applyScrollFraction(Double(target.topFraction), to: scrollView)
-			revealExtendedSelectionTarget(in: scrollView)
-		}
-
-		fileprivate func revealExtendedSelectionTarget(in scrollView: NSScrollView) {
-			guard let target = parent.selectionTarget, target.range.length > 0,
-				pinnedSelectionTargetToken == target.token,
-				let textView = scrollView.documentView as? NSTextView else { return }
-			let length = (textView.string as NSString).length
-			let location = min(max(0, target.range.location), length)
-			let selectedLength = min(max(0, target.range.length), length - location)
-			revealSelectionRange(
-				NSRange(location: location, length: selectedLength),
-				in: textView, scrollView: scrollView)
-		}
-
-		fileprivate func pinSelectionVisibility(
-			target: MarkdownSelectionTarget, range: NSRange, in textView: NSTextView
+		/// Make a handed-off selection the viewport anchor and center it. A
+		/// collapsed caret is revealed the same way but anchors by fraction, so a
+		/// host scroll target applied afterwards owns the viewport.
+		fileprivate func anchorViewport(
+			toSelection range: NSRange, in textView: NSTextView, scrollView: NSScrollView
 		) {
-			guard range.length > 0 else {
-				pinnedSelectionTargetToken = nil
-				return
-			}
-			pinnedSelectionTargetToken = target.token
-			// Cursor/status publication and TextKit's late layout can re-enter the
-			// representable after the handoff. Protect the selection through that
-			// window, then let normal split scrolling move it offscreen.
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self, weak textView] in
-				guard let self, let textView,
-					self.pinnedSelectionTargetToken == target.token,
-					textView.selectedRange() == range else { return }
-				self.pinnedSelectionTargetToken = nil
+			openGeometryWindow()
+			revealSelectionRange(range, in: textView, scrollView: scrollView)
+			viewportAnchor = range.length > 0
+				? .selection(range)
+				: .fraction(currentFraction(in: scrollView))
+		}
+
+		/// Re-apply the current anchor to the current document geometry.
+		func replayViewportAnchor(in scrollView: NSScrollView) {
+			switch viewportAnchor {
+			case .fraction(let fraction):
+				applyScrollFraction(fraction, to: scrollView)
+			case .selection(let range):
+				guard let textView = scrollView.documentView as? NSTextView,
+					textView.selectedRange() == range else {
+					// The user moved on; keep the view where it is from now on.
+					viewportAnchor = .fraction(currentFraction(in: scrollView))
+					return
+				}
+				revealSelectionRange(range, in: textView, scrollView: scrollView)
 			}
 		}
 
-		fileprivate func scheduleExtendedSelectionReveal(
-			target: MarkdownSelectionTarget, range: NSRange, in scrollView: NSScrollView
-		) {
-			guard range.length > 0 else { return }
-			// The first update can precede TextKit's final document geometry for a
-			// large file. Reassert visibility after layout, but only if this target
-			// is still the latest handoff and the user has not moved the selection.
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak scrollView] in
-				guard let self, let scrollView,
-					self.lastSelectionTargetToken == target.token,
-					let textView = scrollView.documentView as? NSTextView,
-					textView.selectedRange() == range else { return }
-				self.revealSelectionRange(range, in: textView, scrollView: scrollView)
-			}
+		func currentFraction(in scrollView: NSScrollView) -> Double {
+			MarkdownScrollGeometry.fraction(
+				originY: scrollView.contentView.bounds.origin.y,
+				documentFrame: scrollView.documentView?.frame ?? .zero,
+				visibleHeight: scrollView.contentView.bounds.height)
 		}
 
 		fileprivate func revealSelectionRange(
@@ -964,19 +989,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			scrollView.contentView.scroll(to: NSPoint(
 				x: scrollView.contentView.bounds.origin.x, y: centeredY))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
+			// The bounds observer treats this programmatic move as an echo, not a
+			// user scroll, so it cannot demote a selection anchor to a fraction.
 			lastReportedScrollOffset = scrollView.contentView.bounds.origin.y
-			let fraction = MarkdownScrollGeometry.fraction(
-				originY: lastReportedScrollOffset,
-				documentFrame: scrollView.documentView?.frame ?? .zero,
-				visibleHeight: scrollView.contentView.bounds.height)
-			lastStableScrollFraction = fraction
-			if viewportRestoreAnchor != nil { viewportRestoreAnchor = fraction }
-		}
-
-		fileprivate func cancelViewportRestore() {
-			viewportRestoreTask?.cancel()
-			viewportRestoreTask = nil
-			viewportRestoreAnchor = nil
 		}
 
 		/// Whether updateNSView must replace NSTextView's storage. A matching
@@ -1101,9 +1116,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		isolated deinit {
 			prelayoutTask?.cancel()
 			headingIndexTask?.cancel()
-			viewportRestoreTask?.cancel()
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
 			if let obs = viewportObserver { NotificationCenter.default.removeObserver(obs) }
+			if let obs = documentFrameObserver { NotificationCenter.default.removeObserver(obs) }
+			liveScrollObservers.forEach { NotificationCenter.default.removeObserver($0) }
 			headingDebounceTimer?.invalidate()
 			highlightDebounceTimer?.invalidate()
 		}
@@ -1112,6 +1128,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			guard let tv = notification.object as? NSTextView else { return }
 			let updatedText = tv.string
 			pendingLocalText = updatedText
+			lastEditTime = CFAbsoluteTimeGetCurrent()
 			scheduleHeadingIndex(for: updatedText, debounce: true)
 			if let onSourceEdit = parent.onSourceEdit {
 				onSourceEdit(updatedText, tv.selectedRange().location)

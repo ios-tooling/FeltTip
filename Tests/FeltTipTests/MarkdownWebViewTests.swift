@@ -204,9 +204,12 @@ import Testing
 		#expect(script.contains("var dimensions = null"))
 		#expect(script.contains("function scrollDimensions()"))
 		#expect(script.contains("new ResizeObserver(invalidateDimensions)"))
-		#expect(script.contains("window.addEventListener('resize', invalidateDimensions"))
+		// A viewport resize re-applies the page's own anchor fraction; content
+		// growth under a host drive keeps the driven fraction.
+		#expect(script.contains("window.addEventListener('resize', restoreFractionAfterResize"))
 		#expect(script.contains("driven = { y: y, fraction: fraction"))
-		#expect(script.contains("var fraction = driven.fraction"))
+		#expect(script.contains("scheduleFractionRestore(function () { return lastFraction; }"))
+		#expect(script.contains("return driven ? driven.fraction : null"))
 		#expect(script.components(separatedBy: "invalidateDimensions();").count >= 3)
 	}
 
