@@ -118,8 +118,8 @@ public struct MarkdownFootnote: Identifiable, Equatable, Sendable {
 	public static func cleanedForRendering(from text: String) -> String {
 		var inCodeBlock = false
 		var lines: [String] = []
-		for line in text.components(separatedBy: .newlines) {
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
+		for line in text.components(separatedBy: "\n") {
+			let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 			if inCodeBlock { lines.append(line); continue }
 			if parseDefinition(trimmed) != nil { continue }

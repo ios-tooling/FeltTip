@@ -16,8 +16,9 @@ extension MarkdownFootnote {
 		var inCodeBlock = false
 		var lines: [String] = []
 
-		for line in text.components(separatedBy: .newlines) {
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
+		// Split on "\n" only so a CRLF document keeps its line endings.
+		for line in text.components(separatedBy: "\n") {
+			let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 			if inCodeBlock { lines.append(line); continue }
 			if parseDefinition(trimmed) != nil { continue }

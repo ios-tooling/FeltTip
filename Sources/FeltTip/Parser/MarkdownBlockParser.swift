@@ -128,9 +128,12 @@ public enum MarkdownBlockParser {
 		// Some editors and downloaded documents leave blank lines before their
 		// metadata. Scan only through that prefix before splitting the document,
 		// preserving the fast rejection path for ordinary large documents.
+		// Scan for the newline byte: a CRLF pair is one Character, so a
+		// Character search for "\n" would never find the end of a CRLF line.
+		let utf8 = markdown.utf8
 		var candidateStart = markdown.startIndex
 		while candidateStart < markdown.endIndex {
-			let newline = markdown[candidateStart...].firstIndex(of: "\n")
+			let newline = utf8[candidateStart...].firstIndex(of: 0x0A)
 			let candidateEnd = newline ?? markdown.endIndex
 			let line = markdown[candidateStart..<candidateEnd]
 				.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -139,21 +142,25 @@ public enum MarkdownBlockParser {
 				break
 			}
 			guard let newline else { return (nil, markdown, 0, nil) }
-			candidateStart = markdown.index(after: newline)
+			candidateStart = utf8.index(after: newline)
 		}
 		guard candidateStart < markdown.endIndex else { return (nil, markdown, 0, nil) }
 
-		let lines = markdown.components(separatedBy: .newlines)
+		// Split on "\n" only: the body below is rebuilt by joining these lines
+		// with "\n", and the editors stamp source offsets against it, so it must
+		// be a byte-exact suffix of the source — including any "\r" a CRLF
+		// document carries at the end of each line.
+		let lines = markdown.components(separatedBy: "\n")
 		// Still require strict YAML-looking content below the fence so an
 		// ordinary thematic break is not consumed.
 		guard let opening = lines.firstIndex(where: {
-			!$0.trimmingCharacters(in: .whitespaces).isEmpty
-		}), lines[opening].trimmingCharacters(in: .whitespaces) == "---"
+			!$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+		}), lines[opening].trimmingCharacters(in: .whitespacesAndNewlines) == "---"
 		else { return (nil, markdown, 0, nil) }
 
 		var endIndex: Int?
 		for i in (opening + 1)..<lines.count {
-			let line = lines[i].trimmingCharacters(in: .whitespaces)
+			let line = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
 			if line == "---" || line == "..." {
 				endIndex = i; break
 			}
@@ -168,23 +175,25 @@ public enum MarkdownBlockParser {
 		var i = opening + 1
 		while i < end {
 			let line = lines[i]
-			let stripped = line.trimmingCharacters(in: .whitespaces)
+			let stripped = line.trimmingCharacters(in: .whitespacesAndNewlines)
 			if stripped.isEmpty { i += 1; continue }
 			if line.first?.isWhitespace == true, !pairs.isEmpty { i += 1; continue }
 			guard let colonIdx = line.firstIndex(of: ":") else { return (nil, markdown, 0, nil) }
-			let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
+			let key = String(line[line.startIndex..<colonIdx]).trimmingCharacters(in: .whitespacesAndNewlines)
 			guard isValidFrontmatterKey(key) else { return (nil, markdown, 0, nil) }
-			var value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
+			var value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
 			i += 1
 			if let scalar = FrontmatterBlockScalar(indicator: value) {
 				let contentStart = i
 				while i < end {
 					let continuation = lines[i]
-					if !continuation.trimmingCharacters(in: .whitespaces).isEmpty,
+					if !continuation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
 					   continuation.first?.isWhitespace != true { break }
 					i += 1
 				}
-				value = scalar.render(Array(lines[contentStart..<i]))
+				value = scalar.render(lines[contentStart..<i].map {
+					$0.hasSuffix("\r") ? String($0.dropLast()) : $0
+				})
 			}
 			pairs.append((key, value))
 		}

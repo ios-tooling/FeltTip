@@ -21,14 +21,17 @@ public enum DefinitionListProcessor {
 		guard DocumentScan.hasDefinitionListLine(in: text) else { return text }
 
 		var result: [String] = []
-		let lines = text.components(separatedBy: .newlines)
+		// Split on "\n" only: splitting on every newline character and
+		// rejoining with "\n" turned each CRLF into a blank line. A trailing
+		// "\r" stays with its line and is trimmed where the line's text is used.
+		let lines = text.components(separatedBy: "\n")
 		var i = 0
 		var inCodeBlock = false
 		var generatedListIndex = 0
 
 		while i < lines.count {
 			let line = lines[i]
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 			if inCodeBlock { result.append(line); i += 1; continue }
@@ -58,15 +61,15 @@ public enum DefinitionListProcessor {
 				// Check for more term+definition groups (separated by blank line)
 				while i < lines.count {
 					// Skip blank lines between items
-					if lines[i].trimmingCharacters(in: .whitespaces).isEmpty {
+					if lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 						let next = i + 1
 						if next < lines.count,
-						   !lines[next].trimmingCharacters(in: .whitespaces).isEmpty,
+						   !lines[next].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
 						   !isDefinitionLine(lines[next]),
 						   next + 1 < lines.count,
 						   isDefinitionLine(lines[next + 1]) {
 							i = next
-							let term = lines[i].trimmingCharacters(in: .whitespaces)
+							let term = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
 							html += "\n<dt>\(term)</dt>"
 							i += 1
 							while i < lines.count, isDefinitionLine(lines[i]) {
@@ -95,7 +98,8 @@ public enum DefinitionListProcessor {
 	/// raw-HTML `<dl>` blocks are never assigned Markdown source offsets.
 	static func sourceGroups(in text: String, baseOffset: Int) -> [[SourceItem]] {
 		guard DocumentScan.hasDefinitionListLine(in: text) else { return [] }
-		let lines = text.components(separatedBy: .newlines)
+		// Same line model as `process`, so group indices line up.
+		let lines = text.components(separatedBy: "\n")
 		var starts: [Int] = []
 		var cursor = 0
 		for line in lines {
@@ -113,7 +117,7 @@ public enum DefinitionListProcessor {
 		var inCodeBlock = false
 		while i < lines.count {
 			let line = lines[i]
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
 			if inCodeBlock { i += 1; continue }
 			guard !trimmed.isEmpty,
@@ -127,7 +131,7 @@ public enum DefinitionListProcessor {
 
 			var items: [SourceItem] = []
 			while true {
-				let term = lines[i].trimmingCharacters(in: .whitespaces)
+				let term = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
 				let termStart = sourceStart(
 					line: lines[i], trimmed: term, lineStart: starts[i], dropping: 0)
 				i += 1
@@ -135,7 +139,7 @@ public enum DefinitionListProcessor {
 				var definitionStarts: [Int] = []
 				while i < lines.count, isDefinitionLine(lines[i]) {
 					let definitionLine = lines[i]
-					let definitionTrimmed = definitionLine.trimmingCharacters(in: .whitespaces)
+					let definitionTrimmed = definitionLine.trimmingCharacters(in: .whitespacesAndNewlines)
 					definitions.append(extractDefinition(definitionLine))
 					definitionStarts.append(sourceStart(
 						line: definitionLine, trimmed: definitionTrimmed,
@@ -147,10 +151,10 @@ public enum DefinitionListProcessor {
 					definitionStarts: definitionStarts))
 
 				guard i < lines.count,
-					  lines[i].trimmingCharacters(in: .whitespaces).isEmpty else { break }
+					  lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { break }
 				let next = i + 1
 				guard next < lines.count,
-					  !lines[next].trimmingCharacters(in: .whitespaces).isEmpty,
+					  !lines[next].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
 					  !isDefinitionLine(lines[next]), next + 1 < lines.count,
 					  isDefinitionLine(lines[next + 1]) else { break }
 				i = next
@@ -161,12 +165,12 @@ public enum DefinitionListProcessor {
 	}
 
 	private static func isDefinitionLine(_ line: String) -> Bool {
-		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 		return trimmed.hasPrefix(": ") || trimmed == ":"
 	}
 
 	private static func extractDefinition(_ line: String) -> String {
-		let trimmed = line.trimmingCharacters(in: .whitespaces)
+		let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard trimmed.hasPrefix(": ") else { return trimmed }
 		return String(trimmed.dropFirst(2))
 	}
