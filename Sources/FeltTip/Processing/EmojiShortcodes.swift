@@ -6,11 +6,42 @@
 import Foundation
 
 public enum EmojiShortcodes {
+	/// Replaces `:name:` shortcodes with their emoji. Equivalent to replacing
+	/// every leftmost `:([a-z0-9_+-]+):` match whose name is known and leaving
+	/// unknown ones in place (an unknown match still consumes its closing
+	/// colon), but as a single byte scan: the regex form cost ~24 ms per
+	/// display render of a 375 KB document that contains no shortcodes at all.
 	public static func process(_ text: String) -> String {
-		guard (text as NSString).range(of: ":").location != NSNotFound else { return text }
-		return text.replacing(/:([a-z0-9_+-]+):/) { match in
-			lookup[String(match.1)] ?? String(match.0)
+		var copy = text
+		let replaced: String? = copy.withUTF8 { bytes in
+			guard bytes.contains(0x3A) else { return nil }
+			var out: [UInt8] = []
+			var copiedUpTo = 0
+			var changed = false
+			var i = 0
+			while i < bytes.count {
+				guard bytes[i] == 0x3A else { i += 1; continue }
+				var j = i + 1
+				while j < bytes.count, isShortcodeByte(bytes[j]) { j += 1 }
+				guard j > i + 1, j < bytes.count, bytes[j] == 0x3A else { i += 1; continue }
+				if let emoji = lookup[String(decoding: bytes[(i + 1)..<j], as: UTF8.self)] {
+					if !changed { out.reserveCapacity(bytes.count); changed = true }
+					out.append(contentsOf: bytes[copiedUpTo..<i])
+					out.append(contentsOf: emoji.utf8)
+					copiedUpTo = j + 1
+				}
+				i = j + 1
+			}
+			guard changed else { return nil }
+			out.append(contentsOf: bytes[copiedUpTo...])
+			return String(decoding: out, as: UTF8.self)
 		}
+		return replaced ?? text
+	}
+
+	/// `[a-z0-9_+-]`
+	@inline(__always) private static func isShortcodeByte(_ b: UInt8) -> Bool {
+		(b >= 0x61 && b <= 0x7A) || (b >= 0x30 && b <= 0x39) || b == 0x5F || b == 0x2B || b == 0x2D
 	}
 
 	// Common emoji shortcodes (GitHub/Slack compatible subset)

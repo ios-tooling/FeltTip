@@ -91,11 +91,6 @@ final class CoordinatorBridgeHarness {
 		view = view.preparedInitialRender(preparedInitialRender)
 		coordinator = MarkdownWebView.Coordinator(parent: view)
 		let config = WKWebViewConfiguration()
-		// Each test page gets its own content process. WebKit otherwise puts
-		// every test's about:blank page into one shared WebContent process, and
-		// once a few heavy documents are alive there every page load in the run
-		// slows past the harness timeouts.
-		config.processPool = WKProcessPool()
 		let resourcePolicy = LocalResourceAccessPolicy()
 		coordinator.localResourceAccessPolicy = resourcePolicy
 		config.userContentController.add(WeakScriptMessageHandler(coordinator), name: "mdedit")

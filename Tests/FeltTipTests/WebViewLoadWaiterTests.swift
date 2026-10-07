@@ -5,14 +5,14 @@ import WebKit
 @Suite(.serialized) @MainActor struct WebViewLoadWaiterTests {
 	@Test func completionBeforeWaitIsRemembered() async throws {
 		let waiter = WebViewLoadWaiter()
-		let webView = makeIsolatedWebView()
+		let webView = WKWebView()
 		waiter.webView(webView, didFinish: nil)
 		try await waiter.wait(timeout: .milliseconds(50))
 	}
 
 	@Test func processTerminationFailsInsteadOfHanging() async {
 		let waiter = WebViewLoadWaiter()
-		let webView = makeIsolatedWebView()
+		let webView = WKWebView()
 		waiter.webViewWebContentProcessDidTerminate(webView)
 		do {
 			try await waiter.wait(timeout: .seconds(1))
@@ -24,7 +24,7 @@ import WebKit
 
 	@Test func concurrentWaitersBothResumeWhenNavigationFinishes() async {
 		let waiter = WebViewLoadWaiter()
-		let webView = makeIsolatedWebView()
+		let webView = WKWebView()
 		let first = Task { try await waiter.wait(timeout: .seconds(1)) }
 		await Task.yield()
 		let second = Task { try await waiter.wait(timeout: .seconds(1)) }

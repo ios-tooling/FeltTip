@@ -21,8 +21,12 @@ struct BlockBuilder: MarkupWalker {
 	/// Forwarded to each InlineBuilder so text runs carry source offsets.
 	let sourceConverter: SourceOffsetConverter?
 	/// When set, paragraph inline builds go through `InlineParagraphMemo`.
-	/// The parser enables it for editable renders with an identity map.
+	/// The parser enables it for display renders and for editable renders
+	/// with an identity map.
 	var inlineMemoContext: String?
+	/// Line geometry of the processed text for the memo key when the build
+	/// itself is unstamped (`sourceConverter == nil`).
+	var memoConverter: SourceOffsetConverter?
 	private var blocks: [MarkdownBlock] = []
 	private var counter = 0
 
@@ -229,7 +233,7 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	private mutating func buildParagraph(from children: [Markup]) -> MarkdownBlock {
-		if let context = inlineMemoContext, let converter = sourceConverter,
+		if let context = inlineMemoContext, let converter = sourceConverter ?? memoConverter,
 		   let first = children.first?.range, let last = children.last?.range,
 		   let span = converter.lineSpan(
 			lowerLine: first.lowerBound.line, upperLine: last.upperBound.line),
@@ -241,10 +245,11 @@ struct BlockBuilder: MarkupWalker {
 				childRange: (childRange.lowerBound - span.range.lowerBound)..<(childRange.upperBound - span.range.lowerBound),
 				context: context)
 			if let entry = InlineParagraphMemo.shared.lookup(key) {
-				return .paragraph(
-					content: InlineParagraphMemo.shiftingStamps(
-						entry.attributed, by: span.sourceStart - entry.sourceStart),
-					links: entry.links, id: nextID())
+				// An unstamped (display) build has nothing to re-base.
+				let content = sourceConverter == nil ? entry.attributed
+					: InlineParagraphMemo.shiftingStamps(
+						entry.attributed, by: span.sourceStart - entry.sourceStart)
+				return .paragraph(content: content, links: entry.links, id: nextID())
 			}
 			let inline = buildInline(from: children)
 			InlineParagraphMemo.shared.store(
@@ -281,6 +286,7 @@ struct BlockBuilder: MarkupWalker {
 		var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter, sourceConverter: sourceConverter)
 		inner.linkifyURLs = linkifyURLs
 		inner.inlineMemoContext = inlineMemoContext
+		inner.memoConverter = memoConverter
 		let children = inner.build(from: blockQuote as Markup)
 		blocks.append(.blockquote(children: children, id: nextID()))
 	}
@@ -290,6 +296,7 @@ struct BlockBuilder: MarkupWalker {
 			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter, sourceConverter: sourceConverter)
 			inner.linkifyURLs = linkifyURLs
 			inner.inlineMemoContext = inlineMemoContext
+		inner.memoConverter = memoConverter
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
 			return ListItemContent(
@@ -304,6 +311,7 @@ struct BlockBuilder: MarkupWalker {
 			var inner = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: checkboxCounter, sourceConverter: sourceConverter)
 			inner.linkifyURLs = linkifyURLs
 			inner.inlineMemoContext = inlineMemoContext
+		inner.memoConverter = memoConverter
 			let checkbox = item.checkbox.map { $0 == .checked ? CheckboxState.checked : CheckboxState.unchecked }
 			let index = checkbox != nil ? checkboxCounter.next() : nil
 			return ListItemContent(

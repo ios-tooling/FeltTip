@@ -241,7 +241,7 @@ struct MarkdownTextEditorFindTests {
 		)
 		defer { closeTestWindow(window) }
 		let root = NSView(frame: hostingView.frame)
-		let prewarmedEditor = MarkdownWebViewFindHost(webView: makeIsolatedWebView())
+		let prewarmedEditor = MarkdownWebViewFindHost(webView: WKWebView())
 		prewarmedEditor.frame = root.bounds
 		prewarmedEditor.isInactive = true
 		root.addSubview(prewarmedEditor)

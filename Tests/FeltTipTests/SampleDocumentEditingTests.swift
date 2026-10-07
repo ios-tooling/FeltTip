@@ -25,7 +25,6 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	init(text: String) {
 		self.text = text
 		let config = WKWebViewConfiguration()
-		config.processPool = WKProcessPool()
 		webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 700, height: 900), configuration: config)
 		coordinator = MarkdownWebView.Coordinator(parent: MarkdownWebView(text: text, theme: .default, fontSize: 16).editable(true))
 		host = TestWindowHost(view: webView)

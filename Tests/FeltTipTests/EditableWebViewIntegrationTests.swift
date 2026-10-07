@@ -297,7 +297,6 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 
 	private func makeEditableWebView(harness: EditBridgeHarness) async throws -> WKWebView {
 		let config = WKWebViewConfiguration()
-		config.processPool = WKProcessPool()
 		config.userContentController.add(WeakScriptMessageHandler(harness), name: "mdedit")
 		let webView = WKWebView(
 			frame: CGRect(x: 0, y: 0, width: 600, height: 400), configuration: config)

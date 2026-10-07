@@ -289,11 +289,3 @@ final class TestWindowHost {
 		window.close()
 	}
 #endif
-
-/// A web view in its own content process. See `CoordinatorBridgeHarness.init`
-/// for why test pages must not share WebKit's default process.
-@MainActor func makeIsolatedWebView(frame: CGRect = .zero) -> WKWebView {
-	let config = WKWebViewConfiguration()
-	config.processPool = WKProcessPool()
-	return WKWebView(frame: frame, configuration: config)
-}

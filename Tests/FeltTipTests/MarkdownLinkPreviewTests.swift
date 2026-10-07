@@ -123,7 +123,6 @@ struct MarkdownLinkPreviewIntegrationTests {
 		policy.setRoot(folder)
 		coordinator.localResourceAccessPolicy = policy
 		let config = WKWebViewConfiguration()
-		config.processPool = WKProcessPool()
 		config.userContentController.add(WeakScriptMessageHandler(coordinator), name: "mdedit")
 		config.userContentController.addUserScript(WKUserScript(
 			source: MarkdownWebView.Coordinator.linkPreviewScript,

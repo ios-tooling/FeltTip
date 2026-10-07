@@ -59,7 +59,7 @@ import WebKit
 	// MARK: Plumbing
 
 	private func makeWebView(source: String) async throws -> (WKWebView, TestWindowHost) {
-		let webView = makeIsolatedWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+		let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
 		let host = TestWindowHost(view: webView)
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: source, includeSourceOffsets: true)
 		webView.loadHTMLString(html, baseURL: nil)

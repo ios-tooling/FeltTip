@@ -10,9 +10,9 @@
 //  previous build. Source stamps are absolute offsets, so a reused build is
 //  re-based by the paragraph's new position before use.
 //
-//  Used only for editable renders whose preprocessing map is the identity:
-//  with a non-identity map a stamp's value depends on the map around it and
-//  cannot be shifted uniformly.
+//  Used for display renders (no stamps, so nothing to shift) and for editable
+//  renders whose preprocessing map is the identity: with a non-identity map a
+//  stamp's value depends on the map around it and cannot be shifted uniformly.
 //
 
 import Foundation
@@ -80,7 +80,8 @@ final class InlineParagraphMemo: @unchecked Sendable {
 	/// only part of a document outside a paragraph that changes how its
 	/// inline content parses, so they are folded into the key.
 	static func context(
-		theme: MarkdownTheme, fontSize: CGFloat, linkifyURLs: Bool, processedText: String
+		theme: MarkdownTheme, fontSize: CGFloat, linkifyURLs: Bool, stamped: Bool,
+		processedText: String
 	) -> String {
 		var definitions = ""
 		if (processedText as NSString).range(of: "]:").location != NSNotFound {
@@ -92,7 +93,7 @@ final class InlineParagraphMemo: @unchecked Sendable {
 				}
 			}
 		}
-		return "\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(definitions)"
+		return "\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(stamped)|\(definitions)"
 	}
 
 	private static let referenceDefinitionPattern = try! NSRegularExpression(

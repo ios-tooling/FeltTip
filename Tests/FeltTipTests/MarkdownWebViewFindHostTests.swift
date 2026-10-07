@@ -25,7 +25,7 @@ struct MarkdownWebViewFindHostTests {
 
 	@Test
 	func findFieldSearchesAsItsQueryChanges() throws {
-		let webView = makeIsolatedWebView()
+		let webView = WKWebView()
 		let host = MarkdownWebViewFindHost(webView: webView)
 
 		let item = NSMenuItem()
@@ -39,7 +39,7 @@ struct MarkdownWebViewFindHostTests {
 
 	@Test
 	func findActionsNavigateNumericTableMatchesWithoutMutatingTheDocument() async throws {
-		let webView = makeIsolatedWebView()
+		let webView = WKWebView()
 		let host = MarkdownWebViewFindHost(webView: webView)
 		host.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
 		let window = NSWindow(
@@ -127,7 +127,7 @@ struct MarkdownWebViewFindHostTests {
 	func inactivePrewarmedHostCannotTakeFocusFromTheVisibleEditor() throws {
 		let root = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
 		let visibleEditor = NSTextView(frame: root.bounds)
-		let host = MarkdownWebViewFindHost(webView: makeIsolatedWebView())
+		let host = MarkdownWebViewFindHost(webView: WKWebView())
 		host.frame = root.bounds
 		root.addSubview(host)
 		root.addSubview(visibleEditor)

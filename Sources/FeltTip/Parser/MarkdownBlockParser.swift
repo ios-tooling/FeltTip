@@ -88,9 +88,20 @@ public enum MarkdownBlockParser {
 			baseOffset: bodyOffset,
 			map: offsetMap) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
-		if let converter, converter.usesIdentityMap {
+		if let converter {
+			if converter.usesIdentityMap {
+				builder.inlineMemoContext = InlineParagraphMemo.context(
+					theme: theme, fontSize: fontSize, linkifyURLs: linkifyURLs, stamped: true,
+					processedText: processed)
+			}
+		} else {
+			// A display render carries no stamps, so its paragraph builds can be
+			// memoized regardless of how preprocessing moved the text; the memo
+			// only needs the processed text's line geometry for its keys.
+			builder.memoConverter = SourceOffsetConverter(processed)
 			builder.inlineMemoContext = InlineParagraphMemo.context(
-				theme: theme, fontSize: fontSize, linkifyURLs: linkifyURLs, processedText: processed)
+				theme: theme, fontSize: fontSize, linkifyURLs: linkifyURLs, stamped: false,
+				processedText: processed)
 		}
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		guard !Task.isCancelled else { return [] }
