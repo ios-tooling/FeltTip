@@ -84,7 +84,7 @@ final class InlineParagraphMemo: @unchecked Sendable {
 		processedText: String
 	) -> String {
 		var definitions = ""
-		if (processedText as NSString).range(of: "]:").location != NSNotFound {
+		if DocumentScan.containsASCII("]:", in: processedText) {
 			let range = NSRange(processedText.startIndex..., in: processedText)
 			for match in referenceDefinitionPattern.matches(in: processedText, range: range) {
 				if let lineRange = Range(match.range, in: processedText) {

@@ -253,6 +253,30 @@ enum DocumentScan {
 		}
 	}
 
+	/// True when `pattern` (ASCII) occurs anywhere in `text`. A byte search;
+	/// `NSString.range(of:)` on a native Swift string transcodes the whole
+	/// document first, which showed up as several milliseconds per render.
+	static func containsASCII(_ pattern: StaticString, in text: String) -> Bool {
+		var text = text
+		return text.withUTF8 { bytes in
+			pattern.withUTF8Buffer { needle in
+				guard !needle.isEmpty, bytes.count >= needle.count else { return false }
+				let first = needle[0]
+				var i = 0
+				let last = bytes.count - needle.count
+				while i <= last {
+					if bytes[i] == first {
+						var j = 1
+						while j < needle.count, bytes[i + j] == needle[j] { j += 1 }
+						if j == needle.count { return true }
+					}
+					i += 1
+				}
+				return false
+			}
+		}
+	}
+
 	/// True when a `[[` is followed on the same line by `]]` with at least one
 	/// byte between them — the only shape `WikilinkProcessor` rewrites.
 	static func hasWikilink(in text: String) -> Bool {

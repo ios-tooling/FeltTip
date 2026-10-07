@@ -65,6 +65,11 @@ final class CoordinatorBridgeHarness {
 		renderMermaid: Bool = false,
 		scrollTarget: MarkdownScrollTarget? = nil
 	) async throws {
+		// FELTTIP_DEBUG_EDITING=1 turns on the coordinator's own edit/navigation
+		// log for a run, the same switch the app reads from its defaults.
+		if ProcessInfo.processInfo.environment["FELTTIP_DEBUG_EDITING"] == "1" {
+			UserDefaults.standard.set(true, forKey: "FeltTipDebugEditing")
+		}
 		await Self.pageSlots.acquire()
 		Self.liveCount += 1
 		self.source = source

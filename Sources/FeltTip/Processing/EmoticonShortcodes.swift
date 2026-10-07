@@ -46,11 +46,14 @@ public enum EmoticonShortcodes {
 
 	/// Per-line variant used by `MarkdownPreprocessor.mergedLinePass`.
 	static func applyLine(_ line: String) -> String {
-		if !line.contains(":") && !line.contains(";")
-			&& !line.contains("8") && !line.contains("=") {
-			return line
+		// Every spelling starts with `:` `;` `8` or `=`. Check bytes: this is
+		// the non-ASCII line path, and `String.contains` walks Characters.
+		var hasSeed = false
+		for b in line.utf8 where b == 0x3A || b == 0x3B || b == 0x38 || b == 0x3D {
+			hasSeed = true
+			break
 		}
-		return processLine(line)
+		return hasSeed ? processLine(line) : line
 	}
 
 	/// Byte-level twin of `applyLine` for pure-ASCII lines (`.notASCII`

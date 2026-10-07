@@ -19,7 +19,7 @@ public struct MarkdownFootnote: Identifiable, Equatable, Sendable {
 		// Named references need a `[^label]:` definition line to produce
 		// anything; inline `^[…]` footnotes need nothing else.
 		guard DocumentScan.hasBracketColonDefinitionLine(startingWith: "[^", minimumLabel: 1, in: text)
-			|| (text as NSString).range(of: "^[").location != NSNotFound else { return [] }
+			|| DocumentScan.containsASCII("^[", in: text) else { return [] }
 		// First pass: collect named definitions
 		var definitions: [String: String] = [:]
 		var inCodeBlock = false
