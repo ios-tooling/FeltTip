@@ -88,6 +88,10 @@ public enum MarkdownBlockParser {
 			baseOffset: bodyOffset,
 			map: offsetMap) : nil
 		var builder = BlockBuilder(theme: theme, fontSize: fontSize, checkboxCounter: counter, sourceConverter: converter)
+		if let converter, converter.usesIdentityMap {
+			builder.inlineMemoContext = InlineParagraphMemo.context(
+				theme: theme, fontSize: fontSize, linkifyURLs: linkifyURLs, processedText: processed)
+		}
 		var blocks = builder.build(from: document, linkifyURLs: linkifyURLs)
 		guard !Task.isCancelled else { return [] }
 		// Frontmatter always renders as the parsed read-only card, including in

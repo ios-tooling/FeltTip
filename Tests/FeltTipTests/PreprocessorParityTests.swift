@@ -141,3 +141,46 @@ struct SplitMix64 {
 		return z ^ (z >> 31)
 	}
 }
+
+/// The paragraph memo must be invisible: rendering with a warm cache, and
+/// after an edit that shifts every later paragraph, must produce the same
+/// HTML (stamps included) as a cold build. Opt in with FELTTIP_RUN_PARITY=1.
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["FELTTIP_RUN_PARITY"] == "1"))
+struct InlineParagraphMemoParityTests {
+	private func html(_ markdown: String) -> [String] {
+		MarkdownHTMLRenderer.renderBlockFragments(
+			markdown: markdown, theme: .default, fontSize: 14, includeSourceOffsets: true
+		).map(\.html)
+	}
+
+	@Test func warmMemoRendersIdenticallyToCold() throws {
+		let files = try FileManager.default
+			.contentsOfDirectory(at: PipelineBenchmarkTests.samplesDir, includingPropertiesForKeys: nil)
+			.filter { $0.pathExtension.lowercased() == "md" }
+			.sorted { $0.lastPathComponent < $1.lastPathComponent }
+		var mismatches: [String] = []
+		defer { InlineParagraphMemo.isEnabled = true }
+		for file in files {
+			let text = try String(contentsOf: file, encoding: .utf8)
+			// Baseline: the uncached build, not merely a cold cache — a cache
+			// that returned the wrong entry would agree with itself.
+			InlineParagraphMemo.isEnabled = false
+			let uncached = html(text)
+			InlineParagraphMemo.isEnabled = true
+			InlineParagraphMemo.shared.removeAll()
+			let cold = html(text)
+			let warm = html(text)
+			if cold != uncached { mismatches.append("\(file.lastPathComponent) (cold)") }
+			if warm != uncached { mismatches.append("\(file.lastPathComponent) (warm)") }
+			// Shift everything: a new line at the top, and a character in the middle.
+			var edited = "Inserted line at the top.\n\n" + text
+			let middle = edited.index(edited.startIndex, offsetBy: edited.count / 2)
+			edited.insert("X", at: middle)
+			let editedWarm = html(edited)
+			InlineParagraphMemo.isEnabled = false
+			let editedUncached = html(edited)
+			if editedWarm != editedUncached { mismatches.append("\(file.lastPathComponent) (edited)") }
+		}
+		#expect(mismatches.isEmpty, "memo changed output for: \(mismatches.prefix(20))")
+	}
+}

@@ -87,6 +87,32 @@ struct SourceOffsetConverter {
 	/// Test-visible allocation invariant for the common ASCII document path.
 	var usesIdentityByteMapping: Bool { byteToUTF16 == nil }
 
+	/// True when the parsed string is the source itself (no preprocessing
+	/// rewrites), so a stamp is its processed offset plus `baseOffset`.
+	var usesIdentityMap: Bool { map == nil }
+
+	/// The processed-text UTF-16 span covering whole lines `lowerLine` through
+	/// `upperLine`, with the absolute source offset of its first character.
+	func lineSpan(lowerLine: Int, upperLine: Int) -> (range: Range<Int>, sourceStart: Int)? {
+		guard let start = processedLineStart(lowerLine),
+		      let end = processedLineEnd(upperLine), start <= end else { return nil }
+		return (start..<end, mapToSource(start) + baseOffset)
+	}
+
+	func processedSlice(_ range: Range<Int>) -> ArraySlice<UInt16> {
+		processedUTF16[range]
+	}
+
+	/// Processed-text UTF-16 offsets of a source location pair, when both map.
+	func processedRange(
+		lowerLine: Int, lowerColumn: Int, upperLine: Int, upperColumn: Int
+	) -> Range<Int>? {
+		guard let lower = processedUTF16(line: lowerLine, column: lowerColumn),
+		      let upper = processedUTF16(line: upperLine, column: upperColumn),
+		      lower <= upper else { return nil }
+		return lower..<upper
+	}
+
 	func utf16Offset(line: Int, column: Int) -> Int? {
 		guard let processedOffset = processedUTF16(line: line, column: column) else { return nil }
 		return mapToSource(processedOffset) + baseOffset
