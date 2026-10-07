@@ -94,7 +94,7 @@ struct InitialRenderProgressTests {
 			.editable(true)
 			.onInitialRenderProgress { events.append($0) }
 			.onInitialRenderReady { readyCount += 1 }
-		let host = TestWindowHost(root)
+		let host = await TestWindowHost.hosting(root)
 		defer { withExtendedLifetime(host) {} }
 
 		var webView: WKWebView?

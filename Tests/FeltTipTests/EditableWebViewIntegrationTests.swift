@@ -300,7 +300,7 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 		config.userContentController.add(WeakScriptMessageHandler(harness), name: "mdedit")
 		let webView = WKWebView(
 			frame: CGRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
-		let host = TestWindowHost(view: webView)
+		let host = await TestWindowHost.hosting(view: webView)
 		defer { withExtendedLifetime(host) {} }
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: harness.source, includeSourceOffsets: true)
 		webView.loadHTMLString(html, baseURL: nil)

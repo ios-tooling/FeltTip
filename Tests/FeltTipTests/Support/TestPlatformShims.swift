@@ -218,7 +218,28 @@ enum TestPasteboard {
 /// hundreds and WebKit stopped loading pages for the suites that followed.
 @MainActor
 final class TestWindowHost {
+	private var holdsPageSlot = false
+
+	/// Hosts SwiftUI content after taking a slot in the shared page cap.
+	static func hosting<Content: View>(
+		_ content: Content, size: CGSize = CGSize(width: 600, height: 400)
+	) async -> TestWindowHost {
+		await TestConcurrencyLimiter.webKitPages.acquire()
+		let host = TestWindowHost(content, size: size)
+		host.holdsPageSlot = true
+		return host
+	}
+
+	/// Hosts a bare view (a hand-built web view) after taking a page slot.
+	static func hosting(view: TestPlatformView) async -> TestWindowHost {
+		await TestConcurrencyLimiter.webKitPages.acquire()
+		let host = TestWindowHost(view: view)
+		host.holdsPageSlot = true
+		return host
+	}
+
 	isolated deinit {
+		if holdsPageSlot { TestConcurrencyLimiter.webKitPages.release() }
 		#if os(macOS)
 			closeTestWindow(window)
 		#else

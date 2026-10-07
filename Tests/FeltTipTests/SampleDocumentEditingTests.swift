@@ -22,12 +22,12 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	let coordinator: MarkdownWebView.Coordinator
 	private let host: TestWindowHost
 
-	init(text: String) {
+	init(text: String) async {
 		self.text = text
 		let config = WKWebViewConfiguration()
 		webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 700, height: 900), configuration: config)
 		coordinator = MarkdownWebView.Coordinator(parent: MarkdownWebView(text: text, theme: .default, fontSize: 16).editable(true))
-		host = TestWindowHost(view: webView)
+		host = await TestWindowHost.hosting(view: webView)
 		super.init()
 		// A strong handler registration would retain this host (and its window
 		// and page) for the rest of the run.
@@ -117,7 +117,7 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 
 	private func makeHost() async throws -> EditorHost {
 		let source = try String(contentsOf: Self.fixtureURL, encoding: .utf8)
-		let host = EditorHost(text: source)
+		let host = await EditorHost(text: source)
 		try await host.waitUntilReady()
 		return host
 	}
@@ -278,7 +278,7 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		// empty paragraph markdown renders NO text for. Without a synthesized
 		// placeholder run the caret was dropped and the page sat at the top —
 		// and the next keystroke had nowhere to map.
-		let host = EditorHost(text: "Alpha\n\nBeta")
+		let host = await EditorHost(text: "Alpha\n\nBeta")
 		try await host.waitUntilReady()
 		try await host.run("window.__testNonce = 1; window.__mdPlaceCaret(5); document.execCommand('insertParagraph');")
 		try await waitForText("Alpha\n\n\n\nBeta", in: host, context: "enter at paragraph end")
@@ -296,7 +296,7 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 		// Return creates an empty paragraph (with a synthesized caret
 		// placeholder); Backspace right after must undo it, merging back to
 		// the original source.
-		let host = EditorHost(text: "Alpha\n\nBeta")
+		let host = await EditorHost(text: "Alpha\n\nBeta")
 		try await host.waitUntilReady()
 		try await host.run("window.__testNonce = 1; window.__mdPlaceCaret(5); document.execCommand('insertParagraph');")
 		try await waitForText("Alpha\n\n\n\nBeta", in: host, context: "enter at paragraph end")
@@ -310,7 +310,7 @@ private final class EditorHost: NSObject, WKScriptMessageHandler {
 	@Test func styleToggleKeepsTheSelection() async throws {
 		// After ⌘B the same text stays selected (shifted past the new
 		// markers), so repeated style commands keep operating on it.
-		let host = EditorHost(text: "Alpha\n\nBeta")
+		let host = await EditorHost(text: "Alpha\n\nBeta")
 		try await host.waitUntilReady()
 		try await host.run("""
 			window.__testNonce = 1;

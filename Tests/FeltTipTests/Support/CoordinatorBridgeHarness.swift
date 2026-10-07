@@ -23,13 +23,8 @@ import WebKit
 final class CoordinatorBridgeHarness {
 	/// Harnesses currently alive (constructed and not yet torn down).
 	private(set) static var liveCount = 0
-	/// Swift Testing interleaves every main-actor test it can. Each live
-	/// harness page adds WebKit UI-process work and 50 ms polling to the one
-	/// main thread, and past a handful of concurrent pages the five-second
-	/// waits in selection-heavy suites start timing out, after which the
-	/// failures cascade. Cap the pages alive at once; the cap is well above
-	/// what one suite needs, so only cross-suite pile-ups wait.
-	static let pageSlots = TestConcurrencyLimiter(capacity: 4, name: "harness pages")
+	/// The shared cap on live test pages; see `TestConcurrencyLimiter.webKitPages`.
+	static var pageSlots: TestConcurrencyLimiter { TestConcurrencyLimiter.webKitPages }
 	private(set) var source: String
 	private(set) var sourceEditCount = 0
 	/// The post-edit caret hint delivered with the most recent onSourceEdit.
@@ -116,7 +111,8 @@ final class CoordinatorBridgeHarness {
 		wireRoundTrip(text: source)
 		coordinator.load(into: webView)
 		coordinator.applyScrollControls(to: webView)
-		try await waitUntil("initial editable content") {
+		// The first load lands in the run's startup stampede; give it longest.
+		try await waitUntil("initial editable content", timeout: .seconds(60)) {
 			let pageRev = try await self.evaluate(
 				"window.__mdGetRev ? String(window.__mdGetRev()) : 'none'")
 			guard pageRev == String(self.coordinator.currentRev) else { return false }
@@ -345,8 +341,16 @@ final class CoordinatorBridgeHarness {
 		String(data: try! JSONEncoder().encode(s), encoding: .utf8)!
 	}
 
-	func waitUntil(_ label: String, _ condition: () async throws -> Bool) async throws {
-		for _ in 0..<100 {
+	/// Wall-clock bounded: each poll round-trips to the web process, which in
+	/// a whole-package run (all suites start at once, every core busy) can take
+	/// far longer than the 50 ms sleep, so an iteration count said little about
+	/// how long the page had really been given.
+	func waitUntil(
+		_ label: String, timeout: Duration = .seconds(20),
+		_ condition: () async throws -> Bool
+	) async throws {
+		let deadline = ContinuousClock.now + timeout
+		while ContinuousClock.now < deadline {
 			if try await condition() { return }
 			try await Task.sleep(for: .milliseconds(50))
 		}

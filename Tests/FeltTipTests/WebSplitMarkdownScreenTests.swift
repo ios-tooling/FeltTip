@@ -31,6 +31,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("A source-pane selection handoff does not move focus into the preview")
 	func sourceSelectionHandoffKeepsRawEditorFocused() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = "# Before\n\n{: .callout}\n\nParagraph LOCAL target\n"
 		let selected = (source as NSString).range(of: "LOCAL")
 		let model = SplitSelectionModel()
@@ -60,6 +64,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("Split keeps a whole heading selection and both panes at its viewport")
 	func splitKeepsWholeHeadingSelectionAndViewport() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = (0...420).map { index in
 			"## Sector \(String(format: "%03d", index))\n\nTransfer sentence \(index)."
 		}.joined(separator: "\n\n")
@@ -106,6 +114,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("A long-lived split view reapplies repeated host scroll targets")
 	func splitReappliesHostScrollTargets() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = (0..<250).map { "Line \($0): enough text to create a scrollable document." }.joined(separator: "\n")
 		let model = SplitSelectionModel()
 		model.scrollTarget = MarkdownScrollTarget(topFraction: 0.75, token: 1)
@@ -145,6 +157,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("Split restores a collapsed source selection after large-document layout")
 	func splitRestoresCollapsedSourceViewportAfterLateLayout() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = (0..<1_600).map { index in
 			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
 		}.joined(separator: "\n\n")
@@ -176,6 +192,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("Split reapplies its shared viewport after the panes resize")
 	func splitReappliesViewportAfterResize() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = (0..<1_600).map { index in
 			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
 		}.joined(separator: "\n\n")
@@ -242,6 +262,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("A small rendered-pane scroll drives the source pane in a long document")
 	func smallRenderedScrollDrivesRawPane() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = (0..<1_600).map { index in
 			"## Sector \(index)\n\nTransfer sentence \(index) records enough text to make the document scroll."
 		}.joined(separator: "\n\n")
@@ -278,6 +302,10 @@ struct WebSplitMarkdownScreenTests {
 
 	@Test("A scroll immediately after an edit still updates host persistence")
 	func editingLockoutKeepsPositionReporting() async throws {
+		// A split hosts two live pages outside the bridge harness; take a page
+		// slot so this suite cannot pile onto the harness suites under load.
+		await CoordinatorBridgeHarness.pageSlots.acquire()
+		defer { CoordinatorBridgeHarness.pageSlots.release() }
 		let source = "# Heading\n\nParagraph"
 		let model = SplitSelectionModel()
 		let hosting = NSHostingView(rootView: SplitSelectionHost(source: source, model: model))
@@ -335,14 +363,23 @@ struct WebSplitMarkdownScreenTests {
 		webView: WKWebView,
 		hosting: NSHostingView<SplitSelectionHost>
 	) async throws {
-		for _ in 0..<160 {
+		// Time-bounded rather than iteration-bounded: each poll round-trips to
+		// the web process, which under a whole-package run can take far longer
+		// than the 25 ms sleep. Record what was last seen so a slow settle and
+		// a lost viewport are told apart.
+		let deadline = ContinuousClock.now + .seconds(30)
+		var raw = 0.0
+		var rendered: Double?
+		while ContinuousClock.now < deadline {
 			hosting.layoutSubtreeIfNeeded()
-			let raw = scrollFraction(of: rawEditor)
-			let rendered = await webScrollFraction(of: webView)
+			raw = scrollFraction(of: rawEditor)
+			rendered = await webScrollFraction(of: webView)
 			if abs(raw - expected) <= 0.05,
 			   let rendered, abs(rendered - expected) <= 0.05 { return }
 			try await Task.sleep(for: .milliseconds(25))
 		}
+		Issue.record(
+			"split viewport never settled at \(expected): raw \(raw), rendered \(rendered.map { "\($0)" } ?? "nil")")
 	}
 
 	private func webScrollFraction(of webView: WKWebView) async -> Double? {

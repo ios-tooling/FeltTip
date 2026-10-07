@@ -15,6 +15,13 @@ import Testing
 /// and records an issue, so a leaked holder cannot deadlock the whole run.
 @MainActor
 final class TestConcurrencyLimiter {
+	/// Every live WebKit page a test opens, through the bridge harness, a
+	/// `TestWindowHost`, or a split screen. Swift Testing starts all suites at
+	/// once; past a handful of concurrent pages the five-second waits in the
+	/// editing suites time out and the failures cascade, so the cap applies to
+	/// all of them together.
+	static let webKitPages = TestConcurrencyLimiter(capacity: 4, name: "WebKit test pages")
+
 	private let capacity: Int
 	private let name: String
 	private var inUse = 0
