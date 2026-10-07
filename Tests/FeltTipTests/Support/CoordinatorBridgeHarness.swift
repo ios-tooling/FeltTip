@@ -114,6 +114,25 @@ final class CoordinatorBridgeHarness {
 		}
 	}
 
+	/// Tear the page down with the test. A window that stays ordered front is
+	/// retained by the application, so without this every harness in a run
+	/// leaves a live WKWebView behind. Over a whole-package run those add up
+	/// until page loads slow past the harness timeouts and later suites fail
+	/// wholesale.
+	isolated deinit {
+		webView.stopLoading()
+		webView.navigationDelegate = nil
+		webView.configuration.userContentController.removeScriptMessageHandler(forName: "mdedit")
+		#if os(macOS)
+			window.contentView = nil
+			window.isReleasedWhenClosed = false
+			window.close()
+		#else
+			window.isHidden = true
+			window.rootViewController = nil
+		#endif
+	}
+
 	/// Rebuild the parent view the way updateUXView sees a fresh one after a
 	/// state change, keeping the onSourceEdit wiring alive.
 	private func wireRoundTrip(text: String) {
