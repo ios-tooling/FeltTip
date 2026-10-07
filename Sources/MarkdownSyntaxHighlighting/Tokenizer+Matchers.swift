@@ -54,7 +54,13 @@ extension Tokenizer {
 	static func matchKeyword(_ s: inout Substring) -> Token? {
 		guard let first = s.first, first.isLetter || first == "_" || first == "@" else { return nil }
 		var i = s.startIndex
-		while i < s.endIndex, s[i].isLetter || s[i].isNumber || s[i] == "_" { i = s.index(after: i) }
+		var length = 0
+		while i < s.endIndex, s[i].isLetter || s[i].isNumber || s[i] == "_" {
+			i = s.index(after: i)
+			length += 1
+		}
+		// Longer than any keyword: skip the String allocation and set lookup.
+		guard length <= longestKeywordLength else { return nil }
 		let word = String(s[s.startIndex..<i])
 		guard keywords.contains(word) else { return nil }
 		let prev = s.startIndex == s.base.startIndex ? nil : s.base[s.base.index(before: s.startIndex)]
@@ -74,6 +80,8 @@ extension Tokenizer {
 		s = s[i...]
 		return Token(text: word, kind: .type)
 	}
+
+	private static let longestKeywordLength = keywords.map(\.count).max() ?? 0
 
 	private static let keywords: Set<String> = [
 		"func", "var", "let", "if", "else", "for", "while", "return", "import", "class",

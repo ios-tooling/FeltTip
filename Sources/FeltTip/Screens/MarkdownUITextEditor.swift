@@ -67,9 +67,13 @@ struct MarkdownUITextEditor: UIViewRepresentable {
 
 	func updateUIView(_ textView: UITextView, context: Context) {
 		let coordinator = context.coordinator
+		let previousHostText = coordinator.parent.text
 		coordinator.parent = self
 
-		if textView.text != text {
+		// Comparing `textView.text` bridged the whole document on every SwiftUI
+		// tick. Decide from host state plus the local edit the delegate already
+		// reported, as the macOS editor does.
+		if coordinator.shouldReplaceViewText(previousHostText: previousHostText, incomingText: text) {
 			coordinator.replaceText(with: text, in: textView)
 		}
 		if textView.font?.pointSize != fontSize {

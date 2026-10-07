@@ -61,7 +61,19 @@ public enum Tokenizer {
 				tokens.append(token)
 			} else {
 				if plainStart == nil { plainStart = remaining.startIndex }
-				remaining.removeFirst()
+				// No token starts inside an identifier (every matcher checks the
+				// preceding character), so consume the whole run at once instead
+				// of retrying all seven matchers at each of its characters.
+				if let first = remaining.first, first.isLetter || first == "_" {
+					var end = remaining.index(after: remaining.startIndex)
+					while end < remaining.endIndex,
+					      remaining[end].isLetter || remaining[end].isNumber || remaining[end] == "_" {
+						end = remaining.index(after: end)
+					}
+					remaining = remaining[end...]
+				} else {
+					remaining.removeFirst()
+				}
 			}
 		}
 		if let start = plainStart {

@@ -114,19 +114,31 @@ extension MarkdownHTMLRenderer {
 		if !text.utf8.contains(where: { $0 == 0x26 || $0 == 0x3C || $0 == 0x3E || $0 == 0x22 || $0 == 0x27 }) {
 			return text
 		}
-		var result = ""
-		result.reserveCapacity(text.count)
-		for ch in text {
-			switch ch {
-			case "&": result += "&amp;"
-			case "<": result += "&lt;"
-			case ">": result += "&gt;"
-			case "\"": result += "&quot;"
-			case "'": result += "&#39;"
-			default: result.append(ch)
+		// Byte-level rebuild: the five escapes are ASCII, so splicing their
+		// bytes between untouched runs yields valid UTF-8 without touching
+		// grapheme clusters. `text.count` alone was a full grapheme count.
+		var text = text
+		return text.withUTF8 { bytes in
+			var output: [UInt8] = []
+			output.reserveCapacity(bytes.count + 16)
+			var runStart = 0
+			for i in 0..<bytes.count {
+				let replacement: StaticString
+				switch bytes[i] {
+				case 0x26: replacement = "&amp;"
+				case 0x3C: replacement = "&lt;"
+				case 0x3E: replacement = "&gt;"
+				case 0x22: replacement = "&quot;"
+				case 0x27: replacement = "&#39;"
+				default: continue
+				}
+				output.append(contentsOf: bytes[runStart..<i])
+				replacement.withUTF8Buffer { output.append(contentsOf: $0) }
+				runStart = i + 1
 			}
+			output.append(contentsOf: bytes[runStart...])
+			return String(decoding: output, as: UTF8.self)
 		}
-		return result
 	}
 
 	/// Escapes a value for use inside a double-quoted attribute, and

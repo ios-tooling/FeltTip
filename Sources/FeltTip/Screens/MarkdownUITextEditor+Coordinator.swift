@@ -30,10 +30,37 @@ extension MarkdownUITextEditor {
 		private var needsFullHighlight = true
 		private var lastFocusRange: NSRange?
 		private var lastFocusModeEnabled = false
+		/// Maintained incrementally across edits (see `MarkdownFenceRangeTracker`)
+		/// so typing never rescans the document for fences.
 		private var codeFenceRanges: [NSRange]?
+		/// The edit UIKit is about to apply, captured in `shouldChangeTextIn` so
+		/// `textViewDidChange` can update the line index and fence cache for just
+		/// that range instead of rebuilding from the whole document.
+		private var pendingEdit: (range: NSRange, replacementLength: Int)?
+		/// Accumulates edited ranges between debounced highlight passes.
+		private var pendingHighlightRange: NSRange?
+		private var highlightDebounceTimer: Timer?
+		/// Exact text most recently emitted by the text view but not yet observed
+		/// coming back through the host binding.
+		private var pendingLocalText: String?
 
 		init(parent: MarkdownUITextEditor) {
 			self.parent = parent
+		}
+
+		isolated deinit {
+			highlightDebounceTimer?.invalidate()
+		}
+
+		/// Whether `updateUIView` must replace the view's text. A matching
+		/// pending local value is the normal binding round trip; a mismatch means
+		/// the host rejected or superseded that local edit.
+		func shouldReplaceViewText(previousHostText: String, incomingText: String) -> Bool {
+			if let pendingLocalText {
+				self.pendingLocalText = nil
+				return pendingLocalText != incomingText
+			}
+			return previousHostText != incomingText
 		}
 
 		// MARK: - Host-driven text
@@ -54,19 +81,65 @@ extension MarkdownUITextEditor {
 
 		// MARK: - UITextViewDelegate
 
+		func textView(
+			_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String
+		) -> Bool {
+			// Two edits before one `textViewDidChange` would make the recorded
+			// range unreliable; fall back to a full rebuild in that case.
+			pendingEdit = pendingEdit == nil ? (range, (text as NSString).length) : nil
+			return true
+		}
+
 		func textViewDidChange(_ textView: UITextView) {
 			guard !isApplyingHostText else { return }
+			// `mutableString` is a live proxy; the one full bridge below is the
+			// string the host needs anyway.
+			let storage = textView.textStorage.mutableString
+			if let edit = pendingEdit {
+				let editedRange = NSRange(location: edit.range.location, length: edit.replacementLength)
+				let delta = edit.replacementLength - edit.range.length
+				lineIndex.applyEdit(in: storage, editedRange: editedRange, delta: delta)
+				codeFenceRanges = codeFenceRanges.flatMap {
+					MarkdownFenceRangeTracker.updating($0, after: editedRange, delta: delta, in: storage)
+				}
+				pendingHighlightRange = pendingHighlightRange.map { NSUnionRange($0, editedRange) } ?? editedRange
+			} else {
+				lineIndex.rebuild(for: textView.sourceString)
+				codeFenceRanges = nil
+				pendingHighlightRange = nil
+			}
+			pendingEdit = nil
 			let updated = textView.sourceString
-			lineIndex.rebuild(for: updated)
-			codeFenceRanges = nil
+			pendingLocalText = updated
 			if let onSourceEdit = parent.onSourceEdit {
 				onSourceEdit(updated, textView.selectedRange.location)
 			} else {
 				parent.text = updated
 			}
-			highlight(textView, theme: parent.theme, enabled: parent.syntaxHighlightingEnabled)
+			// Off the keystroke hot path, scoped to the edited paragraph: running
+			// ten regexes over the whole document and rewriting its font
+			// attribute on every character was the dominant typing cost.
+			scheduleDebouncedHighlight(in: textView)
 			reportCursorPosition(in: textView)
 			if parent.typewriterMode { centerCaret(in: textView) }
+		}
+
+		private func scheduleDebouncedHighlight(in textView: UITextView) {
+			guard parent.syntaxHighlightingEnabled, parent.theme != nil else { return }
+			highlightDebounceTimer?.invalidate()
+			highlightDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self, weak textView] _ in
+				MainActor.assumeIsolated {
+					guard let self, let textView, let theme = self.parent.theme else { return }
+					let edited = self.pendingHighlightRange
+					self.pendingHighlightRange = nil
+					let fences = self.codeFenceRanges
+						?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.sourceString)
+					self.codeFenceRanges = fences
+					self.needsFullHighlight = false
+					MarkdownSyntaxHighlighter.highlight(
+						textView: textView, theme: theme, editedRange: edited, codeFenceRanges: fences)
+				}
+			}
 		}
 
 		func textViewDidChangeSelection(_ textView: UITextView) {
@@ -104,7 +177,7 @@ extension MarkdownUITextEditor {
 		func applyCaretTarget(to textView: UITextView) {
 			guard let target = parent.caretTarget, target.token != lastCaretToken else { return }
 			lastCaretToken = target.token
-			let length = (textView.sourceString as NSString).length
+			let length = textView.textStorage.length
 			let clamped = min(max(0, target.offset), length)
 			textView.selectedRange = NSRange(location: clamped, length: 0)
 			textView.scrollRangeToVisible(textView.selectedRange)
@@ -113,7 +186,7 @@ extension MarkdownUITextEditor {
 		func applySelectionTarget(to textView: UITextView) {
 			guard let target = parent.selectionTarget, target.token != lastSelectionToken else { return }
 			lastSelectionToken = target.token
-			let length = (textView.sourceString as NSString).length
+			let length = textView.textStorage.length
 			let location = min(max(0, target.range.location), length)
 			let selected = min(max(0, target.range.length), length - location)
 			textView.selectedRange = NSRange(location: location, length: selected)
@@ -126,7 +199,7 @@ extension MarkdownUITextEditor {
 		func applyMirroredSelection(to textView: UITextView) {
 			guard lastMirroredSelection != parent.mirroredSelection else { return }
 			guard let sink = textView.highlightSink else { return }
-			let full = NSRange(location: 0, length: (textView.sourceString as NSString).length)
+			let full = NSRange(location: 0, length: textView.textStorage.length)
 			if let previous = lastMirroredSelection, previous.length > 0 {
 				sink.clearBackground(in: full)
 			}
@@ -174,6 +247,8 @@ extension MarkdownUITextEditor {
 
 		func highlight(_ textView: UITextView, theme: MarkdownTheme?, enabled: Bool) {
 			needsFullHighlight = false
+			pendingHighlightRange = nil
+			highlightDebounceTimer?.invalidate()
 			guard enabled, let theme else {
 				MarkdownSyntaxHighlighter.clearHighlighting(textView: textView, theme: theme)
 				return
@@ -184,14 +259,19 @@ extension MarkdownUITextEditor {
 		func applyFocusMode(to textView: UITextView) {
 			let shouldFocus = parent.focusModeEnabled && textView.isFirstResponder
 			let nextRange = shouldFocus
-				? MarkdownFocusMode.focusedRange(in: textView.sourceString, selection: textView.selectedRange)
+				? MarkdownFocusMode.focusedRange(
+					in: textView.textStorage.mutableString, selection: textView.selectedRange)
 				: nil
 			guard lastFocusRange != nextRange || lastFocusModeEnabled != shouldFocus else { return }
-			highlight(textView, theme: parent.theme, enabled: parent.syntaxHighlightingEnabled)
+			// Restoring syntax colors is only needed when focus mode turns off;
+			// moving between paragraphs re-dims the whole document below anyway.
+			if !shouldFocus || !lastFocusModeEnabled {
+				highlight(textView, theme: parent.theme, enabled: parent.syntaxHighlightingEnabled)
+			}
 			lastFocusRange = nextRange
 			lastFocusModeEnabled = shouldFocus
 			guard shouldFocus, let nextRange, let sink = textView.highlightSink else { return }
-			let full = NSRange(location: 0, length: (textView.sourceString as NSString).length)
+			let full = NSRange(location: 0, length: textView.textStorage.length)
 			guard full.length > 0 else { return }
 			sink.setColor(UXColor(parent.theme?.textColor ?? .primary).withAlphaComponent(0.3), in: full)
 			sink.setColor(UXColor(parent.theme?.textColor ?? .primary), in: nextRange)

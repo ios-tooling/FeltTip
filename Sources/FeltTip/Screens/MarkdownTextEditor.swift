@@ -1020,7 +1020,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let storage = textStorage.mutableString
 			lineIndex.applyEdit(in: storage, editedRange: editedRange, delta: delta)
 			lineNumberRuler?.noteLineIndexChanged()
-			updateFenceRanges(after: editedRange, delta: delta, in: storage)
+			codeFenceRanges = codeFenceRanges.flatMap {
+				MarkdownFenceRangeTracker.updating($0, after: editedRange, delta: delta, in: storage)
+			}
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
@@ -1028,62 +1030,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
-		private func updateFenceRanges(after editedRange: NSRange, delta: Int, in text: NSString) {
-			guard var ranges = codeFenceRanges else { return }
-			let insertedEnd = min(text.length, editedRange.location + editedRange.length)
-			if editedRange.location <= insertedEnd,
-			   text.substring(with: NSRange(
-				location: editedRange.location,
-				length: max(0, insertedEnd - editedRange.location))).contains("`") {
-				codeFenceRanges = nil
-				return
-			}
-			let oldLength = max(0, editedRange.length - delta)
-			let oldEnd = editedRange.location + oldLength
-			let oldDocumentLength = max(0, text.length - delta)
-			for index in ranges.indices {
-				let fence = ranges[index]
-				let fenceEnd = fence.location + fence.length
-				if oldEnd <= fence.location {
-					ranges[index].location += delta
-				} else if editedRange.location >= fenceEnd {
-					// An unterminated final fence reaches EOF. Appending at
-					// that exact boundary is still inside the fence, not after
-					// it, so extend the cached range without rescanning the
-					// document. A closed final fence ends in a line-leading
-					// marker and keeps the normal "after" behavior.
-					if delta > 0,
-					   editedRange.location == fenceEnd,
-					   fenceEnd == oldDocumentLength,
-					   !Self.endsWithClosingFenceMarker(fence, in: text) {
-						ranges[index].length += delta
-					}
-					continue
-				} else if editedRange.location > fence.location + 3,
-						  oldEnd < fenceEnd - 3 {
-					ranges[index].length += delta
-				} else {
-					codeFenceRanges = nil
-					return
-				}
-			}
-			codeFenceRanges = ranges
-		}
-
-		private static func endsWithClosingFenceMarker(
-			_ range: NSRange, in text: NSString
-		) -> Bool {
-			guard range.length >= 3 else { return false }
-			let marker = NSMaxRange(range) - 3
-			guard marker + 3 <= text.length,
-			      text.character(at: marker) == 0x60,
-			      text.character(at: marker + 1) == 0x60,
-			      text.character(at: marker + 2) == 0x60 else {
-				return false
-			}
-			return text.lineRange(
-				for: NSRange(location: marker, length: 0)).location == marker
-		}
 
 		/// Runs once scrolling has been quiet for the debounce window. Reads
 		/// the visible-top heading and reports it to the parent. Kept off the
