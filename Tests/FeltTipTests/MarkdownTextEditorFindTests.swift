@@ -146,7 +146,7 @@ struct MarkdownTextEditorFindTests {
 		reopenedReplaceField.stringValue = "review"
 		let replaceControl = try await waitForReplaceControl(in: hostingView)
 		replaceControl.setSelected(true, forSegment: 0)
-		replaceControl.performClick(nil)
+		trigger(replaceControl, segment: 0)
 		try await waitUntil("replacement after undo reaches the host") {
 			model.text != original
 		}
@@ -207,6 +207,13 @@ struct MarkdownTextEditorFindTests {
 			rawEditor.selectedRange() == match
 		}
 		#expect(findReplaceField(in: hostingView) != nil)
+		// The editor refreshes the open bar on a 100 ms delay. The selection
+		// can settle before that fires, so outlive it and tear the window down
+		// inside the test rather than during process exit.
+		try await Task.sleep(for: .milliseconds(250))
+		window.orderOut(nil)
+		window.contentView = nil
+		await Task.yield()
 	}
 
 	@Test
@@ -358,6 +365,24 @@ struct MarkdownTextEditorFindTests {
 		#expect(window.firstResponder !== rawEditor)
 		#expect(scrollView.isFindBarVisible)
 		#expect(reportedSelection == match)
+	}
+
+	/// Deliver a find-bar control's action the way its click would, without
+	/// `performClick`. NSSegmentedCell's click queues a CFRunLoopStop block on
+	/// the main run loop for its own nested event loop to consume; when that
+	/// loop returns early the block fires later inside the test host's main
+	/// `CFRunLoopRun`, which exits the process with status 0 mid-run and loses
+	/// the buffered test output. That is what made this suite look like it
+	/// passed while silently ending every full `swift test` run.
+	private func trigger(_ control: NSSegmentedControl, segment: Int) {
+		guard let action = control.action else { return }
+		// Momentary controls only update `selectedSegment` on a real click.
+		control.selectedSegment = segment
+		if let target = control.target as? NSObject {
+			_ = target.perform(action, with: control)
+		} else {
+			_ = control.sendAction(action, to: nil)
+		}
 	}
 
 	private func perform(_ action: NSTextFinder.Action, on textView: NSTextView) {

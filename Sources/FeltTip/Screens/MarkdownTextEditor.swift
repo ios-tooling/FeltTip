@@ -384,21 +384,20 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// Host-driven replacements (notably the app's custom undo/redo path)
 			// bypass the edit notifications that make an incremental search rescan,
 			// leaving its count and highlights stale even though `string` changed.
-			// Trigger the native bar's Next control to make its private NSTextFinder
-			// consume the new client string while preserving the query and replace
-			// interface. Calling performTextFinderAction directly updates the count
-			// but leaves AppKit's dimming overlay stale; routing the same action
-			// through the bar keeps its count, selection, and overlay in sync.
+			// Ask the finder for the next match so it consumes the new client
+			// string while preserving the query and replace interface. (This used
+			// to synthesize a click on the bar's Next control; see
+			// MarkdownFormattingTextView.performNextMatch for why that must not be
+			// done.)
 			if refreshIncrementalFind {
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak textView] in
 					MainActor.assumeIsolated {
+						// Only a bar in a live, visible window needs refreshing.
 						guard let textView,
+						      let window = textView.window, window.isVisible,
 						      let scrollView = textView.enclosingScrollView,
-						      scrollView.isFindBarVisible,
-						      let navigation = Self.findNavigationControl(
-						       in: textView.window?.contentView) else { return }
-						navigation.setSelected(true, forSegment: 1)
-						navigation.performClick(nil)
+						      scrollView.isFindBarVisible else { return }
+						MarkdownFormattingTextView.performNextMatch(on: textView)
 					}
 				}
 			}
@@ -488,16 +487,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		}
 	}
 
-	private static func findNavigationControl(in view: NSView?) -> NSSegmentedControl? {
-		guard let view else { return nil }
-		if let control = view as? NSSegmentedControl,
-		   control.segmentCount == 2,
-		   control.label(forSegment: 0) == nil,
-		   control.label(forSegment: 1) == nil {
-			return control
-		}
-		return view.subviews.lazy.compactMap(findNavigationControl(in:)).first
-	}
 
 	public func makeCoordinator() -> Coordinator { Coordinator(self) }
 

@@ -74,10 +74,8 @@ public class MarkdownFormattingTextView: NSTextView {
 				if previousResponder !== self {
 					self.window?.makeFirstResponder(previousResponder)
 				}
-			} else if let navigation = Self.findNavigationControl(
-				in: self.window?.contentView) {
-				navigation.setSelected(true, forSegment: 1)
-				navigation.performClick(nil)
+			} else {
+				Self.performNextMatch(on: self)
 			}
 			// A stale finder can consume the first navigation solely to refresh
 			// its current-result state. Retry once if no range was established.
@@ -179,16 +177,21 @@ public class MarkdownFormattingTextView: NSTextView {
 		return matches
 	}
 
-	private static func findNavigationControl(in view: NSView?) -> NSSegmentedControl? {
-		guard let view else { return nil }
-		if let control = view as? NSSegmentedControl,
-		   control.segmentCount == 2,
-		   control.label(forSegment: 0) == nil,
-		   control.label(forSegment: 1) == nil {
-			return control
-		}
-		return view.subviews.lazy.compactMap(findNavigationControl(in:)).first
+	/// Advance the open find bar to its next match through the text view's
+	/// own finder action. Never `performClick` the bar's Next control:
+	/// NSSegmentedCell's click queues a CFRunLoopStop block on the main run
+	/// loop for its own nested event loop to consume, and when that loop
+	/// returns early the block is left behind. The next time the main loop
+	/// runs it stops — in a host whose main loop is Swift's concurrency drain
+	/// (the test runner) that exits the process mid-run, and in the app it
+	/// pumps events in the middle of a SwiftUI update. Delivering the bar's
+	/// action directly does nothing; the finder only navigates through this.
+	static func performNextMatch(on textView: NSTextView) {
+		let next = NSMenuItem()
+		next.tag = NSTextFinder.Action.nextMatch.rawValue
+		textView.performTextFinderAction(next)
 	}
+
 
 	override public func becomeFirstResponder() -> Bool {
 		let accepted = super.becomeFirstResponder()
