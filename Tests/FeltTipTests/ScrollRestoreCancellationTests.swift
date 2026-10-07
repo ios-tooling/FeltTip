@@ -40,7 +40,7 @@ struct ScrollRestoreCancellationTests {
 		js.evaluateScript("""
 			var callbacks = [], timers = {}, listeners = {}, caretPlacements = 0, lastCaret = null;
 			var document = {
-			  documentElement: {scrollHeight: 600}, body: {scrollHeight: 600},
+			  documentElement: {scrollHeight: 600}, body: {scrollHeight: 600, children: []},
 			  querySelectorAll: function () { return []; }
 			};
 			var window = {

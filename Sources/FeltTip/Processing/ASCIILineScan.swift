@@ -235,23 +235,18 @@ enum DocumentScan {
 		}
 	}
 
-	/// True when some line is `:` alone or starts with `: ` after optional
-	/// whitespace — a definition-list definition line.
+	/// True when some line starts with `:` in column 0. This is the gate the
+	/// definition-list pass has always used: an indented `: definition` line
+	/// only joins a list when some other line in the document starts a
+	/// definition at the margin, so a soft-wrapped paragraph continuation such
+	/// as `Term\n  : rest` stays a paragraph. The pass itself decides which
+	/// colon lines are definitions.
 	static func hasDefinitionListLine(in text: String) -> Bool {
 		var text = text
 		return text.withUTF8 { bytes in
 			var i = 0
 			while i < bytes.count {
-				if bytes[i] == 0x3A, isIndentedLineStart(bytes, i) {
-					let next = i + 1
-					if next >= bytes.count || bytes[next] == 0x20 || bytes[next] == 0x0A || bytes[next] == 0x0D {
-						return true
-					}
-					// `:` followed only by spaces/tabs to the end of the line.
-					var j = next
-					while j < bytes.count, bytes[j] == 0x20 || bytes[j] == 0x09 { j += 1 }
-					if j >= bytes.count || bytes[j] == 0x0A || bytes[j] == 0x0D { return true }
-				}
+				if bytes[i] == 0x3A, isLineStart(bytes, i) { return true }
 				i += 1
 			}
 			return false
