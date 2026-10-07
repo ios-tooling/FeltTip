@@ -44,6 +44,15 @@ enum MarkdownScrollGeometry {
 public struct MarkdownTextEditor: NSViewRepresentable {
 	@Binding var text: String
 	@Binding var selectedHeadingID: String?
+	/// SwiftUI skips `update{NS,UI}View` when a representable's stored
+	/// properties compare equal to the last render, and a Binding compares by
+	/// its snapshot value. That misses a host that changes the text and changes
+	/// it back before SwiftUI renders in between (an edit the host immediately
+	/// undoes, under load): the body re-evaluates, the value reads as unchanged,
+	/// and the editor is left showing text the host no longer holds. A fresh
+	/// token per body evaluation makes every host render reach the update,
+	/// where the pending-local-text check decides whether the view must change.
+	private let hostUpdateToken = UUID()
 	@Environment(\.showLineNumbers) var showLineNumbers
 	@Environment(\.syntaxHighlightingEnabled) var syntaxHighlightingEnabled
 	@Environment(\.markdownOptions) var markdownOptions
