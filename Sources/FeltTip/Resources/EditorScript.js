@@ -1311,10 +1311,14 @@
       r.setStart(start.node, start.offset);
       r.setEnd(end.node, end.offset);
       sel.removeAllRanges(); sel.addRange(r);
-      // A pane handoff is a deliberate repositioning rather than ordinary
-      // scrolling. Put the transferred selection in the most useful part of
-      // the viewport when the document has enough room on either side.
-      start.span.scrollIntoView({ block: 'center' });
+      // A pane handoff is a deliberate repositioning, so the host flags it
+      // and the transferred selection is centered. Every other extended
+      // placement — a style toggle restoring its selection after a patch,
+      // a test harness — only nudges the selection into view: centering
+      // there moved the page under the user on every ⌘B.
+      var center = window.__mdCenterNextSelection === true;
+      window.__mdCenterNextSelection = false;
+      start.span.scrollIntoView({ block: center ? 'center' : 'nearest' });
       return;
     }
     if (start) {
