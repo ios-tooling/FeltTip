@@ -225,17 +225,17 @@ public enum MarkdownPreprocessor {
 		options: MarkdownOptions,
 		preservingSourceText: Bool
 	) -> String? {
-		let features = LinePassFeatures(
-			text: text,
-			options: options,
-			preservingSourceText: preservingSourceText)
-		guard features.requiresPass else { return text }
 		// Earlier passes hand back NSString-bridged strings, whose UTF-8 view is
 		// transcoded on every access. One contiguous copy up front makes every
 		// byte scan below a plain memory read; lines are then substrings of it
 		// and the output is built in place rather than split, mapped, and joined.
 		var text = text
 		text.makeContiguousUTF8()
+		let features = LinePassFeatures(
+			scan: text.withUTF8 { ASCIILineScan(bytes: $0) },
+			options: options,
+			preservingSourceText: preservingSourceText)
+		guard features.requiresPass else { return text }
 		var result = ""
 		result.reserveCapacity(text.utf8.count + 64)
 		var inFence = false
@@ -369,59 +369,31 @@ public enum MarkdownPreprocessor {
 				|| emoticons || quotes || typography || highlight
 		}
 
+		/// One byte pass over the document decides which processors can
+		/// matter. The previous implementation ran two regexes and a dozen
+		/// `NSString.range(of:)` searches, each transcoding the native string to
+		/// UTF-16, which cost more than the whole per-line pass they gated.
 		init(
-			text: String,
+			scan: ASCIILineScan,
 			options: MarkdownOptions,
 			preservingSourceText: Bool
 		) {
-			let wholeRange = NSRange(text.startIndex..., in: text)
-			let hasStructuralCandidate = Self.structuralPattern.firstMatch(
-				in: text, range: wholeRange) != nil
-			let hasEmoticon = !preservingSourceText
-				&& EmoticonShortcodes.containsToken(in: text)
-			let hasCosmeticCandidate = !preservingSourceText
-				&& Self.cosmeticPattern.firstMatch(in: text, range: wholeRange) != nil
-			guard hasStructuralCandidate || hasEmoticon || hasCosmeticCandidate else {
-				fences = false
-				blockAttributes = false
-				headings = false
-				superSub = false
-				inserted = false
-				emoticons = false
-				quotes = false
-				typography = false
-				highlight = false
-				return
-			}
-
-			let source = text as NSString
-			func contains(_ marker: String) -> Bool {
-				source.range(of: marker).location != NSNotFound
-			}
-
-			fences = contains("```") || contains("~~~")
-			blockAttributes = contains("{:")
-			headings = !options.headingsRequireSpaceAfterHash && contains("#")
-			superSub = contains("^") || contains("~")
-			inserted = contains("++")
-			highlight = contains("==")
+			fences = scan.hasTripleBacktick || scan.hasTripleTilde
+			blockAttributes = scan.hasBraceColon
+			headings = !options.headingsRequireSpaceAfterHash && scan.hasHash
+			superSub = scan.hasCaret || scan.hasTilde
+			inserted = scan.hasPlusPlus
+			highlight = scan.hasEqualsEquals
 			if preservingSourceText {
 				emoticons = false
 				quotes = false
 				typography = false
 			} else {
-				emoticons = hasEmoticon
-				quotes = contains("\"") || contains("'")
-				typography = contains("(") || contains("+-") || contains("...") || contains("--")
+				emoticons = scan.hasEmoticonSeed
+				quotes = scan.hasDoubleQuote || scan.hasSingleQuote
+				typography = scan.hasParen || scan.hasPlusMinus || scan.hasEllipsis || scan.hasDoubleDash
 			}
 		}
-
-		private static let structuralPattern = try! NSRegularExpression(
-			pattern: #"```|~~~|\{\:|#|\^|~|\+\+|=="#
-		)
-		private static let cosmeticPattern = try! NSRegularExpression(
-			pattern: #"["']|\(|\+-|\.\.\.|--"#
-		)
 	}
 
 	/// Per-processor timings (ms) accumulated across a single preprocess

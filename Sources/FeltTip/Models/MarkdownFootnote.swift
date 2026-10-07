@@ -16,9 +16,10 @@ public struct MarkdownFootnote: Identifiable, Equatable, Sendable {
 		// Normal documents should not pay for two arrays of every source line.
 		// A cheap syntax check also keeps absent-feature preprocessing
 		// responsive for very large files.
-		let source = text as NSString
-		guard source.range(of: "[^").location != NSNotFound
-			|| source.range(of: "^[").location != NSNotFound else { return [] }
+		// Named references need a `[^label]:` definition line to produce
+		// anything; inline `^[…]` footnotes need nothing else.
+		guard DocumentScan.hasBracketColonDefinitionLine(startingWith: "[^", minimumLabel: 1, in: text)
+			|| (text as NSString).range(of: "^[").location != NSNotFound else { return [] }
 		// First pass: collect named definitions
 		var definitions: [String: String] = [:]
 		var inCodeBlock = false

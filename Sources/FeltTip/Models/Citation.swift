@@ -17,12 +17,11 @@ public struct Citation: Identifiable, Equatable, Sendable {
 		// The preprocessing pipeline calls this for every document. Avoid two
 		// eager split-and-trim passes when citation syntax is absent, which is
 		// the overwhelmingly common case.
-		guard (text as NSString).range(of: "[@").location != NSNotFound else { return [] }
 		// `[@handle](url)` in body text is common; a citation also needs a
 		// `[@key]: content` definition line, so without one there is nothing
 		// to collect and the two split-and-trim passes below can be skipped.
-		guard definitionLinePattern.firstMatch(
-			in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return [] }
+		guard DocumentScan.hasBracketColonDefinitionLine(
+			startingWith: "[@", minimumLabel: 1, in: text) else { return [] }
 		var definitions: [String: String] = [:]
 		var inCodeBlock = false
 
@@ -58,9 +57,6 @@ public struct Citation: Identifiable, Equatable, Sendable {
 
 		return citations
 	}
-
-	private static let definitionLinePattern = try! NSRegularExpression(
-		pattern: #"(?m)^[ \t]*\[@[^\]\n]+\]:"#)
 
 	/// Returns text with citation markers replaced by numbered superscript links.
 	public static func renderableContent(from text: String, citations: [Citation]) -> String {

@@ -31,6 +31,10 @@ struct ASCIILineScan {
 	let hasEmoticonSeed: Bool
 	let hasOpenBracket: Bool
 	let hasOpenBrace: Bool
+	/// Document-level markers the merged pass gates whole features on.
+	let hasTripleBacktick: Bool
+	let hasTripleTilde: Bool
+	let hasBraceColon: Bool
 
 	init(_ line: Substring) {
 		var line = line
@@ -46,13 +50,15 @@ struct ASCIILineScan {
 		var hash = false, caret = false, tilde = false, plusPlus = false, eqEq = false
 		var dq = false, sq = false, paren = false, plusMinus = false, ellipsis = false
 		var dashDash = false, seed = false, bracket = false, brace = false
+		var tripleBacktick = false, tripleTilde = false, braceColon = false
 		var previous: UInt8 = 0
 		var previous2: UInt8 = 0
 		for byte in bytes {
 			switch byte {
 			case 0x23: hash = true
 			case 0x5E: caret = true
-			case 0x7E: tilde = true
+			case 0x7E: tilde = true; if previous == 0x7E, previous2 == 0x7E { tripleTilde = true }
+			case 0x60: if previous == 0x60, previous2 == 0x60 { tripleBacktick = true }
 			case 0x2B: if previous == 0x2B { plusPlus = true }
 			case 0x3D: seed = true; if previous == 0x3D { eqEq = true }
 			case 0x22: dq = true
@@ -60,7 +66,8 @@ struct ASCIILineScan {
 			case 0x28: paren = true
 			case 0x2D: if previous == 0x2B { plusMinus = true }; if previous == 0x2D { dashDash = true }
 			case 0x2E: if previous == 0x2E, previous2 == 0x2E { ellipsis = true }
-			case 0x3A, 0x3B, 0x38: seed = true
+			case 0x3A: seed = true; if previous == 0x7B { braceColon = true }
+			case 0x3B, 0x38: seed = true
 			case 0x5B: bracket = true
 			case 0x7B: brace = true
 			default: if byte >= 0x80 { ascii = false }
@@ -83,6 +90,7 @@ struct ASCIILineScan {
 		hasEqualsEquals = eqEq; hasDoubleQuote = dq; hasSingleQuote = sq; hasParen = paren
 		hasPlusMinus = plusMinus; hasEllipsis = ellipsis; hasDoubleDash = dashDash
 		hasEmoticonSeed = seed; hasOpenBracket = bracket; hasOpenBrace = brace
+		hasTripleBacktick = tripleBacktick; hasTripleTilde = tripleTilde; hasBraceColon = braceColon
 	}
 
 	var trimmedIsEmpty: Bool { leadingWhitespace + trailingWhitespace >= byteCount }
@@ -156,5 +164,118 @@ struct ASCIILineBuilder {
 		keep(through: source.count)
 		guard let output else { return .unchanged }
 		return .changed(String(decoding: output, as: UTF8.self))
+	}
+}
+
+/// Whole-document byte scans that stand in for `NSString.range(of:)` guards.
+/// Bridged substring searches transcode a native Swift string to UTF-16 on
+/// every call, which made a dozen "is this feature even present" checks cost
+/// more than the pass they guarded.
+enum DocumentScan {
+	@inline(__always) private static func isLineStart(_ bytes: UnsafeBufferPointer<UInt8>, _ i: Int) -> Bool {
+		i == 0 || bytes[i - 1] == 0x0A
+	}
+
+	/// Index of the first non-space/tab byte of the line containing `i`, if
+	/// everything between the line start and `i` is spaces or tabs.
+	@inline(__always) private static func isIndentedLineStart(_ bytes: UnsafeBufferPointer<UInt8>, _ i: Int) -> Bool {
+		var j = i
+		while j > 0, bytes[j - 1] == 0x20 || bytes[j - 1] == 0x09 { j -= 1 }
+		return isLineStart(bytes, j)
+	}
+
+	/// True when some line, after optional spaces and tabs, starts with
+	/// `opener` and then has a `]` followed by `:` before the line ends, with
+	/// at least `minimumLabel` bytes between the opener and the bracket. This
+	/// is the shape of a `[@key]:` citation, `[^label]:` footnote, or
+	/// `*[KEY]:` abbreviation definition line.
+	static func hasBracketColonDefinitionLine(
+		startingWith opener: StaticString, minimumLabel: Int, in text: String
+	) -> Bool {
+		var text = text
+		return text.withUTF8 { bytes in
+			opener.withUTF8Buffer { opener in
+				let n = opener.count
+				guard bytes.count >= n else { return false }
+				var i = 0
+				outer: while i <= bytes.count - n {
+					if bytes[i] != opener[0] { i += 1; continue }
+					for k in 1..<n where bytes[i + k] != opener[k] { i += 1; continue outer }
+					if isIndentedLineStart(bytes, i) {
+						var j = i + n
+						while j < bytes.count, bytes[j] != 0x5D, bytes[j] != 0x0A { j += 1 }
+						if j < bytes.count, bytes[j] == 0x5D, j - (i + n) >= minimumLabel,
+						   j + 1 < bytes.count, bytes[j + 1] == 0x3A {
+							return true
+						}
+					}
+					i += 1
+				}
+				return false
+			}
+		}
+	}
+
+	/// True when some line, after optional spaces and tabs, starts with `marker`.
+	static func hasLine(startingWith marker: StaticString, in text: String) -> Bool {
+		var text = text
+		return text.withUTF8 { bytes in
+			marker.withUTF8Buffer { marker in
+				let n = marker.count
+				guard bytes.count >= n else { return false }
+				var i = 0
+				outer: while i <= bytes.count - n {
+					if bytes[i] != marker[0] { i += 1; continue }
+					for k in 1..<n where bytes[i + k] != marker[k] { i += 1; continue outer }
+					if isIndentedLineStart(bytes, i) { return true }
+					i += 1
+				}
+				return false
+			}
+		}
+	}
+
+	/// True when some line is `:` alone or starts with `: ` after optional
+	/// whitespace — a definition-list definition line.
+	static func hasDefinitionListLine(in text: String) -> Bool {
+		var text = text
+		return text.withUTF8 { bytes in
+			var i = 0
+			while i < bytes.count {
+				if bytes[i] == 0x3A, isIndentedLineStart(bytes, i) {
+					let next = i + 1
+					if next >= bytes.count || bytes[next] == 0x20 || bytes[next] == 0x0A || bytes[next] == 0x0D {
+						return true
+					}
+					// `:` followed only by spaces/tabs to the end of the line.
+					var j = next
+					while j < bytes.count, bytes[j] == 0x20 || bytes[j] == 0x09 { j += 1 }
+					if j >= bytes.count || bytes[j] == 0x0A || bytes[j] == 0x0D { return true }
+				}
+				i += 1
+			}
+			return false
+		}
+	}
+
+	/// True when a `[[` is followed on the same line by `]]` with at least one
+	/// byte between them — the only shape `WikilinkProcessor` rewrites.
+	static func hasWikilink(in text: String) -> Bool {
+		var text = text
+		return text.withUTF8 { bytes in
+			guard bytes.count >= 5 else { return false }
+			var i = 0
+			while i < bytes.count - 1 {
+				if bytes[i] == 0x5B, bytes[i + 1] == 0x5B {
+					var j = i + 2
+					while j < bytes.count - 1, bytes[j] != 0x0A {
+						if bytes[j] == 0x5D, bytes[j + 1] == 0x5D { if j > i + 2 { return true } else { break } }
+						j += 1
+					}
+				}
+				i += 1
+			}
+			return false
+		}
 	}
 }

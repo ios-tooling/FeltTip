@@ -16,8 +16,9 @@ public enum DefinitionListProcessor {
 	/// Converts definition list syntax (`term\n: definition`) into `<dl>` HTML
 	/// blocks that survive CommonMark parsing as HTML blocks.
 	public static func process(_ text: String) -> String {
-		guard text.hasPrefix(":")
-			|| (text as NSString).range(of: "\n:").location != NSNotFound else { return text }
+		// A list needs a `: definition` line; a leading colon alone (emoji
+		// shortcodes at the start of a line, say) is not one.
+		guard DocumentScan.hasDefinitionListLine(in: text) else { return text }
 
 		var result: [String] = []
 		let lines = text.components(separatedBy: .newlines)
@@ -93,8 +94,7 @@ public enum DefinitionListProcessor {
 	/// list. The generated HTML carries the matching group index so authored
 	/// raw-HTML `<dl>` blocks are never assigned Markdown source offsets.
 	static func sourceGroups(in text: String, baseOffset: Int) -> [[SourceItem]] {
-		guard text.hasPrefix(":")
-			|| (text as NSString).range(of: "\n:").location != NSNotFound else { return [] }
+		guard DocumentScan.hasDefinitionListLine(in: text) else { return [] }
 		let lines = text.components(separatedBy: .newlines)
 		var starts: [Int] = []
 		var cursor = 0

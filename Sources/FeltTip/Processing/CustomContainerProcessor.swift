@@ -18,7 +18,7 @@ import Foundation
 /// to `note`. Skips fenced code blocks so source listings keep `:::` intact.
 public enum CustomContainerProcessor {
 	public static func process(_ text: String) -> String {
-		guard (text as NSString).range(of: ":::").location != NSNotFound else { return text }
+		guard DocumentScan.hasLine(startingWith: ":::", in: text) else { return text }
 		var output: [String] = []
 		var inFence = false
 		var i = 0

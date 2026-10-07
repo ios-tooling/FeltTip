@@ -9,7 +9,7 @@ public enum WikilinkProcessor {
 	/// Converts `[[Page Name]]` and `[[Page Name|Display Text]]` into
 	/// markdown links with a `wikilink://` scheme.
 	public static func process(_ text: String) -> String {
-		guard (text as NSString).range(of: "[[").location != NSNotFound else { return text }
+		guard DocumentScan.hasWikilink(in: text) else { return text }
 
 		var result = ""
 		var remaining = text[text.startIndex...]
