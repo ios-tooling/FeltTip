@@ -13,7 +13,8 @@ import WebKit
 @Suite(.serialized) @MainActor struct LineChangeMarkerTests {
 	@Test func markersAppearClearAndSurviveBodySwaps() async throws {
 		let source = "Alpha\n\nBeta\n\nGamma"
-		let webView = try await makeWebView(source: source)
+		let (webView, host) = try await makeWebView(source: source)
+		defer { withExtendedLifetime(host) {} }
 
 		// "Beta" occupies offsets 7..<11: one added range plus one deletion tick.
 		let changes = MarkdownLineChanges(
@@ -57,16 +58,16 @@ import WebKit
 
 	// MARK: Plumbing
 
-	private func makeWebView(source: String) async throws -> WKWebView {
-		let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
-		_ = TestWindowHost(view: webView)
+	private func makeWebView(source: String) async throws -> (WKWebView, TestWindowHost) {
+		let webView = makeIsolatedWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+		let host = TestWindowHost(view: webView)
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: source, includeSourceOffsets: true)
 		webView.loadHTMLString(html, baseURL: nil)
 		try await waitUntil("stamped content") {
 			try await self.evaluate(webView, "document.querySelector('[data-s]') ? 'yes' : 'no'") == "yes"
 		}
 		try await run(webView, MarkdownWebView.Coordinator.scrollSyncScript)
-		return webView
+		return (webView, host)
 	}
 
 	private func markerCount(_ webView: WKWebView) async throws -> String? {

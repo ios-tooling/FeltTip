@@ -90,12 +90,12 @@ import Markdown
 			.map { "Ordinary paragraph \($0) with no note syntax." }
 			.joined(separator: "\n")
 
-		let elapsed = ContinuousClock().measure {
+		let elapsed = Self.bestOfFive {
 			#expect(Citation.parse(from: text).isEmpty)
 			#expect(MarkdownFootnote.parse(from: text).isEmpty)
 		}
 
-		#expect(elapsed < .milliseconds(100), "absent note parsing took \(elapsed)")
+		#expect(elapsed < .milliseconds(200), "absent note parsing took \(elapsed)")
 	}
 
 	@Test func plainDocumentPreprocessingAvoidsSlowFeatureSearches() {
@@ -104,11 +104,24 @@ import Markdown
 			.joined(separator: "\n")
 		var processed = ""
 
-		let elapsed = ContinuousClock().measure {
+		let elapsed = Self.bestOfFive {
 			processed = MarkdownPreprocessor.process(text)
 		}
 
 		#expect(processed == text)
-		#expect(elapsed < .milliseconds(300), "plain preprocessing took \(elapsed)")
+		#expect(elapsed < .milliseconds(600), "plain preprocessing took \(elapsed)")
+	}
+
+	/// These guards exist to catch an order-of-magnitude regression: a feature
+	/// pass running its full scan on a document that has none of its syntax.
+	/// The suite runs in parallel with CPU-heavy parsing tests, so take the
+	/// best of several passes and keep the bounds loose enough that scheduling
+	/// noise cannot masquerade as that regression.
+	static func bestOfFive(_ body: () -> Void) -> Duration {
+		var best = Duration.seconds(10)
+		for _ in 0..<5 {
+			best = min(best, ContinuousClock().measure(body))
+		}
+		return best
 	}
 }

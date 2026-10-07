@@ -58,6 +58,7 @@ import Testing
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.makeKeyAndOrderFront(nil)
 		hosting.layoutSubtreeIfNeeded()

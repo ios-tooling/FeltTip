@@ -47,6 +47,7 @@ struct MarkdownTextEditorScrollTargetTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()

@@ -210,13 +210,22 @@ enum TestPasteboard {
 /// SwiftUI representable directly (rather than through the harness) need its
 /// real lifecycle.
 ///
-/// Instances retain themselves. On macOS `orderFront(_:)` puts the window in
-/// the application's window list, so the AppKit original stayed alive after
-/// its local went out of scope; a `UIWindow` gets no such treatment, and
-/// callers shouldn't have to care which platform they're on.
+/// The window lives exactly as long as the host: keep the host in a local for
+/// the whole test (`defer { withExtendedLifetime(host) {} }`). Hosts used to
+/// retain themselves so an early-released local kept its window, but on macOS
+/// `orderFront(_:)` also makes the application retain the window, so every
+/// test left a live WKWebView behind; a whole-package run accumulated
+/// hundreds and WebKit stopped loading pages for the suites that followed.
 @MainActor
 final class TestWindowHost {
-	private static var retained: [TestWindowHost] = []
+	isolated deinit {
+		#if os(macOS)
+			closeTestWindow(window)
+		#else
+			window.isHidden = true
+			window.rootViewController = nil
+		#endif
+	}
 	let view: TestPlatformView
 	#if os(macOS)
 		private let window: NSWindow
@@ -257,7 +266,6 @@ final class TestWindowHost {
 				styleMask: [.borderless], backing: .buffered, defer: false)
 			window.contentView = hosting
 			window.orderFront(nil)
-			Self.retained.append(self)
 		}
 	#else
 		private init(hosting: UIView, size: CGSize, controller: UIViewController) {
@@ -265,7 +273,27 @@ final class TestWindowHost {
 			window = UIWindow(frame: CGRect(origin: .zero, size: size))
 			window.rootViewController = controller
 			window.isHidden = false
-			Self.retained.append(self)
 		}
 	#endif
+}
+
+#if os(macOS)
+	/// Take a test window out of the application's window list and release its
+	/// content. A window that merely goes out of scope stays alive (and keeps
+	/// its web view loading and laying out) because `orderFront(_:)` made the
+	/// application retain it; see the whole-package run notes in
+	/// `CoordinatorBridgeHarness.deinit`.
+	@MainActor func closeTestWindow(_ window: NSWindow) {
+		window.contentView = nil
+		window.isReleasedWhenClosed = false
+		window.close()
+	}
+#endif
+
+/// A web view in its own content process. See `CoordinatorBridgeHarness.init`
+/// for why test pages must not share WebKit's default process.
+@MainActor func makeIsolatedWebView(frame: CGRect = .zero) -> WKWebView {
+	let config = WKWebViewConfiguration()
+	config.processPool = WKProcessPool()
+	return WKWebView(frame: frame, configuration: config)
 }

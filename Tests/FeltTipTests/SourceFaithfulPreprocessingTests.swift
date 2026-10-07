@@ -109,25 +109,6 @@ import Testing
 		#expect(elapsed < .seconds(2), "distributed offset mapping took \(elapsed)")
 	}
 
-	@Test func normalParsingDoesNotTouchOptInPerformanceMetrics() {
-		let wasEnabled = MarkdownPreprocessor.recordsPerformanceMetrics
-		let previousTimings = MarkdownPreprocessor.recordedTimings
-		defer {
-			MarkdownPreprocessor.recordsPerformanceMetrics = wasEnabled
-			MarkdownPreprocessor.recordedTimings = previousTimings
-		}
-		MarkdownPreprocessor.recordsPerformanceMetrics = false
-		MarkdownPreprocessor.recordedTimings = ["sentinel": 1]
-
-		_ = MarkdownBlockParser.parse(
-			(0..<1_000)
-				.map { "Paragraph \($0) with **formatting**." }
-				.joined(separator: "\n\n"),
-			trackSourceOffsets: true)
-
-		#expect(MarkdownPreprocessor.recordedTimings == ["sentinel": 1])
-	}
-
 	/// The former implementation, retained here as a semantic oracle for a
 	/// dense exhaustive matrix of insertions and removals.
 	private func replayingOffsetMap(from source: String, to processed: String) -> [Int] {

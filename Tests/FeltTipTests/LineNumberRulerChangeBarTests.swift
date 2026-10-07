@@ -8,7 +8,8 @@
 /// modified, red ticks for deletions.
 @Suite(.serialized) @MainActor struct LineNumberRulerChangeBarTests {
 	@Test func changeBarsRenderInTheGutter() throws {
-		let (ruler, _) = makeRuler(text: "alpha\nbravo\ncharlie\ndelta")
+		let (ruler, window) = makeRuler(text: "alpha\nbravo\ncharlie\ndelta")
+		defer { closeTestWindow(window) }
 		ruler.lineChanges = MarkdownLineChanges(
 			changedLines: [0: .added, 2: .modified],
 			deletionsAfter: [0],
@@ -22,7 +23,8 @@
 	}
 
 	@Test func noChangesDrawsNoBars() throws {
-		let (ruler, _) = makeRuler(text: "alpha\nbravo")
+		let (ruler, window) = makeRuler(text: "alpha\nbravo")
+		defer { closeTestWindow(window) }
 		let colors = try renderedColors(of: ruler)
 		#expect(!colors.contains(where: isGreenish))
 		#expect(!colors.contains(where: isBlueish))
@@ -30,7 +32,8 @@
 	}
 
 	@Test func barsOnlyGutterIsNarrow() throws {
-		let (ruler, _) = makeRuler(text: "alpha\nbravo")
+		let (ruler, window) = makeRuler(text: "alpha\nbravo")
+		defer { closeTestWindow(window) }
 		ruler.lineChanges = MarkdownLineChanges(changedLines: [0: .added], deletionsAfter: [], changedRanges: [], deletionOffsets: [])
 		_ = try renderedColors(of: ruler)  // first draw builds line starts + numbers width
 		#expect(ruler.ruleThickness > 12, "numbered gutter should reserve digit space")
@@ -42,7 +45,8 @@
 		let source = (0..<20_000)
 			.map { "line \($0)" }
 			.joined(separator: "\n")
-		let (ruler, _) = makeRuler(text: source)
+		let (ruler, window) = makeRuler(text: source)
+		defer { closeTestWindow(window) }
 		_ = try renderedColors(of: ruler)
 		#expect(ruler.fullIndexRebuildCount == 1)
 
@@ -62,7 +66,8 @@
 
 	@Test func lineCountWidthChangeDoesNotRetileInsideTextStorageEdit() throws {
 		let source = (1...99).map { "line \($0)" }.joined(separator: "\n")
-		let (ruler, _) = makeRuler(text: source)
+		let (ruler, window) = makeRuler(text: source)
+		defer { closeTestWindow(window) }
 		_ = try renderedColors(of: ruler)
 		let index = MarkdownLineIndex(text: source)
 		ruler.setLineIndex(index)
@@ -88,6 +93,7 @@
 		// earlier origin. The visible changed line must still mark the gutter.
 		let source = (1...8_808).map { "line \($0) lorem ipsum\n" }.joined()
 		let (ruler, window) = makeRuler(text: source)
+		defer { closeTestWindow(window) }
 		let textView = try #require(ruler.clientView as? NSTextView)
 		let scrollView = try #require(ruler.scrollView)
 		textView.isVerticallyResizable = true

@@ -41,6 +41,7 @@ struct WebSplitMarkdownScreenTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()
@@ -73,6 +74,7 @@ struct WebSplitMarkdownScreenTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()
@@ -112,6 +114,7 @@ struct WebSplitMarkdownScreenTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()
@@ -155,6 +158,7 @@ struct WebSplitMarkdownScreenTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()
@@ -182,6 +186,7 @@ struct WebSplitMarkdownScreenTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()
@@ -247,6 +252,7 @@ struct WebSplitMarkdownScreenTests {
 		let window = NSWindow(
 			contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()
@@ -278,6 +284,7 @@ struct WebSplitMarkdownScreenTests {
 		hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
 		let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless],
 			backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = hosting
 		window.orderFront(nil)
 		hosting.layoutSubtreeIfNeeded()

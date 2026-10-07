@@ -21,6 +21,15 @@ import WebKit
 
 @MainActor
 final class CoordinatorBridgeHarness {
+	/// Harnesses currently alive (constructed and not yet torn down).
+	private(set) static var liveCount = 0
+	/// Swift Testing interleaves every main-actor test it can. Each live
+	/// harness page adds WebKit UI-process work and 50 ms polling to the one
+	/// main thread, and past a handful of concurrent pages the five-second
+	/// waits in selection-heavy suites start timing out, after which the
+	/// failures cascade. Cap the pages alive at once; the cap is well above
+	/// what one suite needs, so only cross-suite pile-ups wait.
+	static let pageSlots = TestConcurrencyLimiter(capacity: 4, name: "harness pages")
 	private(set) var source: String
 	private(set) var sourceEditCount = 0
 	/// The post-edit caret hint delivered with the most recent onSourceEdit.
@@ -61,6 +70,8 @@ final class CoordinatorBridgeHarness {
 		renderMermaid: Bool = false,
 		scrollTarget: MarkdownScrollTarget? = nil
 	) async throws {
+		await Self.pageSlots.acquire()
+		Self.liveCount += 1
 		self.source = source
 		self.checkboxToggle = onCheckboxToggle
 		self.openImage = onOpenImage
@@ -80,6 +91,11 @@ final class CoordinatorBridgeHarness {
 		view = view.preparedInitialRender(preparedInitialRender)
 		coordinator = MarkdownWebView.Coordinator(parent: view)
 		let config = WKWebViewConfiguration()
+		// Each test page gets its own content process. WebKit otherwise puts
+		// every test's about:blank page into one shared WebContent process, and
+		// once a few heavy documents are alive there every page load in the run
+		// slows past the harness timeouts.
+		config.processPool = WKProcessPool()
 		let resourcePolicy = LocalResourceAccessPolicy()
 		coordinator.localResourceAccessPolicy = resourcePolicy
 		config.userContentController.add(WeakScriptMessageHandler(coordinator), name: "mdedit")
@@ -120,6 +136,8 @@ final class CoordinatorBridgeHarness {
 	/// until page loads slow past the harness timeouts and later suites fail
 	/// wholesale.
 	isolated deinit {
+		Self.liveCount -= 1
+		Self.pageSlots.release()
 		webView.stopLoading()
 		webView.navigationDelegate = nil
 		webView.configuration.userContentController.removeScriptMessageHandler(forName: "mdedit")
@@ -337,6 +355,14 @@ final class CoordinatorBridgeHarness {
 			if try await condition() { return }
 			try await Task.sleep(for: .milliseconds(50))
 		}
-		Issue.record("timed out waiting for \(label)")
+		// How many harness pages are alive tells a slow page apart from a run
+		// that is drowning in leaked ones.
+		#if os(macOS)
+			let windows = NSApplication.shared.windows.count
+		#else
+			let windows = -1
+		#endif
+		Issue.record(
+			"timed out waiting for \(label) (live harnesses: \(Self.liveCount), app windows: \(windows))")
 	}
 }

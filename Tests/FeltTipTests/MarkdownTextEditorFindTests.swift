@@ -37,6 +37,7 @@ struct MarkdownTextEditorFindTests {
 			styleMask: [.borderless],
 			backing: .buffered,
 			defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = contentView
 		let proxy = NativeReplaceControlProxy(
 			editor: editor,
@@ -84,6 +85,7 @@ struct MarkdownTextEditorFindTests {
 			backing: .buffered,
 			defer: false
 		)
+		defer { closeTestWindow(window) }
 		window.contentView = hostingView
 		window.orderFront(nil)
 
@@ -164,6 +166,7 @@ struct MarkdownTextEditorFindTests {
 			backing: .buffered,
 			defer: false
 		)
+		defer { closeTestWindow(window) }
 		window.contentView = hostingView
 		window.orderFront(nil)
 
@@ -236,8 +239,9 @@ struct MarkdownTextEditorFindTests {
 			backing: .buffered,
 			defer: false
 		)
+		defer { closeTestWindow(window) }
 		let root = NSView(frame: hostingView.frame)
-		let prewarmedEditor = MarkdownWebViewFindHost(webView: WKWebView())
+		let prewarmedEditor = MarkdownWebViewFindHost(webView: makeIsolatedWebView())
 		prewarmedEditor.frame = root.bounds
 		prewarmedEditor.isInactive = true
 		root.addSubview(prewarmedEditor)
@@ -348,6 +352,7 @@ struct MarkdownTextEditorFindTests {
 			backing: .buffered,
 			defer: false
 		)
+		defer { closeTestWindow(window) }
 		window.contentView = scrollView
 		window.orderFront(nil)
 

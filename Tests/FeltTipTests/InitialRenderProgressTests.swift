@@ -95,6 +95,7 @@ struct InitialRenderProgressTests {
 			.onInitialRenderProgress { events.append($0) }
 			.onInitialRenderReady { readyCount += 1 }
 		let host = TestWindowHost(root)
+		defer { withExtendedLifetime(host) {} }
 
 		var webView: WKWebView?
 		// Parallel WebKit-heavy suites can delay SwiftUI hierarchy installation

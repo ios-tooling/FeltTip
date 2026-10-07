@@ -103,7 +103,7 @@ struct RenderHardeningTests {
 		let coordinator = MarkdownWebView(
 			text: "document", theme: .default, fontSize: 16
 		).makeCoordinator()
-		let webView = WKWebView()
+		let webView = makeIsolatedWebView()
 		let rendered = MarkdownRenderService.BlockResult(
 			fragments: [MarkdownBlockFragment(html: "<p>fallback</p>")],
 			patch: nil,

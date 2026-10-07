@@ -83,4 +83,26 @@ import Testing
 		#expect(result.patch != nil, "a one-character edit should patch, not swap")
 		#expect(elapsed < 2.5)
 	}
+
+	/// Lives in this serialized suite because the benchmarks above flip the
+	/// same global metrics switch; in a separate suite the two interleave and
+	/// a benchmark's recording shows up here as a spurious timing entry.
+	@Test func normalParsingDoesNotTouchOptInPerformanceMetrics() {
+		let wasEnabled = MarkdownPreprocessor.recordsPerformanceMetrics
+		let previousTimings = MarkdownPreprocessor.recordedTimings
+		defer {
+			MarkdownPreprocessor.recordsPerformanceMetrics = wasEnabled
+			MarkdownPreprocessor.recordedTimings = previousTimings
+		}
+		MarkdownPreprocessor.recordsPerformanceMetrics = false
+		MarkdownPreprocessor.recordedTimings = ["sentinel": 1]
+
+		_ = MarkdownBlockParser.parse(
+			(0..<1_000)
+				.map { "Paragraph \($0) with **formatting**." }
+				.joined(separator: "\n\n"),
+			trackSourceOffsets: true)
+
+		#expect(MarkdownPreprocessor.recordedTimings == ["sentinel": 1])
+	}
 }

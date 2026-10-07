@@ -444,6 +444,7 @@ import AppKit
 			styleMask: [.borderless],
 			backing: .buffered,
 			defer: false)
+		defer { closeTestWindow(window) }
 		window.contentView = textView
 		window.orderFront(nil)
 		try #require(window.makeFirstResponder(textView))

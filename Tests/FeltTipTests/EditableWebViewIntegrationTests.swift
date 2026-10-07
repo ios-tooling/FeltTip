@@ -297,10 +297,12 @@ private final class EditBridgeHarness: NSObject, WKScriptMessageHandler {
 
 	private func makeEditableWebView(harness: EditBridgeHarness) async throws -> WKWebView {
 		let config = WKWebViewConfiguration()
-		config.userContentController.add(harness, name: "mdedit")
+		config.processPool = WKProcessPool()
+		config.userContentController.add(WeakScriptMessageHandler(harness), name: "mdedit")
 		let webView = WKWebView(
 			frame: CGRect(x: 0, y: 0, width: 600, height: 400), configuration: config)
 		let host = TestWindowHost(view: webView)
+		defer { withExtendedLifetime(host) {} }
 		let html = MarkdownHTMLRenderer.renderDocument(markdown: harness.source, includeSourceOffsets: true)
 		webView.loadHTMLString(html, baseURL: nil)
 		// readyState alone is useless here: the initial about:blank page is
