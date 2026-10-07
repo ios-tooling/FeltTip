@@ -10,8 +10,7 @@ extension InlineBuilder {
 	/// Autolinks scheme-bearing URLs in the assembled attributed string via
 	/// `NSDataDetector`. CommonMark and GFM both require this for any `http://`
 	/// or `https://` URL that wasn't already wrapped in `<…>` or `[…](…)`.
-	mutating func linkifyBareURLs() {
-		let plainText = String(result.characters)
+	mutating func linkifyBareURLs(in plainText: String) {
 		guard !plainText.isEmpty, plainText.contains("://"),
 			  let detector = Self.urlDetector else { return }
 		let fullRange = NSRange(plainText.startIndex..<plainText.endIndex, in: plainText)
@@ -28,8 +27,7 @@ extension InlineBuilder {
 	/// trailing `)` is stripped when there are more closing than opening
 	/// parens in the run. NSDataDetector doesn't catch `www.` without a
 	/// scheme, so this pass fills that specific gap.
-	mutating func linkifyWWWPrefix() {
-		let plainText = String(result.characters)
+	mutating func linkifyWWWPrefix(in plainText: String) {
 		guard plainText.lowercased().contains("www."), let regex = Self.wwwPrefixRegex else { return }
 		let fullRange = NSRange(plainText.startIndex..<plainText.endIndex, in: plainText)
 		for match in regex.matches(in: plainText, range: fullRange).reversed() {

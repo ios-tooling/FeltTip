@@ -53,8 +53,10 @@ struct InlineBuilder: MarkupWalker {
 
 	mutating func finalize(linkifyURLs: Bool = true) -> InlineResult {
 		if linkifyURLs {
-			linkifyBareURLs()
-			linkifyWWWPrefix()
+			// Both passes read the plain text; linkifying does not change it.
+			let plainText = String(result.characters)
+			linkifyBareURLs(in: plainText)
+			linkifyWWWPrefix(in: plainText)
 		}
 		repairSplitSourceOffsets()
 		return InlineResult(attributed: result, links: links)
@@ -94,11 +96,13 @@ struct InlineBuilder: MarkupWalker {
 	}
 
 	mutating func visitText(_ text: Markdown.Text) {
+		// `Text.string` materializes a String from the node each time it is read.
+		let string = text.string
 		if let converter = sourceConverter, let range = text.range,
 		   let fragments = converter.fragmentsAroundEscapedPipes(
 			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
-			rendered: text.string) {
+			rendered: string) {
 			for fragment in fragments {
 				var str = AttributedString(fragment.text)
 				applyCurrentStyle(&str)
@@ -106,20 +110,20 @@ struct InlineBuilder: MarkupWalker {
 				str.markdownEscapedPipeSourceOffset = fragment.escapedPipeSourceOffset
 				result += str
 			}
-			charOffset += text.string.count
+			charOffset += string.count
 			return
 		}
-		var str = AttributedString(text.string)
+		var str = AttributedString(string)
 		applyCurrentStyle(&str)
 		if let converter = sourceConverter, let range = text.range,
 		   let offset = converter.verbatimUTF16Offset(
 			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
-			rendered: text.string) {
+			rendered: string) {
 			str.markdownSourceOffset = offset
 		}
 		result += str
-		charOffset += text.string.count
+		charOffset += string.count
 	}
 
 	mutating func visitStrong(_ strong: Strong) {

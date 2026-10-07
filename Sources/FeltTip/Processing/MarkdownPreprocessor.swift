@@ -281,7 +281,22 @@ public enum MarkdownPreprocessor {
 			trimmed = Substring(line.trimmingCharacters(in: .whitespaces))
 		}
 		if features.fences {
-			if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+			// Grapheme-aware `hasPrefix` is slow enough to show up per line;
+			// three ASCII bytes answer the same question on ASCII lines.
+			let opensFence: Bool
+			if scan.isASCII {
+				let u = trimmed.utf8
+				if u.count >= 3 {
+					let i0 = u.startIndex, i1 = u.index(after: i0), i2 = u.index(after: i1)
+					opensFence = (u[i0] == 0x60 && u[i1] == 0x60 && u[i2] == 0x60)
+						|| (u[i0] == 0x7E && u[i1] == 0x7E && u[i2] == 0x7E)
+				} else {
+					opensFence = false
+				}
+			} else {
+				opensFence = trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~")
+			}
+			if opensFence {
 				inFence.toggle()
 				referenceContinuationLines = 0
 				return line
@@ -302,7 +317,9 @@ public enum MarkdownPreprocessor {
 		} else if !trimmed.isEmpty {
 			referenceContinuationLines = 0
 		}
-		if scan.hasOpenBracket,
+		// A reference definition starts its trimmed line with `[`; most lines
+		// with a bracket are links, so check that byte before the full test.
+		if scan.hasOpenBracket, trimmed.utf8.first == 0x5B,
 		   let continuationLimit = SmartQuotes.referenceDefinitionContinuationLimit(trimmed) {
 			preservesReferenceSyntax = true
 			referenceContinuationLines = continuationLimit

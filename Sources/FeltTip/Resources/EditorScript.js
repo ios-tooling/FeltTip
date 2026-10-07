@@ -161,10 +161,13 @@
   installLinkOpenButtons();
   installListAddButtons();
 
+  // Total text-node length under `n`. For elements this is exactly
+  // `textContent.length` (text descendants only, comments excluded), which
+  // WebKit computes natively instead of a recursive JS walk per node.
   function textLength(n) {
     if (n.nodeType === 3) return n.nodeValue.length;
-    var t = 0; for (var i = 0; i < n.childNodes.length; i++) t += textLength(n.childNodes[i]);
-    return t;
+    if (n.nodeType === 1 || n.nodeType === 11) return n.textContent.length;
+    return 0;
   }
   // Characters of text inside `root` that precede position (node, offset).
   function textOffsetWithin(root, node, offset) {

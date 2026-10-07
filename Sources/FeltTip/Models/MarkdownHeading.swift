@@ -28,8 +28,7 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 				return
 			}
 			let sourceRange = NSRange(lineRange, in: markdown)
-			let line = String(markdown[lineRange])
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
+			let trimmed = markdown[lineRange].trimmingCharacters(in: .whitespaces)
 
 			if trimmed.hasPrefix("```") {
 				inCodeBlock.toggle()

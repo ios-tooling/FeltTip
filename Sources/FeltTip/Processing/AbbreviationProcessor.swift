@@ -20,10 +20,17 @@ import Foundation
 public enum AbbreviationProcessor {
 	public static func process(_ text: String) -> String {
 		guard (text as NSString).range(of: "*[").location != NSNotFound else { return text }
+		// `**[link](url)**` matches the cheap guard in nearly every README;
+		// only a `*[KEY]: value` line at the start of a line defines anything.
+		guard definitionLinePattern.firstMatch(
+			in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return text }
 		let (definitions, withoutDefs) = extractDefinitions(text)
 		guard !definitions.isEmpty else { return text }
 		return rewriteOccurrences(in: withoutDefs, definitions: definitions)
 	}
+
+	private static let definitionLinePattern = try! NSRegularExpression(
+		pattern: #"(?m)^[ \t]*\*\[[^\]\n]*\]:"#)
 
 	private static func extractDefinitions(_ text: String) -> (definitions: [String: String], stripped: String) {
 		var definitions: [String: String] = [:]

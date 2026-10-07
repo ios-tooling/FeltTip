@@ -431,7 +431,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				// first permanently lost the caret request on the raw pane.
 				context.coordinator.lastCaretToken = caret.token
 				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw caret scroll to %d", caret.offset) }
-				let clamped = min(max(0, caret.offset), (textView.string as NSString).length)
+				let clamped = min(max(0, caret.offset), (textView.textStorage?.length ?? 0))
 				textView.setSelectedRange(NSRange(location: clamped, length: 0))
 				textView.scrollRangeToVisible(NSRange(location: clamped, length: 0))
 			}
@@ -441,7 +441,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if let target = selectionTarget,
 		   target.token != context.coordinator.lastSelectionTargetToken {
 			context.coordinator.lastSelectionTargetToken = target.token
-			let length = (textView.string as NSString).length
+			let length = (textView.textStorage?.length ?? 0)
 			let location = min(max(0, target.range.location), length)
 			let selectedLength = min(max(0, target.range.length), length - location)
 			let range = NSRange(location: location, length: selectedLength)
@@ -463,7 +463,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			context.coordinator.lastScrolledID = raw
 			let headingID = raw.components(separatedBy: "\t").first ?? raw
 			if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw heading scroll %@", headingID) }
-			if let range = MarkdownHeading.characterRange(for: headingID, in: text) {
+			// The heading index already knows every heading's range; rescan the
+			// source only while a debounced edit has left it stale.
+			let indexedRange = context.coordinator.indexedHeadingRevision == context.coordinator.contentRevision
+				? context.coordinator.indexedHeadings.first { $0.id == headingID }?.sourceRange
+				: nil
+			if let range = indexedRange ?? MarkdownHeading.characterRange(for: headingID, in: text) {
 				textView.scrollRangeToVisible(range)
 				textView.showFindIndicator(for: range)
 			}
@@ -592,7 +597,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	/// wash, via temporary attributes so nothing about the document changes.
 	private func applyMirroredSelection(to textView: NSTextView, coordinator: Coordinator) {
 		guard coordinator.lastMirroredSelection != mirroredSelection else { return }
-		let textLength = (textView.string as NSString).length
+		let textLength = (textView.textStorage?.length ?? 0)
 		if let previous = coordinator.lastMirroredSelection,
 		   previous.location + previous.length <= textLength {
 			textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: previous)
@@ -613,13 +618,18 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	private func applyFocusMode(to textView: NSTextView, coordinator: Coordinator) {
 		let isActive = textView.window?.firstResponder === textView
-		let nextRange = focusModeEnabled && isActive
-			? MarkdownFocusMode.focusedRange(in: textView.string, selection: textView.selectedRange())
-			: nil
 		let shouldFocus = focusModeEnabled && isActive
+		let nextRange = shouldFocus
+			? MarkdownFocusMode.focusedRange(
+				in: textView.textStorage?.mutableString ?? "", selection: textView.selectedRange())
+			: nil
 		guard coordinator.lastFocusRange != nextRange || coordinator.lastFocusModeEnabled != shouldFocus else { return }
-		let full = NSRange(location: 0, length: (textView.string as NSString).length)
-		if coordinator.lastFocusModeEnabled, full.length > 0 {
+		let full = NSRange(location: 0, length: (textView.textStorage?.length ?? 0))
+		// Leaving focus mode must restore the syntax colors the dim replaced.
+		// Moving between paragraphs while it stays on does not: the dim is
+		// re-applied over the whole document below and hides them anyway, so
+		// the ten-regex highlight pass per caret move was wasted work.
+		if coordinator.lastFocusModeEnabled, !shouldFocus, full.length > 0 {
 			updateHighlighting(textView: textView, coordinator: coordinator)
 		}
 		coordinator.lastFocusModeEnabled = shouldFocus
@@ -740,7 +750,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		) {
 			prelayoutTask?.cancel()
 			guard let layoutManager = textView.layoutManager else { return }
-			let length = (textView.string as NSString).length
+			let length = (textView.textStorage?.length ?? 0)
 			guard length > 100_000 else {
 				layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: length))
 				if revealStartWhenComplete {
@@ -794,16 +804,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 
-		func visibleHeading(at offset: Int, in currentText: String) -> MarkdownHeading? {
+		func visibleHeading(at offset: Int, in currentText: @autoclosure () -> String) -> MarkdownHeading? {
 			if indexedHeadingRevision == contentRevision {
 				return MarkdownHeading.heading(
 					atCharacterOffset: offset, in: indexedHeadings)
 			}
 			// The index is briefly stale while a debounced edit refresh is
 			// pending. Preserve exact behavior by scanning the live source
-			// rather than consulting old ranges.
+			// rather than consulting old ranges. The autoclosure keeps the
+			// whole-document bridge off the common fresh-index path.
 			return MarkdownHeading.heading(
-				atCharacterOffset: offset, in: currentText)
+				atCharacterOffset: offset, in: currentText())
 		}
 		var isUpdatingFromSwiftUI = false
 		var lastAppliedFontSize: CGFloat = 0
@@ -1016,10 +1027,11 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			// otherwise create a feedback loop.
 			guard editedMask.contains(.editedCharacters) else { return }
 			contentRevision &+= 1
-			lineIndex.applyEdit(
-				in: textStorage.string as NSString, editedRange: editedRange, delta: delta)
+			// `string` copies the whole storage; `mutableString` is a live proxy.
+			let storage = textStorage.mutableString
+			lineIndex.applyEdit(in: storage, editedRange: editedRange, delta: delta)
 			lineNumberRuler?.noteLineIndexChanged()
-			updateFenceRanges(after: editedRange, delta: delta, in: textStorage.string as NSString)
+			updateFenceRanges(after: editedRange, delta: delta, in: storage)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
@@ -1168,7 +1180,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				NSLog("[SplitSync] raw becomeFirstResponder mirror=%@ sel=%@", String(describing: lastMirroredSelection), NSStringFromRange(textView.selectedRange()))
 			}
 			if let stale = lastMirroredSelection,
-			   stale.location + stale.length <= (textView.string as NSString).length {
+			   stale.location + stale.length <= (textView.textStorage?.length ?? 0) {
 				textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
 			}
 			let range = textView.selectedRange()
@@ -1269,7 +1281,7 @@ private final class RulerInsetScrollView: NSScrollView {
 				MainActor.assumeIsolated {
 					guard let self, let textView, !self.isFindBarVisible else { return }
 					if foundRange.length > 0,
-					   foundRange.upperBound <= (textView.string as NSString).length {
+					   foundRange.upperBound <= (textView.textStorage?.length ?? 0) {
 						textView.setSelectedRange(foundRange)
 					}
 					self.window?.makeFirstResponder(textView)

@@ -3,7 +3,12 @@ import Foundation
 /// Shared paragraph selection semantics for the raw editors' focus mode.
 enum MarkdownFocusMode {
 	static func focusedRange(in text: String, selection: NSRange) -> NSRange {
-		let source = text as NSString
+		focusedRange(in: text as NSString, selection: selection)
+	}
+
+	/// `NSTextStorage.mutableString` is a live proxy, so the macOS editor can
+	/// pass it without bridging the whole document on every caret move.
+	static func focusedRange(in source: NSString, selection: NSRange) -> NSRange {
 		guard source.length > 0 else { return NSRange(location: 0, length: 0) }
 		let location = min(max(0, selection.location), source.length)
 		let end = min(source.length, location + max(0, selection.length))

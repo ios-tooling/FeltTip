@@ -87,17 +87,38 @@
   }
 	var visibleSourceTimer = null;
 	var lastVisibleSourceOffset = null;
+	function distanceToViewportTop(rect, viewportY) {
+		return rect.top <= viewportY && rect.bottom >= viewportY
+			? 0 : (rect.top > viewportY ? rect.top - viewportY : viewportY - rect.bottom);
+	}
 	function reportVisibleSourceOffset() {
 		visibleSourceTimer = null;
-		var runs = document.querySelectorAll('[data-s]');
 		var viewportY = 12;
+		// Find the top-level block nearest the viewport top first (a few
+		// hundred rect reads), then look at runs only in it and its neighbors,
+		// instead of reading a rect for every run in the document.
+		var blocks = document.body.children;
+		var bestBlock = -1;
+		var bestBlockDistance = Infinity;
+		for (var b = 0; b < blocks.length; b++) {
+			if (blocks[b].classList.contains('felttip-change-marker')) { continue; }
+			var blockRect = blocks[b].getBoundingClientRect();
+			if (blockRect.bottom <= 0 || blockRect.top >= window.innerHeight) { continue; }
+			var blockDistance = distanceToViewportTop(blockRect, viewportY);
+			if (blockDistance < bestBlockDistance) { bestBlock = b; bestBlockDistance = blockDistance; }
+		}
+		if (bestBlock < 0) { return; }
+		var runs = [];
+		for (var n = Math.max(0, bestBlock - 1); n <= Math.min(blocks.length - 1, bestBlock + 1); n++) {
+			if (blocks[n].hasAttribute('data-s')) { runs.push(blocks[n]); }
+			runs.push.apply(runs, blocks[n].querySelectorAll('[data-s]'));
+		}
 		var best = null;
 		var bestDistance = Infinity;
 		for (var i = 0; i < runs.length; i++) {
 			var rect = runs[i].getBoundingClientRect();
 			if (rect.bottom <= 0 || rect.top >= window.innerHeight) { continue; }
-			var distance = rect.top <= viewportY && rect.bottom >= viewportY
-				? 0 : (rect.top > viewportY ? rect.top - viewportY : viewportY - rect.bottom);
+			var distance = distanceToViewportTop(rect, viewportY);
 			if (distance < bestDistance) {
 				best = runs[i];
 				bestDistance = distance;
