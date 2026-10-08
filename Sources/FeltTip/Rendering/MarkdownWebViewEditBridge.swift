@@ -1639,30 +1639,35 @@ extension MarkdownWebView.Coordinator {
 		return scan + 3
 	}
 
-	/// State of the document-wide indexed task-list marker. Checkbox messages
-	/// are revision-gated first, then verified against source so a stale DOM
-	/// index can never toggle a different item.
-	private static let checkboxPattern = try! NSRegularExpression(
-		pattern: #"(?m)^\s*(?:[-*+]|\d+[.)]) +\[([ xX])\]"#)
-
+	/// Use the same parsed items and indices as the renderer. Text that merely
+	/// resembles a task marker (code blocks, frontmatter, HTML) is not a task.
 	static func checkboxState(at target: Int, in source: String) -> Bool? {
 		guard target >= 0 else { return nil }
-		let nsSource = source as NSString
-		let range = NSRange(location: 0, length: nsSource.length)
-		var current = 0
-		var state: Bool?
-		checkboxPattern.enumerateMatches(
-			in: source, range: range
-		) { match, _, stop in
-			guard let match else { return }
-			if current == target {
-				let marker = nsSource.substring(with: match.range(at: 1))
-				state = marker.lowercased() == "x"
-				stop.pointee = true
+		func find(in blocks: [MarkdownBlock]) -> Bool? {
+			for block in blocks {
+				switch block {
+				case .orderedList(let items, _, _), .unorderedList(let items, _):
+					for item in items {
+						if item.checkboxIndex == target, let state = item.checkbox { return state == .checked }
+						if let state = find(in: item.blocks) { return state }
+					}
+				case .blockquote(let children, _), .details(_, _, let children, _), .alert(_, let children, _):
+					if let state = find(in: children) { return state }
+				case .aligned(_, let child, _):
+					if let state = find(in: [child]) { return state }
+				default: break
+				}
 			}
-			current += 1
+			return nil
 		}
-		return state
+		// A task on the very first line cannot be inside an earlier fence,
+		// frontmatter, or HTML block. Avoid parsing a large tail for this common
+		// case; cmark still decides whether the first line is actually a task.
+		if target == 0 {
+			let firstLine = String(source.prefix { $0 != "\n" && $0 != "\r" && $0 != "\r\n" })
+			if let state = find(in: MarkdownBlockParser.parse(firstLine, trackSourceOffsets: true)) { return state }
+		}
+		return find(in: MarkdownBlockParser.parse(source, trackSourceOffsets: true))
 	}
 
 	/// Splice a fresh empty row after the line containing `at` (a stamp from

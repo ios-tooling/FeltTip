@@ -20,12 +20,25 @@ enum MarkdownFenceRangeTracker {
 	) -> [NSRange]? {
 		var ranges = ranges
 		let insertedEnd = min(text.length, editedRange.location + editedRange.length)
-		if editedRange.location <= insertedEnd,
-		   text.substring(with: NSRange(
-			location: editedRange.location,
-			length: max(0, insertedEnd - editedRange.location))).contains("`") {
-			return nil
+		guard editedRange.location >= 0, editedRange.location <= text.length else { return nil }
+		let inserted = NSRange(location: editedRange.location, length: max(0, insertedEnd - editedRange.location))
+		if text.substring(with: inserted).contains("`") { return nil }
+		// A newline or deletion can expose existing backticks at line start,
+		// even when the old cache contains no fences. Only inspect markers at
+		// changed line starts; appending prose after an intact closing marker
+		// does not change its range and should retain the fast path.
+		var lineStart = text.lineRange(for: NSRange(location: editedRange.location, length: 0)).location
+		while lineStart <= insertedEnd, lineStart < text.length {
+			if lineStart + 3 <= text.length,
+			   (lineStart >= editedRange.location || editedRange.location < lineStart + 3),
+			   text.character(at: lineStart) == 0x60,
+			   text.character(at: lineStart + 1) == 0x60,
+			   text.character(at: lineStart + 2) == 0x60 { return nil }
+			let next = NSMaxRange(text.lineRange(for: NSRange(location: lineStart, length: 0)))
+			guard next > lineStart else { break }
+			lineStart = next
 		}
+
 		let oldLength = max(0, editedRange.length - delta)
 		let oldEnd = editedRange.location + oldLength
 		let oldDocumentLength = max(0, text.length - delta)

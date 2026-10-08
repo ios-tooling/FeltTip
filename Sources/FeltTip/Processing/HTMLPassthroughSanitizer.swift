@@ -21,6 +21,10 @@ enum HTMLPassthroughSanitizer {
 	static let droppedWithContent: Set<String> = [
 		"script", "iframe", "object", "embed", "applet", "frame", "frameset",
 		"noembed", "noframes", "style",
+		// These switch HTML tokenization to raw text/RCDATA (noscript does
+		// so when scripting is enabled). A generic tag scanner cannot safely
+		// preserve them: quotes inside their contents have no HTML meaning.
+		"noscript", "xmp", "title", "plaintext", "textarea",
 	]
 
 	/// Elements dropped on their own: they re-point or reload the page around
@@ -30,7 +34,7 @@ enum HTMLPassthroughSanitizer {
 		// Interactive form controls can navigate a WKWebView through a
 		// `.formSubmitted` action, bypassing ordinary link handling. Keep any
 		// human-readable content between paired tags, but remove the controls.
-		"form", "input", "button", "select", "option", "optgroup", "textarea",
+		"form", "input", "button", "select", "option", "optgroup",
 		"label", "fieldset", "legend", "datalist", "output",
 		// SVG SMIL can mutate an initially harmless href/event attribute after
 		// sanitization (`<set attributeName="href" to="javascript:…">`).
@@ -75,7 +79,8 @@ enum HTMLPassthroughSanitizer {
 			}
 			let name = tag.name.lowercased()
 			if droppedWithContent.contains(name) {
-				if !tag.isClosing, !tag.isSelfClosing { scanner.skipToClosingTag(named: name) }
+				// HTML ignores a self-closing slash on these non-void elements.
+				if !tag.isClosing, name != "embed", name != "frame" { scanner.skipToClosingTag(named: name) }
 				continue
 			}
 			if droppedTags.contains(name) { continue }

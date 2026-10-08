@@ -11,6 +11,7 @@ import Testing
 		let source = """
 		- [ ] first
 		ordinary text
+
 		12. [X] second
 		  * [x] third
 		"""
