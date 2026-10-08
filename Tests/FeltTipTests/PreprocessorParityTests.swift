@@ -122,10 +122,17 @@ struct PreprocessorParityTests {
 
 			[^1]: Note text.
 			""", name: "synthetic", mismatches: &mismatches)
-		let files = try FileManager.default
+		// Twelve renders per file across the whole corpus is minutes of CPU in a
+		// debug build, enough to starve the WebKit suites running alongside.
+		// The everyday run takes the largest sample; FELTTIP_RUN_PARITY=1 (the
+		// preprocessor parity switch) covers every file.
+		var files = try FileManager.default
 			.contentsOfDirectory(at: PipelineBenchmarkTests.samplesDir, includingPropertiesForKeys: nil)
 			.filter { $0.pathExtension.lowercased() == "md" }
 			.sorted { $0.lastPathComponent < $1.lastPathComponent }
+		if ProcessInfo.processInfo.environment["FELTTIP_RUN_PARITY"] != "1" {
+			files = files.filter { $0.lastPathComponent == PipelineBenchmarkTests.largeFile.lastPathComponent }
+		}
 		for file in files {
 			check(try String(contentsOf: file, encoding: .utf8), name: file.lastPathComponent, mismatches: &mismatches)
 		}

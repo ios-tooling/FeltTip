@@ -20,16 +20,68 @@ public struct MarkdownBlockFragment: Sendable, Equatable {
 	/// The fragment's first absolute data-s stamp; nil for unstamped blocks.
 	public let firstStamp: Int?
 	/// `MarkdownBlock.contentHash` of the block this HTML was rendered from,
-	/// so a later render can reuse the fragment for an unchanged block.
-	public let blockHash: Int?
+	/// so a later render can reuse the fragment for an unchanged block. Its
+	/// `stampBase` is the absolute stamp the hash is relative to; a later
+	/// block with the same hash at another base takes this HTML with every
+	/// stamp shifted by the difference.
+	let blockHash: MarkdownBlockContentHash?
 	private let signatureCache = SignatureCache()
 
 	/// `mayContainStamps` is false for renders without source offsets, where
 	/// no fragment can carry a stamp and the scan would be wasted per block.
-	init(html: String, mayContainStamps: Bool = true, blockHash: Int? = nil) {
+	init(html: String, mayContainStamps: Bool = true, blockHash: MarkdownBlockContentHash? = nil) {
 		self.html = html
 		firstStamp = mayContainStamps ? Self.firstStamp(in: html) : nil
 		self.blockHash = blockHash
+	}
+
+	/// This fragment re-rendered for the same block content at a new stamp
+	/// base: the HTML with every `data-s` and escaped-pipe stamp shifted.
+	func rebased(to hash: MarkdownBlockContentHash) -> MarkdownBlockFragment {
+		guard let blockHash, let oldBase = blockHash.stampBase, let newBase = hash.stampBase,
+		      oldBase != newBase else {
+			return MarkdownBlockFragment(html: html, mayContainStamps: firstStamp != nil, blockHash: hash)
+		}
+		return MarkdownBlockFragment(
+			html: Self.shiftingStamps(in: html, by: newBase - oldBase),
+			mayContainStamps: true, blockHash: hash)
+	}
+
+	/// `html` with every `data-s` and `data-md-escaped-pipe-s` value moved by
+	/// `delta`. Byte-level, like `rewritingStamps`.
+	static func shiftingStamps(in html: String, by delta: Int) -> String {
+		var html = html
+		return html.withUTF8 { bytes in
+			var output: [UInt8] = []
+			output.reserveCapacity(bytes.count + 64)
+			var cursor = 0
+			var i = 0
+			// Both attributes end in `-s="`; the bytes before decide which.
+			let pipeTail = Array("data-md-escaped-pipe".utf8)
+			while i + 4 <= bytes.count {
+				if bytes[i] == 0x2D, bytes[i + 1] == 0x73, bytes[i + 2] == 0x3D, bytes[i + 3] == 0x22 {
+					let isStamp = i >= 4 && bytes[i - 4] == 0x64 && bytes[i - 3] == 0x61
+						&& bytes[i - 2] == 0x74 && bytes[i - 1] == 0x61
+						&& (i == 4 || !isAttributeNameByte(bytes[i - 5]))
+					let isPipe = i >= pipeTail.count
+						&& bytes[(i - pipeTail.count)..<i].elementsEqual(pipeTail)
+					if isStamp || isPipe, let stamp = stampValue(in: bytes, from: i + 4) {
+						output.append(contentsOf: bytes[cursor..<(i + 4)])
+						output.append(contentsOf: String(stamp.value + delta).utf8)
+						cursor = stamp.end
+						i = stamp.end
+						continue
+					}
+				}
+				i += 1
+			}
+			output.append(contentsOf: bytes[cursor...])
+			return String(decoding: output, as: UTF8.self)
+		}
+	}
+
+	private static func isAttributeNameByte(_ b: UInt8) -> Bool {
+		(b >= 0x61 && b <= 0x7A) || (b >= 0x41 && b <= 0x5A) || (b >= 0x30 && b <= 0x39) || b == 0x2D || b == 0x5F
 	}
 
 	private static let stampAttribute = Array("data-s=\"".utf8)
@@ -159,11 +211,14 @@ extension MarkdownHTMLRenderer {
 		// the same flags can take that fragment as is. Stamps and checkbox
 		// indices are part of the content, so anything an edit shifted misses.
 		let flags = (includeSourceOffsets ? 1 : 0) | (interactiveCheckboxes ? 2 : 0)
+		// Keyed by the stamp-relative hash value alone: a block that only moved
+		// matches a baseline fragment at another base and takes its HTML with
+		// the stamps shifted.
 		var reusable: [Int: MarkdownBlockFragment] = [:]
 		if let baseline {
 			reusable.reserveCapacity(baseline.count)
 			for fragment in baseline {
-				if let hash = fragment.blockHash, reusable[hash] == nil { reusable[hash] = fragment }
+				if let hash = fragment.blockHash, reusable[hash.value] == nil { reusable[hash.value] = fragment }
 			}
 		}
 		return $emitSourceOffsets.withValue(includeSourceOffsets) {
@@ -173,8 +228,8 @@ extension MarkdownHTMLRenderer {
 				for block in blocks {
 					if Task.isCancelled { break }
 					let hash = block.contentHash(flags: flags)
-					if let previous = reusable[hash] {
-						fragments.append(previous)
+					if let previous = reusable[hash.value] {
+						fragments.append(previous.blockHash == hash ? previous : previous.rebased(to: hash))
 						continue
 					}
 					fragments.append(MarkdownBlockFragment(
