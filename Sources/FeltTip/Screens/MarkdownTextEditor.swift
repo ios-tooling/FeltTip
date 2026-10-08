@@ -703,6 +703,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var geometryReplayScheduled = false
 		static let geometryWindow: CFAbsoluteTime = 0.5
 		static let editQuietPeriod: CFAbsoluteTime = 0.5
+		/// A geometry replay deferred past the edit quiet period is waiting.
+		var quietPeriodReplayPending = false
 
 		enum ViewportAnchor: Equatable {
 			case fraction(Double)
@@ -899,8 +901,27 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// Coalesced to the end of the runloop turn — TextKit can post several
 		/// frame changes while settling one layout pass.
 		func documentGeometryChanged(in scrollView: NSScrollView) {
-			guard CFAbsoluteTimeGetCurrent() - lastEditTime > Self.editQuietPeriod,
-				!isLiveScrolling, !geometryReplayScheduled else { return }
+			guard !isLiveScrolling, !geometryReplayScheduled else { return }
+			let sinceEdit = CFAbsoluteTimeGetCurrent() - lastEditTime
+			if sinceEdit <= Self.editQuietPeriod {
+				// A geometry change during the quiet period is usually the text
+				// view laying out what was just typed, and replaying then would
+				// fight the caret. But a host replacement also stamps lastEditTime,
+				// and a large document can finish its layout inside the period;
+				// dropping that change left the viewport at the top with its anchor
+				// never applied. Look again once the period has passed.
+				guard !quietPeriodReplayPending else { return }
+				quietPeriodReplayPending = true
+				let delay = Self.editQuietPeriod - sinceEdit + 0.02
+				Task { @MainActor [weak self, weak scrollView] in
+					try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+					guard let self else { return }
+					self.quietPeriodReplayPending = false
+					guard let scrollView else { return }
+					self.documentGeometryChanged(in: scrollView)
+				}
+				return
+			}
 			geometryReplayScheduled = true
 			RunLoop.main.perform { [weak self, weak scrollView] in
 				MainActor.assumeIsolated {

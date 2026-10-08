@@ -210,6 +210,9 @@ import Testing
 		#expect(script.contains("driven = { y: y, fraction: fraction"))
 		#expect(script.contains("scheduleFractionRestore(function () { return lastFraction; }"))
 		#expect(script.contains("return driven ? driven.fraction : null"))
+		// A host fraction outlives its drive until the reader scrolls, so late
+		// layout growth re-applies it instead of leaving the page at the top.
+		#expect(script.contains("return hostFraction"))
 		#expect(script.components(separatedBy: "invalidateDimensions();").count >= 3)
 	}
 

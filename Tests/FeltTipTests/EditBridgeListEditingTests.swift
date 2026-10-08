@@ -187,7 +187,11 @@ import Testing
 		])
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.lastCaretHint == 30)
-		#expect(harness.sourceSelectionReportCount > reportsBefore)
+		// The selection report follows the page's selectionchange debounce,
+		// and a test page's timers run throttled, so wait for it.
+		try await harness.waitUntil("selection report after the inserted item") {
+			harness.sourceSelectionReportCount > reportsBefore
+		}
 		#expect(harness.lastReportedSourceSelection == NSRange(location: 30, length: 0))
 		try await harness.waitQuiescent()
 		try await harness.type("third")

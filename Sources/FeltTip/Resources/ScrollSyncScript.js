@@ -28,6 +28,11 @@
   // reader last settled at, by their own scroll or a host drive. Geometry
   // changes re-apply it so the pane keeps its place without the host's help.
   var lastFraction = null;
+  // The fraction the host last drove, kept until the reader scrolls. A page
+  // can still be laying out when the host's fraction arrives (a large
+  // document under load), so the first drive lands on a short page and the
+  // content then grows under it; every geometry change re-applies this.
+  var hostFraction = null;
   var fractionRestoreTimers = [];
   // Every fraction drive — host target, resize restore, content growth —
   // goes through here. The drive is synchronous from the page's point of
@@ -39,6 +44,7 @@
     var y = fraction * scrollDimensions().maxY;
     driven = { y: y, fraction: fraction, until: Date.now() + 500, settled: true };
     lastFraction = fraction;
+    hostFraction = fraction;
     window.scrollTo(0, y);
   }
   // `fraction` is read when each timer fires, so a user scroll during the
@@ -59,6 +65,8 @@
     dimensions = null;
     if (driven && driven.fraction != null) {
       scheduleFractionRestore(function () { return driven ? driven.fraction : null; }, [80]);
+    } else if (hostFraction != null) {
+      scheduleFractionRestore(function () { return hostFraction; }, [80]);
     }
   }
   // The viewport itself changed size: WebKit keeps the old pixel offset,
@@ -161,6 +169,7 @@
     }
     cancelPendingRestore();
     lastFraction = top;
+    hostFraction = null;   // the reader took over; keep their pixel position
     var visible = Math.max(0, Math.min(1, vis / h));
     var content = vis > 0 ? Math.min(1, h / vis) : 1;
     try {
@@ -197,6 +206,7 @@
     if (!best) { return; }
     var maxY = Math.max(docHeight() - window.innerHeight, 0);
     var y = Math.max(0, Math.min(maxY, best.getBoundingClientRect().top + window.scrollY - 12));
+    hostFraction = null;
     driven = { y: y, until: Date.now() + 500 };
     window.scrollTo(0, y);
   };
@@ -224,6 +234,7 @@
       var maxY = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight;
       if (maxY >= y || Date.now() > deadline) {
         var target = Math.min(y, Math.max(maxY, 0));
+        hostFraction = null;
         driven = { y: target, until: Date.now() + 500 };
         window.scrollTo(0, target);
         if (caret != null && window.__mdPlaceCaret) {
