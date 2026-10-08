@@ -56,3 +56,59 @@ import Testing
 		#expect(MarkdownBlockFragment.shiftingStamps(in: html, by: 10).contains("data-s=\"19\""))
 	}
 }
+
+@Suite struct CodeRegionScannerTests {
+	private func ranges(_ source: String, blocksOnly: Bool = false) -> [String] {
+		MarkdownCodeProtection.ranges(in: source, blocksOnly: blocksOnly).map { (source as NSString).substring(with: $0) }
+	}
+	@Test func fencesCloseOnlyOnMatchingRuns() {
+		#expect(ranges("````\n```\nx\n```\n````\n") == ["````\n```\nx\n```\n````"])
+		#expect(ranges("~~~\n```\nx\n~~~\n") == ["~~~\n```\nx\n~~~"])
+		// A backtick in the info string makes this a paragraph line; the
+		// later fence still interrupts that paragraph.
+		#expect(ranges("```js `a`\nx\n```\n") == ["`a`", "```\n"])
+		#expect(ranges("~~~ `a`\nx\n~~~\n") == ["~~~ `a`\nx\n~~~"])
+		#expect(ranges("```\nunterminated\n") == ["```\nunterminated\n"])
+	}
+	@Test func containersBoundFences() {
+		#expect(ranges("> ```\n> a\n> ```\n\n`b`") == ["```\n> a\n> ```", "`b`"])
+		#expect(ranges("> ```\n> a\n\nafter `b`") == ["```\n> a", "`b`"])
+		#expect(ranges("- item\n\n    ```\n    a\n    ```\n") == ["```\n    a\n    ```"])
+		#expect(ranges("- item\n\n      code\n\ntext") == ["code"])
+	}
+	@Test func indentedCodeNeedsABlockBoundary() {
+		#expect(ranges("para\n    continued\n") == [])
+		#expect(ranges("# Heading\n    code\n") == ["code"])
+		#expect(ranges("para\n\n    one\n\n    two\ntext") == ["one\n\n    two"])
+		#expect(ranges("\tcode\n") == ["code"])
+	}
+	@Test func htmlBlocksHoldLiteralBackticks() {
+		#expect(ranges("<div>\n`a`\n</div>\n\n`b`") == ["`b`"])
+		#expect(ranges("<pre>\n`a`\n\n`still`\n</pre>\n`b`") == ["`b`"])
+		#expect(ranges("<!-- `a`\n\n`b` -->\n`c`") == ["`c`"])
+		#expect(ranges("<custom>\n`a`\n\n`b`") == ["`b`"])
+		#expect(ranges("text\n<custom>\n`a`") == ["`a`"])
+	}
+	@Test func spansFollowCommonMarkPairing() {
+		#expect(ranges("``a ` b`` and `c`") == ["``a ` b``", "`c`"])
+		#expect(ranges("`first closes `here` not") == ["`first closes `"])
+		#expect(ranges("\\`a `b`") == ["`b`"])
+		#expect(ranges("`a\nb` c") == ["`a\nb`"])
+		#expect(ranges("`a\n\nb `c`") == ["`c`"])
+		#expect(ranges("# `h`\n`p`") == ["`h`", "`p`"])
+		#expect(ranges("- `a\n  b`\n- `c`") == ["`a\n  b`", "`c`"])
+	}
+	@Test func tablesScanEachCell() {
+		#expect(ranges("| a | b |\n|---|---|\n| x`s | y |\n| `c` | z` |") == ["`c`"])
+		#expect(ranges("a | b\n--- | ---\n`x | y`") == [])
+		#expect(ranges("| h |\n|---|\n| `a\\|b` |") == ["`a\\|b`"])
+	}
+	@Test func setextHeadingsAndQuotedListsBoundCode() {
+		#expect(ranges("Title\n------\n    code\n") == ["code"])
+		#expect(ranges("- item\n    > quoted\n\n    *not code*\n") == [])
+		#expect(ranges("- item\n\n  > ```\n  > a\n  > ```\n") == ["```\n  > a\n  > ```"])
+	}
+	@Test func blocksOnlySkipsSpans() {
+		#expect(ranges("`a`\n\n```\nb\n```", blocksOnly: true) == ["```\nb\n```"])
+	}
+}
