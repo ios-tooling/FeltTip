@@ -23,8 +23,9 @@ enum HTMLTableParser {
 		var alignments: [TableColumnAlignment] = []
 
 		for (index, rawRow) in rawRows.enumerated() {
-			let isHeader = index == 0 && rawRow.lowercased().contains("<th")
-			let rawCells = splitTagWithOpening(rawRow, tag: isHeader ? "th" : "td")
+			let rawCells = splitTagWithOpening(rawRow, tag: "(?:th|td)")
+			let isHeader = index == 0 && !rawCells.isEmpty
+				&& rawCells.allSatisfy { $0.opening.lowercased().hasPrefix("<th") }
 			let cells = rawCells.map { cellContent(from: $0.body) }
 			if isHeader {
 				header = cells
@@ -93,13 +94,10 @@ enum HTMLTableParser {
 			return .image(source: img.src, alt: img.alt, link: nil, width: img.width, height: img.height)
 		}
 
-		if let link = HTMLAttributeParser.extractLink(from: trimmed) {
-			let text = HTMLAttributeParser.stripTags(link.inner).trimmingCharacters(in: .whitespacesAndNewlines)
-			var str = AttributedString(text.isEmpty ? link.href : text)
-			if let url = URL(string: link.href) { str.link = url }
-			return .text(str)
+		if let paragraph = HTMLInlineConverter.buildParagraph(from: trimmed, preservingWhitespace: true) {
+			return .text(paragraph.text)
 		}
 
-		return .text(AttributedString(HTMLAttributeParser.decodeEntities(HTMLAttributeParser.stripTags(trimmed))))
+		return .text(HTMLInlineConverter.attributedHTML(trimmed))
 	}
 }

@@ -231,7 +231,7 @@ enum HTMLInlineConverter {
 		options: []
 	)
 
-	private static func buildParagraph(from html: String) -> (text: AttributedString, links: [LinkInfo])? {
+	static func buildParagraph(from html: String, preservingWhitespace: Bool = false) -> (text: AttributedString, links: [LinkInfo])? {
 		let ns = html as NSString
 		let matches = HTMLAttributeParser.Patterns.anchor.matches(in: html, range: NSRange(location: 0, length: ns.length))
 		guard !matches.isEmpty else { return nil }
@@ -242,15 +242,15 @@ enum HTMLInlineConverter {
 
 		for (i, match) in matches.enumerated() {
 			let beforeHTML = ns.substring(with: NSRange(location: lastEnd, length: match.range.location - lastEnd))
-			let beforeAttr = attributedHTML(HTMLAttributeParser.collapseWhitespace(beforeHTML))
+			let beforeAttr = attributedHTML(preservingWhitespace ? beforeHTML : HTMLAttributeParser.collapseWhitespace(beforeHTML))
 			if !String(beforeAttr.characters).isEmpty {
 				result += beforeAttr
-				result += AttributedString(" ")
+				if !preservingWhitespace { result += AttributedString(" ") }
 			} else if i > 0 {
-				result += AttributedString(" ")
+				if !preservingWhitespace { result += AttributedString(" ") }
 			}
 
-			let href = HTMLAttributeParser.decodeEntities(ns.substring(with: match.range(at: 1)))
+			let href = HTMLAttributeParser.extractAttribute("href", from: ns.substring(with: match.range(at: 1)))
 			let inner = ns.substring(with: match.range(at: 2))
 
 			// Preserve italic/bold/etc. inside the link label; fall back to the
@@ -262,11 +262,13 @@ enum HTMLInlineConverter {
 				labelAttr = AttributedString(alt.isEmpty ? "link" : alt)
 			}
 
-			if let url = URL(string: href) {
+			if let href, let url = URL(string: href) {
 				let offset = result.characters.count
 				labelAttr.link = url
 				result += labelAttr
 				links.append(LinkInfo(url: href, characterOffset: offset))
+			} else {
+				result += labelAttr
 			}
 
 			lastEnd = match.range.location + match.range.length
@@ -274,9 +276,9 @@ enum HTMLInlineConverter {
 
 		if lastEnd < ns.length {
 			let afterHTML = ns.substring(from: lastEnd)
-			let afterAttr = attributedHTML(HTMLAttributeParser.collapseWhitespace(afterHTML))
+			let afterAttr = attributedHTML(preservingWhitespace ? afterHTML : HTMLAttributeParser.collapseWhitespace(afterHTML))
 			if !String(afterAttr.characters).isEmpty {
-				result += AttributedString(" ")
+				if !preservingWhitespace { result += AttributedString(" ") }
 				result += afterAttr
 			}
 		}

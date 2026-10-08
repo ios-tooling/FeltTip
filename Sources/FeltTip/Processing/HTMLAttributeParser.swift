@@ -30,77 +30,52 @@ public enum HTMLAttributeParser {
 
 	// MARK: - Extraction
 
+
 	static func extractLinkedImage(from html: String) -> LinkedImageInfo? {
-		let ns = html as NSString
-		let range = NSRange(location: 0, length: ns.length)
-		guard let match = Patterns.linkedImage.firstMatch(in: html, range: range) else { return nil }
-		let href = decodeEntities(ns.substring(with: match.range(at: 1)))
-		let src = decodeEntities(ns.substring(with: match.range(at: 2)))
-		let alt = extractAttribute("alt", from: html) ?? ""
-		let (w, h) = extractDimensions(from: html)
-		return LinkedImageInfo(href: href, src: src, alt: alt, width: w, height: h)
+		guard let link = extractLink(from: html), let image = extractImage(from: link.inner) else { return nil }
+		return LinkedImageInfo(href: link.href, src: image.src, alt: image.alt, width: image.width, height: image.height)
 	}
 
 	static func extractImage(from html: String) -> ImageInfo? {
 		let ns = html as NSString
-		let range = NSRange(location: 0, length: ns.length)
-		guard let match = Patterns.imgSrc.firstMatch(in: html, range: range) else { return nil }
-		let src = decodeEntities(ns.substring(with: match.range(at: 1)))
-		let alt = extractAttribute("alt", from: html) ?? ""
-		let (w, h) = extractDimensions(from: html)
-		return ImageInfo(src: src, alt: alt, width: w, height: h)
+		guard let match = Patterns.imgSrc.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)) else { return nil }
+		let tag = ns.substring(with: match.range)
+		guard let src = extractAttribute("src", from: tag) else { return nil }
+		let (width, height) = extractDimensions(from: tag)
+		return ImageInfo(src: src, alt: extractAttribute("alt", from: tag) ?? "", width: width, height: height)
 	}
 
 	static func extractLink(from html: String) -> LinkInfo? {
 		let ns = html as NSString
-		guard let match = Patterns.anchor.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)) else { return nil }
-		return LinkInfo(href: decodeEntities(ns.substring(with: match.range(at: 1))), inner: ns.substring(with: match.range(at: 2)))
+		guard let match = Patterns.anchor.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)),
+		      let href = extractAttribute("href", from: ns.substring(with: match.range(at: 1))) else { return nil }
+		return LinkInfo(href: href, inner: ns.substring(with: match.range(at: 2)))
 	}
 
+	/// Scan complete attributes, consuming quoted values as a unit so names
+	/// embedded in data attributes or other values cannot become real attributes.
 	static func extractAttribute(_ name: String, from html: String) -> String? {
 		let ns = html as NSString
-		let range = NSRange(location: 0, length: ns.length)
-		guard let patterns = attributePatterns(for: name) else { return nil }
-		if let match = patterns.quoted.firstMatch(in: html, range: range) {
-			return decodeEntities(ns.substring(with: match.range(at: 1)))
-		}
-		// Unquoted: width=300
-		if let match = patterns.unquoted.firstMatch(in: html, range: range) {
-			return decodeEntities(ns.substring(with: match.range(at: 1)))
+		for match in attributePattern.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+			guard ns.substring(with: match.range(at: 1)).lowercased() == name.lowercased() else { continue }
+			for group in 2...4 where match.range(at: group).location != NSNotFound {
+				return decodeEntities(ns.substring(with: match.range(at: group)))
+			}
 		}
 		return nil
 	}
 
-	/// Attribute regexes compiled once per attribute name. This is called
-	/// several times per `<img>` tag on every render; compiling per call made a
-	/// badge-heavy README pay thousands of regex compiles per keystroke.
-	private static let attributePatternLock = NSLock()
-	nonisolated(unsafe) private static var attributePatternCache:
-		[String: (quoted: NSRegularExpression, unquoted: NSRegularExpression)] = [:]
-
-	private static func attributePatterns(
-		for name: String
-	) -> (quoted: NSRegularExpression, unquoted: NSRegularExpression)? {
-		attributePatternLock.withLock {
-			if let cached = attributePatternCache[name] { return cached }
-			let escaped = NSRegularExpression.escapedPattern(for: name)
-			guard let quoted = try? NSRegularExpression(
-					pattern: "\(escaped)=[\"']([^\"']*)[\"']", options: .caseInsensitive),
-			      let unquoted = try? NSRegularExpression(
-					pattern: "\(escaped)=(\\S+)", options: .caseInsensitive) else { return nil }
-			attributePatternCache[name] = (quoted, unquoted)
-			return (quoted, unquoted)
-		}
-	}
+	private static let attributePattern = try! NSRegularExpression(
+		pattern: #"\s+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+))"#
+	)
 
 	static func extractDimensions(from html: String) -> (width: CGFloat?, height: CGFloat?) {
-		let ns = html as NSString
-		let range = NSRange(location: 0, length: ns.length)
-		let w = Patterns.width.firstMatch(in: html, range: range)
-			.flatMap { Double(ns.substring(with: $0.range(at: 1))) }.map { CGFloat($0) }
-		let h = Patterns.height.firstMatch(in: html, range: range)
-			.flatMap { Double(ns.substring(with: $0.range(at: 1))) }.map { CGFloat($0) }
-		return (w, h)
+		func dimension(_ name: String) -> CGFloat? {
+			guard let value = extractAttribute(name, from: html),
+			      let number = Double(value.prefix { $0.isNumber }) else { return nil }
+			return CGFloat(number)
+		}
+		return (dimension("width"), dimension("height"))
 	}
 
 	// MARK: - Text Helpers
@@ -176,18 +151,13 @@ public enum HTMLAttributeParser {
 	// MARK: - Compiled Patterns
 
 	enum Patterns {
+
 		static let imgSrc = try! NSRegularExpression(
-			pattern: "<img[^>]*src=[\"']([^\"']+)[\"'][^>]*>", options: .caseInsensitive)
+			pattern: #"<img\b(?:[^>"']|"[^"]*"|'[^']*')*>"#, options: .caseInsensitive)
+		// Group 1 is the whole opening tag; callers use exact attribute extraction.
 		static let anchor = try! NSRegularExpression(
-			pattern: "<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
+			pattern: #"(<a\b(?:[^>"']|"[^"]*"|'[^']*')*>)(.*?)</a\s*>"#,
 			options: [.caseInsensitive, .dotMatchesLineSeparators])
-		static let linkedImage = try! NSRegularExpression(
-			pattern: "<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>\\s*<img[^>]*src=[\"']([^\"']+)[\"'][^>]*>\\s*</a>",
-			options: [.caseInsensitive, .dotMatchesLineSeparators])
-		static let width = try! NSRegularExpression(
-			pattern: #"\bwidth=["']?(\d+)"#, options: .caseInsensitive)
-		static let height = try! NSRegularExpression(
-			pattern: #"\bheight=["']?(\d+)"#, options: .caseInsensitive)
 		static let pTag = try! NSRegularExpression(
 			pattern: "<p([^>]*)>(.*?)</p>", options: [.caseInsensitive, .dotMatchesLineSeparators])
 		static let align = try! NSRegularExpression(
