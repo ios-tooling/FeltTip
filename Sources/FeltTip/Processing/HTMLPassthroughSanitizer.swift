@@ -61,7 +61,7 @@ enum HTMLPassthroughSanitizer {
 				continue
 			}
 			if scanner.matches("<!--") {
-				result += scanner.consumeComment()      // comments can't execute
+				result += scanner.consumeComment()
 				continue
 			}
 			if scanner.matches("<!") || scanner.matches("<?") {
@@ -111,6 +111,8 @@ enum HTMLPassthroughSanitizer {
 	}
 
 	private static func allows(attribute name: String, value: String?) -> Bool {
+		// Source-position metadata belongs to the renderer, never document HTML.
+		if name == "data-s" || name == "data-md-escaped-pipe-s" { return false }
 		// Event handlers, in any casing, on any element.
 		if name.hasPrefix("on") { return false }
 		// CSS can initiate arbitrary remote loads and can visually replace the
@@ -182,7 +184,9 @@ enum HTMLPassthroughSanitizer {
 			while let character = peek() {
 				text.append(character)
 				advance()
-				if text.hasSuffix("-->") { break }
+				// HTML also closes comments with --!> and the abrupt empty
+				// forms <!--> / <!--->. Stop there so following tags are sanitized.
+				if text.hasSuffix("-->") || text.hasSuffix("--!>") { break }
 			}
 			return text
 		}

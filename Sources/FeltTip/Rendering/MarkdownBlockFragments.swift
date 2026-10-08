@@ -47,112 +47,111 @@ public struct MarkdownBlockFragment: Sendable, Equatable {
 			mayContainStamps: true, blockHash: hash)
 	}
 
-	/// `html` with every `data-s` and `data-md-escaped-pipe-s` value moved by
-	/// `delta`. Byte-level, like `rewritingStamps`.
-	static func shiftingStamps(in html: String, by delta: Int) -> String {
-		var html = html
-		return html.withUTF8 { bytes in
-			var output: [UInt8] = []
-			output.reserveCapacity(bytes.count + 64)
-			var cursor = 0
-			var i = 0
-			// Both attributes end in `-s="`; the bytes before decide which.
-			let pipeTail = Array("data-md-escaped-pipe".utf8)
-			while i + 4 <= bytes.count {
-				if bytes[i] == 0x2D, bytes[i + 1] == 0x73, bytes[i + 2] == 0x3D, bytes[i + 3] == 0x22 {
-					let isStamp = i >= 4 && bytes[i - 4] == 0x64 && bytes[i - 3] == 0x61
-						&& bytes[i - 2] == 0x74 && bytes[i - 1] == 0x61
-						&& (i == 4 || !isAttributeNameByte(bytes[i - 5]))
-					let isPipe = i >= pipeTail.count
-						&& bytes[(i - pipeTail.count)..<i].elementsEqual(pipeTail)
-					if isStamp || isPipe, let stamp = stampValue(in: bytes, from: i + 4) {
-						output.append(contentsOf: bytes[cursor..<(i + 4)])
-						output.append(contentsOf: String(stamp.value + delta).utf8)
-						cursor = stamp.end
-						i = stamp.end
+	private static let escapedPipeAttribute = Array("data-md-escaped-pipe-s=\"".utf8)
+
+	/// Only actual tag attributes are stamps: text, comments, and attribute
+	/// values can also contain the literal spelling `data-s="..."`.
+	private static func stamps(in bytes: UnsafeBufferPointer<UInt8>, firstOnly: Bool = false) -> [(value: Int, start: Int, end: Int, pipe: Bool)] {
+		var result: [(value: Int, start: Int, end: Int, pipe: Bool)] = []
+		var inTag = false
+		var quote: UInt8?
+		var i = 0
+		while i < bytes.count {
+			let byte = bytes[i]
+			if let delimiter = quote {
+				if byte == delimiter { quote = nil }
+			} else if !inTag {
+				if byte == 0x3C {
+					if i + 4 <= bytes.count, bytes[i..<(i + 4)].elementsEqual("<!--".utf8) {
+						i += 4
+						if i < bytes.count, bytes[i] == 0x3E { i += 1; continue }
+						if i + 1 < bytes.count, bytes[i] == 0x2D, bytes[i + 1] == 0x3E { i += 2; continue }
+						while i < bytes.count {
+							if i + 3 <= bytes.count, bytes[i..<(i + 3)].elementsEqual("-->".utf8) { i += 3; break }
+							if i + 4 <= bytes.count, bytes[i..<(i + 4)].elementsEqual("--!>".utf8) { i += 4; break }
+							i += 1
+						}
 						continue
 					}
+					inTag = true
 				}
-				i += 1
-			}
-			output.append(contentsOf: bytes[cursor...])
-			return String(decoding: output, as: UTF8.self)
-		}
-	}
-
-	private static func isAttributeNameByte(_ b: UInt8) -> Bool {
-		(b >= 0x61 && b <= 0x7A) || (b >= 0x41 && b <= 0x5A) || (b >= 0x30 && b <= 0x39) || b == 0x2D || b == 0x5F
-	}
-
-	private static let stampAttribute = Array("data-s=\"".utf8)
-
-	/// Index just past the next `data-s="` at or after `start`, or nil.
-	private static func nextStampAttribute(
-		in bytes: UnsafeBufferPointer<UInt8>, from start: Int
-	) -> Int? {
-		let needle = stampAttribute
-		let limit = bytes.count - needle.count
-		var i = start
-		while i <= limit {
-			if bytes[i] == 0x64, // 'd'
-			   bytes[i + 1] == 0x61, bytes[i + 2] == 0x74, bytes[i + 3] == 0x61,
-			   bytes[i + 4] == 0x2D, bytes[i + 5] == 0x73, bytes[i + 6] == 0x3D,
-			   bytes[i + 7] == 0x22 {
-				return i + needle.count
+			} else if byte == 0x3E {
+				inTag = false
+			} else if byte == 0x22 || byte == 0x27 {
+				quote = byte
+			} else if byte == 0x64, i > 0 {
+				let previous = bytes[i - 1]
+				if previous == 32 || previous == 9 || previous == 10 || previous == 12 || previous == 13 {
+					let ordinary = i + 8 <= bytes.count
+						&& bytes[i + 1] == 0x61 && bytes[i + 2] == 0x74 && bytes[i + 3] == 0x61
+						&& bytes[i + 4] == 0x2D && bytes[i + 5] == 0x73 && bytes[i + 6] == 0x3D && bytes[i + 7] == 0x22
+					let pipe = !ordinary && i + escapedPipeAttribute.count <= bytes.count
+						&& bytes[i..<(i + escapedPipeAttribute.count)].elementsEqual(escapedPipeAttribute)
+					if ordinary || pipe {
+						let start = i + (ordinary ? 8 : escapedPipeAttribute.count)
+						if let stamp = stampValue(in: bytes, from: start) {
+							result.append((stamp.value, start, stamp.end, pipe))
+							if firstOnly && !pipe { return result }
+							// The validated number ends at its closing quote. Skip the
+							// whole attribute so it isn't scanned again byte by byte.
+							i = stamp.end
+						}
+					}
+				}
 			}
 			i += 1
 		}
-		return nil
+		return result
 	}
 
-	/// Digits at `start` up to a closing quote: the stamp value and the index
-	/// of that quote. Nil unless the attribute is exactly `"<digits>"`.
 	private static func stampValue(
 		in bytes: UnsafeBufferPointer<UInt8>, from start: Int
 	) -> (value: Int, end: Int)? {
 		var index = start
 		var value = 0
-		var sawDigit = false
 		while index < bytes.count, bytes[index] >= 0x30, bytes[index] <= 0x39 {
-			value = value &* 10 &+ Int(bytes[index] - 0x30)
-			sawDigit = true
+			let (scaled, multiplyOverflow) = value.multipliedReportingOverflow(by: 10)
+			let (next, addOverflow) = scaled.addingReportingOverflow(Int(bytes[index] - 0x30))
+			guard !multiplyOverflow, !addOverflow else { return nil }
+			value = next
 			index += 1
 		}
-		guard sawDigit, index < bytes.count, bytes[index] == 0x22 else { return nil }
+		guard index > start, index < bytes.count, bytes[index] == 0x22 else { return nil }
 		return (value, index)
 	}
 
-	/// The first stamp in `html`, found with a byte scan. The regex this
-	/// replaced bridged every fragment to NSString and ran ICU per block on
-	/// every render.
 	static func firstStamp(in html: String) -> Int? {
 		var html = html
-		return html.withUTF8 { bytes in
-			var searchStart = 0
-			while let valueStart = nextStampAttribute(in: bytes, from: searchStart) {
-				if let stamp = stampValue(in: bytes, from: valueStart) { return stamp.value }
-				searchStart = valueStart
-			}
-			return nil
+		return html.withUTF8 { bytes in stamps(in: bytes, firstOnly: true).first(where: { !$0.pipe })?.value }
+	}
+
+	static func shiftingStamps(in html: String, by delta: Int) -> String {
+		transformStamps(in: html, includingPipes: true) { value in
+			let (shifted, overflow) = value.addingReportingOverflow(delta)
+			return overflow ? nil : shifted
 		}
 	}
 
-	/// `html` with every `data-s` value rewritten relative to `base`. Works on
-	/// bytes and splices ASCII digits, so the result decodes as valid UTF-8.
 	static func rewritingStamps(in html: String, base: Int) -> String {
+		transformStamps(in: html, includingPipes: false) { value in
+			let (relative, overflow) = value.subtractingReportingOverflow(base)
+			return overflow ? nil : relative
+		}
+	}
+
+	private static func transformStamps(
+		in html: String, includingPipes: Bool, transform: (Int) -> Int?
+	) -> String {
 		var html = html
 		return html.withUTF8 { bytes in
 			var output: [UInt8] = []
-			output.reserveCapacity(bytes.count)
+			output.reserveCapacity(bytes.count + 64)
 			var cursor = 0
-			var searchStart = 0
-			while let valueStart = nextStampAttribute(in: bytes, from: searchStart) {
-				searchStart = valueStart
-				guard let stamp = stampValue(in: bytes, from: valueStart) else { continue }
-				output.append(contentsOf: bytes[cursor..<valueStart])
-				output.append(contentsOf: String(stamp.value - base).utf8)
+			for stamp in stamps(in: bytes) where includingPipes || !stamp.pipe {
+				guard let value = transform(stamp.value) else { continue }
+				output.append(contentsOf: bytes[cursor..<stamp.start])
+				output.append(contentsOf: String(value).utf8)
 				cursor = stamp.end
-				searchStart = stamp.end
 			}
 			output.append(contentsOf: bytes[cursor...])
 			return String(decoding: output, as: UTF8.self)

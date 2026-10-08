@@ -78,26 +78,17 @@ final class InlineParagraphMemo: @unchecked Sendable {
 
 	/// The build context for one document. Link reference definitions are the
 	/// only part of a document outside a paragraph that changes how its
-	/// inline content parses, so they are folded into the key.
+	/// inline content parses. Return nil when references may be present.
 	static func context(
 		theme: MarkdownTheme, fontSize: CGFloat, linkifyURLs: Bool, stamped: Bool,
 		processedText: String
-	) -> String {
-		var definitions = ""
-		if DocumentScan.containsASCII("]:", in: processedText) {
-			let range = NSRange(processedText.startIndex..., in: processedText)
-			for match in referenceDefinitionPattern.matches(in: processedText, range: range) {
-				if let lineRange = Range(match.range, in: processedText) {
-					definitions += processedText[lineRange]
-					definitions += "\n"
-				}
-			}
-		}
-		return "\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(stamped)|\(definitions)"
+	) -> String? {
+		// cmark permits multiline definitions and definitions inside containers.
+		// Until its resolved reference table is available here, bypass memoization
+		// for potential definition documents rather than approximate that grammar.
+		guard !DocumentScan.containsASCII("]:", in: processedText) else { return nil }
+		return "\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(stamped)"
 	}
-
-	private static let referenceDefinitionPattern = try! NSRegularExpression(
-		pattern: #"(?m)^ {0,3}\[[^\]\n]+\]:[^\n]*"#)
 
 	/// `attributed` with every source stamp moved by `delta`.
 	static func shiftingStamps(_ attributed: AttributedString, by delta: Int) -> AttributedString {

@@ -32,7 +32,10 @@ enum MarkdownFenceRangeTracker {
 		for index in ranges.indices {
 			let fence = ranges[index]
 			let fenceEnd = fence.location + fence.length
-			if oldEnd <= fence.location {
+			// An edit ending at the opening marker may remove its leading
+			// newline or insert a prefix, turning the fence into inline text.
+			if oldEnd == fence.location { return nil }
+			if oldEnd < fence.location {
 				ranges[index].location += delta
 			} else if editedRange.location >= fenceEnd {
 				// An unterminated final fence reaches EOF. Appending at that

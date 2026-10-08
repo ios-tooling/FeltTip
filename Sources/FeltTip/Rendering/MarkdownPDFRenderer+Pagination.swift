@@ -59,7 +59,7 @@ extension MarkdownPDFRenderer {
 			}),
 			let provider = CGDataProvider(data: data as CFData),
 			let slice = CGPDFDocument(provider)?.page(at: 1)
-			else { return }
+			else { return false }
 
 			ctx.beginPDFPage(nil)
 			ctx.saveGState()
@@ -83,6 +83,7 @@ extension MarkdownPDFRenderer {
 				ctx.setURL(link.url as CFURL, for: rect)
 			}
 			ctx.endPDFPage()
+			return true
 		}
 
 		ctx.closePDF()
@@ -180,13 +181,13 @@ extension MarkdownPDFRenderer {
 		tops: [CGFloat],
 		contentHeight: CGFloat,
 		printHeight: CGFloat,
-		capture: (CGFloat, CGFloat) async -> Void
+		capture: (CGFloat, CGFloat) async -> Bool
 	) async -> Bool {
 		for (index, top) in tops.enumerated() {
 			guard !Task.isCancelled else { return false }
 			let nextTop = index + 1 < tops.count
 				? tops[index + 1] : contentHeight
-			await capture(top, min(printHeight, nextTop - top))
+			guard await capture(top, min(printHeight, nextTop - top)) else { return false }
 			guard !Task.isCancelled else { return false }
 		}
 		return true

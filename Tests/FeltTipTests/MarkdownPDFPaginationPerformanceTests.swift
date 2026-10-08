@@ -121,6 +121,7 @@ import Testing
 				captures.append((top, height))
 				withUnsafeCurrentTask { $0?.cancel() }
 				await Task.yield()
+				return true
 			}
 		}
 		let completed = await captureTask.value
