@@ -367,6 +367,6 @@ final class CoordinatorBridgeHarness {
 			let windows = -1
 		#endif
 		Issue.record(
-			"timed out waiting for \(label) (live harnesses: \(Self.liveCount), app windows: \(windows))")
+			"timed out waiting for \(label) (coordinator #\(coordinator.debugTag), live harnesses: \(Self.liveCount), app windows: \(windows))")
 	}
 }

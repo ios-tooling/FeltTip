@@ -1160,11 +1160,13 @@ extension MarkdownWebView {
 				return
 			}
 			let renderService = renderService
+			let renderRequestedAt = CFAbsoluteTimeGetCurrent()
 			renderTask = Task { @MainActor [weak self, weak webView] in
 				let rendered: MarkdownRenderService.DocumentHTML
 				if let prepared = await preparedRender?.result(matching: preparedConfiguration) {
 					rendered = prepared
 				} else {
+					self?.log("render task started after \(Int((CFAbsoluteTimeGetCurrent() - renderRequestedAt) * 1000)) ms")
 					rendered = await renderService.documentHTML(
 						markdown: text, theme: theme, fontSize: fontSize,
 						includeSourceOffsets: includeOffsets, interactiveCheckboxes: checkboxes,
@@ -1177,6 +1179,7 @@ extension MarkdownWebView {
 				self.lastFragments = rendered.fragments
 				self.exactFragmentText = text
 				self.reportInitialRenderProgress(0.25)
+				self.log("navigate: htmlLen=\(rendered.html.utf8.count) after \(Int((CFAbsoluteTimeGetCurrent() - renderRequestedAt) * 1000)) ms")
 				// Load under the custom resource scheme (when we have a document
 				// folder) so relative <img> paths resolve to the scheme handler,
 				// which can actually read local files — WKWebView won't load
@@ -1199,11 +1202,13 @@ extension MarkdownWebView {
 		// MARK: Navigation
 
 		public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+			log("didCommit")
 			guard navigation === initialDocumentNavigation else { return }
 			reportInitialRenderProgress(0.75)
 		}
 
 		public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+			log("didFinish")
 			completePageSetup(in: webView)
 		}
 
@@ -1290,6 +1295,7 @@ extension MarkdownWebView {
 			didFail navigation: WKNavigation!,
 			withError error: any Error
 		) {
+			log("didFail: \(error)")
 			isNavigating = false
 			finishInitialRenderIfNeeded()
 		}
@@ -1299,6 +1305,7 @@ extension MarkdownWebView {
 			didFailProvisionalNavigation navigation: WKNavigation!,
 			withError error: any Error
 		) {
+			log("didFailProvisionalNavigation: \(error)")
 			isNavigating = false
 			finishInitialRenderIfNeeded()
 		}
@@ -1549,9 +1556,13 @@ extension MarkdownWebView {
 
 		/// The message is an autoclosure: call sites interpolate whole-document
 		/// values (lengths, dictionaries) and must cost nothing when logging is off.
+		/// Short per-instance tag so concurrent coordinators (every test page)
+		/// can be told apart in the debug log.
+		var debugTag: String { String(UInt(bitPattern: ObjectIdentifier(self).hashValue) % 100_000) }
+
 		func log(_ message: @autoclosure () -> String) {
 			guard Self.debugEditing else { return }
-			let text = message()
+			let text = "#\(debugTag) \(message())"
 			print("[MarkdownWebView] \(text)")
 			NSLog("[MarkdownWebView] %@", text)
 		}
