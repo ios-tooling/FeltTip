@@ -11,6 +11,14 @@ import WebKit
 			if let completionHandler { completions.append(completionHandler) }
 		}
 	}
+	@Test func navigationButtonsHaveAccessibleLabels() {
+		let host = MarkdownWebViewFindHost(webView: DelayedWebView())
+		let labels = host.subviews.flatMap(\.subviews).compactMap {
+			($0 as? NSButton)?.accessibilityLabel()
+		}
+		#expect(labels.contains("Previous match"))
+		#expect(labels.contains("Next match"))
+	}
 	@Test func clearingSearchDiscardsPendingCount() {
 		let web = DelayedWebView()
 		let host = MarkdownWebViewFindHost(webView: web)

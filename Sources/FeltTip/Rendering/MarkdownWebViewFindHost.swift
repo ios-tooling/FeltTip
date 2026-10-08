@@ -39,8 +39,8 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 
 	private let bar = NSVisualEffectView()
 	private let searchField = NSSearchField()
-	private lazy var previousButton = chevronButton(system: "chevron.up", action: #selector(findPrevious))
-	private lazy var nextButton = chevronButton(system: "chevron.down", action: #selector(findNext))
+	private lazy var previousButton = chevronButton(system: "chevron.up", label: "Previous match", action: #selector(findPrevious))
+	private lazy var nextButton = chevronButton(system: "chevron.down", label: "Next match", action: #selector(findNext))
 	private lazy var doneButton = NSButton(title: "Done", target: self, action: #selector(dismissBar))
 	let matchCountLabel = NSTextField(labelWithString: "")
 	var matchCountGeneration = 0
@@ -279,9 +279,10 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 		addSubview(bar)
 	}
 
-	private func chevronButton(system name: String, action: Selector) -> NSButton {
+	private func chevronButton(system name: String, label: String, action: Selector) -> NSButton {
 		let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage()
 		let button = NSButton(image: image, target: self, action: action)
+		button.setAccessibilityLabel(label)
 		button.bezelStyle = .accessoryBarAction
 		button.controlSize = .small
 		return button
