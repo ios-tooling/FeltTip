@@ -103,6 +103,8 @@ struct SourceOffsetConverter {
 		processedUTF16[range]
 	}
 
+	var processedUTF16Count: Int { processedUTF16.count }
+
 	/// Processed-text UTF-16 offsets of a source location pair, when both map.
 	func processedRange(
 		lowerLine: Int, lowerColumn: Int, upperLine: Int, upperColumn: Int

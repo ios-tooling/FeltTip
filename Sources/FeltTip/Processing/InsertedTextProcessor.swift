@@ -51,6 +51,11 @@ public enum InsertedTextProcessor {
 					i = line.index(after: close); continue
 				}
 			}
+			if let end = MarkdownCodeProtection.protectedInlineToken(in: line, at: i) {
+				if !pending.isEmpty { pieces.append(replaceInPlain(pending)); pending = "" }
+				pieces.append(String(line[i..<end]))
+				i = end; continue
+			}
 			pending.append(ch)
 			i = line.index(after: i)
 		}

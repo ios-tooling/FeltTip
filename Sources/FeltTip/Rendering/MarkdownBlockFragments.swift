@@ -78,7 +78,13 @@ public struct MarkdownBlockFragment: Sendable, Equatable {
 			} else if byte == 0x3E {
 				inTag = false
 			} else if byte == 0x22 || byte == 0x27 {
-				quote = byte
+				// Only a value's opening quote starts quoted state: an
+				// apostrophe in an unquoted value (`title=it's`) must not
+				// swallow the rest of the fragment.
+				var previous = i - 1
+				while previous >= 0, bytes[previous] == 0x20 || bytes[previous] == 0x09
+					|| bytes[previous] == 0x0A || bytes[previous] == 0x0D { previous -= 1 }
+				if previous >= 0, bytes[previous] == 0x3D { quote = byte }
 			} else if byte == 0x64, i > 0 {
 				let previous = bytes[i - 1]
 				if previous == 32 || previous == 9 || previous == 10 || previous == 12 || previous == 13 {

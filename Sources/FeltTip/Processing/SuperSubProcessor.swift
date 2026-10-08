@@ -57,6 +57,11 @@ public enum SuperSubProcessor {
 					i = line.index(after: close); continue
 				}
 			}
+			if let end = MarkdownCodeProtection.protectedInlineToken(in: line, at: i) {
+				if !pending.isEmpty { pieces.append(applyMarkers(pending)); pending = "" }
+				pieces.append(String(line[i..<end]))
+				i = end; continue
+			}
 			// Pass HTML tags through verbatim. A `~` inside an attribute value
 			// (e.g. a URL with `~user`) must not pair with another `~` elsewhere
 			// on the line — that would mangle the tag into `<sub>` markup and

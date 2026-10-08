@@ -7,8 +7,8 @@ import Foundation
 import Markdown
 
 public enum MarkdownLinkRewriter {
-	/// Replaces the destination of the `occurrence`-th parsed link whose
-	/// destination equals `currentURL`. Returns nil when the source spelling
+	/// Replaces the destination of the `occurrence`-th parsed link or image
+	/// whose destination equals `currentURL`. Returns nil when the source spelling
 	/// cannot be changed safely. Reference links update their shared definition.
 	public static func replacingDestination(in source: String, currentURL: String, occurrence: Int, with newURL: String) -> String? {
 		guard occurrence >= 0, !currentURL.isEmpty, !newURL.isEmpty else { return nil }
@@ -61,8 +61,10 @@ public enum MarkdownLinkRewriter {
 		let converter = SourceOffsetConverter(body)
 		var links: [ParsedLink] = []
 		func walk(_ node: any Markup) {
-			if let link = node as? Markdown.Link, let destination = link.destination {
-				let range = link.range.flatMap { range in
+			// Hosts edit image sources through the same command as link URLs.
+			let destination = (node as? Markdown.Link)?.destination ?? (node as? Markdown.Image)?.source
+			if let destination {
+				let range = node.range.flatMap { range in
 					converter.processedRange(
 						lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 						upperLine: range.upperBound.line, upperColumn: range.upperBound.column)

@@ -226,6 +226,13 @@
     boundaryNextCharacterOffset, boundaryNextCharacter
   ) {
     cancelPendingRestore();
+    // The placement may be deferred until layout; take the host's one-shot
+    // placement flags now so an intervening placement cannot consume them,
+    // and a cancelled restore cannot leak them to an unrelated one.
+    var preserveScroll = window.__mdPreserveNextSelectionScroll === true;
+    var centerSelection = window.__mdCenterNextSelection === true;
+    window.__mdPreserveNextSelectionScroll = false;
+    window.__mdCenterNextSelection = false;
     var generation = restoreGeneration;
     var deadline = Date.now() + 1000;
     function attempt() {
@@ -238,6 +245,8 @@
         driven = { y: target, until: Date.now() + 500 };
         window.scrollTo(0, target);
         if (caret != null && window.__mdPlaceCaret) {
+          window.__mdPreserveNextSelectionScroll = preserveScroll;
+          window.__mdCenterNextSelection = centerSelection;
           window.__mdPlaceCaret(
             caret, length || 0, sourceLineStart, sourceLineEnd, snapHiddenSyntax,
             visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome,
