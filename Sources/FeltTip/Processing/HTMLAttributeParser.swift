@@ -34,8 +34,8 @@ public enum HTMLAttributeParser {
 		let ns = html as NSString
 		let range = NSRange(location: 0, length: ns.length)
 		guard let match = Patterns.linkedImage.firstMatch(in: html, range: range) else { return nil }
-		let href = ns.substring(with: match.range(at: 1))
-		let src = ns.substring(with: match.range(at: 2))
+		let href = decodeEntities(ns.substring(with: match.range(at: 1)))
+		let src = decodeEntities(ns.substring(with: match.range(at: 2)))
 		let alt = extractAttribute("alt", from: html) ?? ""
 		let (w, h) = extractDimensions(from: html)
 		return LinkedImageInfo(href: href, src: src, alt: alt, width: w, height: h)
@@ -45,7 +45,7 @@ public enum HTMLAttributeParser {
 		let ns = html as NSString
 		let range = NSRange(location: 0, length: ns.length)
 		guard let match = Patterns.imgSrc.firstMatch(in: html, range: range) else { return nil }
-		let src = ns.substring(with: match.range(at: 1))
+		let src = decodeEntities(ns.substring(with: match.range(at: 1)))
 		let alt = extractAttribute("alt", from: html) ?? ""
 		let (w, h) = extractDimensions(from: html)
 		return ImageInfo(src: src, alt: alt, width: w, height: h)
@@ -54,7 +54,7 @@ public enum HTMLAttributeParser {
 	static func extractLink(from html: String) -> LinkInfo? {
 		let ns = html as NSString
 		guard let match = Patterns.anchor.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)) else { return nil }
-		return LinkInfo(href: ns.substring(with: match.range(at: 1)), inner: ns.substring(with: match.range(at: 2)))
+		return LinkInfo(href: decodeEntities(ns.substring(with: match.range(at: 1))), inner: ns.substring(with: match.range(at: 2)))
 	}
 
 	static func extractAttribute(_ name: String, from html: String) -> String? {
@@ -62,11 +62,11 @@ public enum HTMLAttributeParser {
 		let range = NSRange(location: 0, length: ns.length)
 		guard let patterns = attributePatterns(for: name) else { return nil }
 		if let match = patterns.quoted.firstMatch(in: html, range: range) {
-			return ns.substring(with: match.range(at: 1))
+			return decodeEntities(ns.substring(with: match.range(at: 1)))
 		}
 		// Unquoted: width=300
 		if let match = patterns.unquoted.firstMatch(in: html, range: range) {
-			return ns.substring(with: match.range(at: 1))
+			return decodeEntities(ns.substring(with: match.range(at: 1)))
 		}
 		return nil
 	}
@@ -110,14 +110,28 @@ public enum HTMLAttributeParser {
 	}
 
 	static func decodeEntities(_ text: String) -> String {
-		var out = text
-		for (key, value) in namedEntities {
-			out = out.replacingOccurrences(of: key, with: value)
+		// Decode only tokens in the original input. A decoded ampersand must
+		// not cause a second entity to be interpreted (e.g. &#38;amp;).
+		let ns = text as NSString
+		var result = ""
+		var cursor = 0
+		for match in entityPattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+			result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+			let token = ns.substring(with: match.range)
+			if token.hasPrefix("&#") {
+				let digits = token.dropFirst(2).dropLast()
+				let hex = digits.first == "x" || digits.first == "X"
+				if let value = UInt32(String(hex ? digits.dropFirst() : digits), radix: hex ? 16 : 10),
+				   let scalar = Unicode.Scalar(value) {
+					result.unicodeScalars.append(scalar)
+				} else { result += token }
+			} else {
+				result += token == "&amp;" ? "&" : (namedEntities.first { $0.0 == token }?.1 ?? token)
+			}
+			cursor = NSMaxRange(match.range)
 		}
-		out = decodeNumericEntities(out)
-		// Decode &amp; last so we don't double-decode something like &amp;nbsp;
-		out = out.replacingOccurrences(of: "&amp;", with: "&")
-		return out
+		result += ns.substring(from: cursor)
+		return result
 	}
 
 	private static let namedEntities: [(String, String)] = [
@@ -149,29 +163,9 @@ public enum HTMLAttributeParser {
 		("&cent;", "¢"),
 	]
 
-	private static let numericEntityPattern = try! NSRegularExpression(
-		pattern: #"&#(x?)([0-9a-fA-F]+);"#, options: []
+	private static let entityPattern = try! NSRegularExpression(
+		pattern: #"&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);"#
 	)
-
-	private static func decodeNumericEntities(_ text: String) -> String {
-		let ns = text as NSString
-		var result = ""
-		var cursor = 0
-		for match in numericEntityPattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-			result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
-			let isHex = !ns.substring(with: match.range(at: 1)).isEmpty
-			let digits = ns.substring(with: match.range(at: 2))
-			if let scalar = UInt32(digits, radix: isHex ? 16 : 10),
-			   let unicode = Unicode.Scalar(scalar) {
-				result.append(Character(unicode))
-			} else {
-				result += ns.substring(with: match.range)
-			}
-			cursor = match.range.location + match.range.length
-		}
-		if cursor < ns.length { result += ns.substring(from: cursor) }
-		return result
-	}
 
 	static func collapseWhitespace(_ text: String) -> String {
 		text.components(separatedBy: .whitespacesAndNewlines)

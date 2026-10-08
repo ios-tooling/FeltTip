@@ -56,11 +56,19 @@ enum HTMLInlineConverter {
 		let ns = html as NSString
 		let matches = HTMLAttributeParser.Patterns.pTag.matches(in: html, range: NSRange(location: 0, length: ns.length))
 		if matches.isEmpty { return [(html, nil)] }
-		return matches.map { match in
+		var segments: [(content: String, alignment: HorizontalAlignment?)] = []
+		var cursor = 0
+		for match in matches {
+			if match.range.location > cursor {
+				segments.append((ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor)), nil))
+			}
 			let attrs = ns.substring(with: match.range(at: 1))
 			let content = ns.substring(with: match.range(at: 2))
-			return (content, parseAlignment(from: attrs))
+			segments.append((content, parseAlignment(from: attrs)))
+			cursor = NSMaxRange(match.range)
 		}
+		if cursor < ns.length { segments.append((ns.substring(from: cursor), nil)) }
+		return segments
 	}
 
 	private static func parseAlignment(from attrs: String) -> HorizontalAlignment? {
@@ -242,7 +250,7 @@ enum HTMLInlineConverter {
 				result += AttributedString(" ")
 			}
 
-			let href = ns.substring(with: match.range(at: 1))
+			let href = HTMLAttributeParser.decodeEntities(ns.substring(with: match.range(at: 1)))
 			let inner = ns.substring(with: match.range(at: 2))
 
 			// Preserve italic/bold/etc. inside the link label; fall back to the

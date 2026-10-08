@@ -57,7 +57,8 @@ public enum MarkdownLinkRewriter {
 	}
 
 	private static func parsedLinks(in source: String) -> [ParsedLink] {
-		let converter = SourceOffsetConverter(source)
+		let (_, body, bodyOffset, _) = MarkdownBlockParser.extractFrontmatter(source)
+		let converter = SourceOffsetConverter(body)
 		var links: [ParsedLink] = []
 		func walk(_ node: any Markup) {
 			if let link = node as? Markdown.Link, let destination = link.destination {
@@ -65,12 +66,12 @@ public enum MarkdownLinkRewriter {
 					converter.processedRange(
 						lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 						upperLine: range.upperBound.line, upperColumn: range.upperBound.column)
-				}.map { NSRange(location: $0.lowerBound, length: $0.count) }
+				}.map { NSRange(location: bodyOffset + $0.lowerBound, length: $0.count) }
 				links.append(ParsedLink(destination: destination, range: range))
 			}
 			for child in node.children { walk(child) }
 		}
-		walk(Document(parsing: source, options: .disableSmartOpts))
+		walk(Document(parsing: body, options: .disableSmartOpts))
 		return links
 	}
 

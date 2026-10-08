@@ -135,7 +135,7 @@ public enum MarkdownBlockParser {
 	/// the body begins in the full source (0 when there's no frontmatter), and
 	/// the raw frontmatter text (the `---…---` block, nil when absent) for the
 	/// editable rendering path.
-	private static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String, Int, String?) {
+	static func extractFrontmatter(_ markdown: String) -> (MarkdownBlock?, String, Int, String?) {
 		// Some editors and downloaded documents leave blank lines before their
 		// metadata. Scan only through that prefix before splitting the document,
 		// preserving the fast rejection path for ordinary large documents.
