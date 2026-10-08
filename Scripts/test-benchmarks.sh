@@ -6,4 +6,5 @@
 
 set -o pipefail
 
-FELTTIP_RUN_BENCHMARKS=1 swift test --filter 'PerformanceTests|BenchmarkTests'
+# Each timing gate also needs to run without competing benchmark suites.
+FELTTIP_RUN_BENCHMARKS=1 swift test --no-parallel --filter 'PerformanceTests|BenchmarkTests'

@@ -285,6 +285,7 @@ final class TestWindowHost {
 			window = NSWindow(
 				contentRect: CGRect(origin: .zero, size: size),
 				styleMask: [.borderless], backing: .buffered, defer: false)
+			window.animationBehavior = .none
 			window.contentView = hosting
 			window.orderFront(nil)
 		}

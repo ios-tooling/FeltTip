@@ -104,6 +104,8 @@ final class CoordinatorBridgeHarness {
 			window = NSWindow(
 				contentRect: webView.frame, styleMask: [.borderless],
 				backing: .buffered, defer: false)
+			// Test windows must not accumulate AppKit close animations between cases.
+			window.animationBehavior = .none
 			window.contentView = webView
 			window.orderFront(nil)
 		#else
