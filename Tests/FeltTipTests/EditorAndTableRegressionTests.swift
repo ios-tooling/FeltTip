@@ -79,3 +79,13 @@ extension EditorAndTableRegressionTests {
   #expect(MarkdownInlineCodeToggle.change(in: source, selection: NSRange(location: 0, length: 5)) == nil)
  }
 }
+
+extension EditorAndTableRegressionTests {
+ @Test(arguments: ["", " ", "&#32;"])
+ func emptyImageDestinationsAreIgnored(source: String) {
+  let tag = "<img src=\"\(source)\" alt='empty'>"
+  #expect(HTMLAttributeParser.extractImage(from: tag) == nil)
+  #expect(ImageRegions.collect(in: tag).isEmpty)
+  #expect(MarkdownMeta("<table><tr><td>" + tag + "</td></tr></table>").images.isEmpty)
+ }
+}

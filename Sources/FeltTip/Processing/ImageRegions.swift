@@ -54,7 +54,8 @@ enum ImageRegions {
 				currentAnchor = HTMLAttributeParser.extractAttribute("href", from: fullTag)
 				continue
 			}
-			guard let src = HTMLAttributeParser.extractAttribute("src", from: fullTag) else { continue }
+			guard let src = HTMLAttributeParser.extractAttribute("src", from: fullTag),
+			      !src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
 			let alt = HTMLAttributeParser.extractAttribute("alt", from: fullTag) ?? ""
 			let title = HTMLAttributeParser.extractAttribute("title", from: fullTag)
 			let (w, h) = HTMLAttributeParser.extractDimensions(from: fullTag)

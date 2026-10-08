@@ -40,7 +40,8 @@ public enum HTMLAttributeParser {
 		let ns = html as NSString
 		guard let match = Patterns.imgSrc.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)) else { return nil }
 		let tag = ns.substring(with: match.range)
-		guard let src = extractAttribute("src", from: tag) else { return nil }
+		guard let src = extractAttribute("src", from: tag),
+		      !src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
 		let (width, height) = extractDimensions(from: tag)
 		return ImageInfo(src: src, alt: extractAttribute("alt", from: tag) ?? "", width: width, height: height)
 	}
