@@ -26,20 +26,45 @@ enum MarkdownCodeProtection {
 	}
 
 	private struct Region {
-		let range: NSRange
+		/// UTF-8 byte range in the source.
+		let range: Range<Int>
 		let isBlock: Bool
 	}
+
+	/// Code regions as UTF-16 ranges, for callers that index the source as
+	/// an `NSString`.
 	static func ranges(in source: String, blocksOnly: Bool = false) -> [NSRange] {
-		regions(in: source, blocksOnly: blocksOnly).map(\.range)
+		var source = source
+		return source.withUTF8 { bytes in
+			let regions = regions(in: bytes, blocksOnly: blocksOnly)
+			var result: [NSRange] = []
+			result.reserveCapacity(regions.count)
+			var byteIndex = 0
+			var utf16Index = 0
+			func advance(to target: Int) {
+				while byteIndex < target {
+					let byte = bytes[byteIndex]
+					if byte & 0xC0 != 0x80 { utf16Index += byte >= 0xF0 ? 2 : 1 }
+					byteIndex += 1
+				}
+			}
+			for region in regions {
+				advance(to: region.range.lowerBound)
+				let location = utf16Index
+				advance(to: region.range.upperBound)
+				result.append(NSRange(location: location, length: utf16Index - location))
+			}
+			return result
+		}
 	}
 
 	// MARK: - Scanner
 
-	private static let space: UInt16 = 0x20, tab: UInt16 = 0x09, newline: UInt16 = 0x0A, carriageReturn: UInt16 = 0x0D
-	private static let backtick: UInt16 = 0x60, tilde: UInt16 = 0x7E, backslash: UInt16 = 0x5C
-	private static let quoteMarker: UInt16 = 0x3E, hash: UInt16 = 0x23, lessThan: UInt16 = 0x3C
+	private static let space: UInt8 = 0x20, tab: UInt8 = 0x09, newline: UInt8 = 0x0A, carriageReturn: UInt8 = 0x0D
+	private static let backtick: UInt8 = 0x60, tilde: UInt8 = 0x7E, backslash: UInt8 = 0x5C
+	private static let quoteMarker: UInt8 = 0x3E, hash: UInt8 = 0x23, lessThan: UInt8 = 0x3C
 
-	private enum HTMLBlockKind { case untilBlank, untilClosingTag([UInt16]), untilCommentEnd }
+	private enum HTMLBlockKind { case untilBlank, untilClosingTag([UInt8]), untilCommentEnd }
 
 	/// Code regions in document order, following CommonMark's block and
 	/// code-span rules: fences of three or more backticks or tildes that
@@ -47,13 +72,12 @@ enum MarkdownCodeProtection {
 	/// after a block boundary, container prefixes for quotes and list items,
 	/// HTML blocks whose backticks are literal, and backtick spans that
 	/// close on a run of exactly the opening length within one paragraph.
-	private static func regions(in source: String, blocksOnly: Bool) -> [Region] {
-		guard mayContainCode(source) else { return [] }
-		let units = Array(source.utf16)
+	private static func regions(in units: UnsafeBufferPointer<UInt8>, blocksOnly: Bool) -> [Region] {
+		guard mayContainCode(units) else { return [] }
 		let count = units.count
 		var regions: [Region] = []
 
-		struct Fence { let character: UInt16; let length: Int; let quoteDepth: Int; let start: Int; var lastLineEnd: Int }
+		struct Fence { let character: UInt8; let length: Int; let quoteDepth: Int; let start: Int; var lastLineEnd: Int }
 		struct ListItem { let contentIndent: Int; let quoteDepth: Int }
 
 		var fence: Fence?
@@ -67,7 +91,7 @@ enum MarkdownCodeProtection {
 		var paragraph: (start: Int, end: Int, lines: Int)?
 		var inTable = false
 
-		func emit(_ range: NSRange) { regions.append(Region(range: range, isBlock: false)) }
+		func emit(_ range: Range<Int>) { regions.append(Region(range: range, isBlock: false)) }
 		/// GFM splits a row into cells at unescaped pipes before inline
 		/// parsing, so a span never crosses a cell.
 		func scanRow(from start: Int, to end: Int) {
@@ -109,8 +133,8 @@ enum MarkdownCodeProtection {
 			}
 			return cells + (dashes > 0 ? 1 : 0) >= 1 && units[start..<end].contains(0x2D)
 		}
-		func isDigit(_ unit: UInt16) -> Bool { unit >= 0x30 && unit <= 0x39 }
-		func contains(_ needle: [UInt16], in range: Range<Int>) -> Bool {
+		func isDigit(_ unit: UInt8) -> Bool { unit >= 0x30 && unit <= 0x39 }
+		func contains(_ needle: [UInt8], in range: Range<Int>) -> Bool {
 			guard needle.count <= range.count else { return false }
 			var i = range.lowerBound
 			while i + needle.count <= range.upperBound {
@@ -121,7 +145,7 @@ enum MarkdownCodeProtection {
 			}
 			return false
 		}
-		let commentEnd = Array("-->".utf16)
+		let commentEnd = Array("-->".utf8)
 
 		var lineStart = 0
 		while lineStart <= count {
@@ -155,7 +179,7 @@ enum MarkdownCodeProtection {
 			if var open = fence {
 				if quoteDepth < open.quoteDepth {
 					// The quote holding the fence ended; the block ends with it.
-					regions.append(Region(range: NSRange(location: open.start, length: open.lastLineEnd - open.start), isBlock: true))
+					regions.append(Region(range: open.start..<open.lastLineEnd, isBlock: true))
 					fence = nil
 					atBlockBoundary = true
 				} else {
@@ -163,7 +187,7 @@ enum MarkdownCodeProtection {
 					var run = position
 					while run < contentEnd, units[run] == open.character { run += 1 }
 					if relative <= 3, run - position >= open.length, run == contentEnd {
-						regions.append(Region(range: NSRange(location: open.start, length: lineEnd - open.start), isBlock: true))
+						regions.append(Region(range: open.start..<lineEnd, isBlock: true))
 						fence = nil
 						atBlockBoundary = true
 						previousLineBlank = false
@@ -181,7 +205,7 @@ enum MarkdownCodeProtection {
 					previousLineBlank = false
 					continue
 				}
-				regions.append(Region(range: NSRange(location: block.start, length: block.lastLineEnd - block.start), isBlock: true))
+				regions.append(Region(range: block.start..<block.lastLineEnd, isBlock: true))
 				indented = nil
 				atBlockBoundary = true
 			}
@@ -208,7 +232,7 @@ enum MarkdownCodeProtection {
 			}
 
 			// Which block constructs this line could start, after its prefix.
-			let fenceRun: (character: UInt16, length: Int)? = {
+			let fenceRun: (character: UInt8, length: Int)? = {
 				let character = units[position]
 				guard character == backtick || character == tilde else { return nil }
 				var run = position
@@ -344,10 +368,10 @@ enum MarkdownCodeProtection {
 		}
 
 		if let open = fence {
-			regions.append(Region(range: NSRange(location: open.start, length: open.lastLineEnd - open.start), isBlock: true))
+			regions.append(Region(range: open.start..<open.lastLineEnd, isBlock: true))
 		}
 		if let block = indented {
-			regions.append(Region(range: NSRange(location: block.start, length: block.lastLineEnd - block.start), isBlock: true))
+			regions.append(Region(range: block.start..<block.lastLineEnd, isBlock: true))
 		}
 		closeParagraph()
 		return regions
@@ -356,7 +380,7 @@ enum MarkdownCodeProtection {
 	/// Backtick spans in one paragraph: an opening run closes on the next
 	/// run of exactly its length; otherwise it is literal. Backslashes
 	/// escape backticks outside spans only.
-	private static func scanSpans(in units: [UInt16], from start: Int, to end: Int, _ emit: (NSRange) -> Void) {
+	private static func scanSpans(in units: UnsafeBufferPointer<UInt8>, from start: Int, to end: Int, _ emit: (Range<Int>) -> Void) {
 		var i = start
 		while i < end {
 			let unit = units[i]
@@ -374,7 +398,7 @@ enum MarkdownCodeProtection {
 				if scan - runStart == length { closing = runStart; break }
 			}
 			if let closing {
-				emit(NSRange(location: i, length: closing + length - i))
+				emit(i..<(closing + length))
 				i = closing + length
 			} else {
 				i = run
@@ -382,9 +406,9 @@ enum MarkdownCodeProtection {
 		}
 	}
 
-	private static func lowercased(_ unit: UInt16) -> UInt16 { unit >= 0x41 && unit <= 0x5A ? unit + 0x20 : unit }
+	private static func lowercased(_ unit: UInt8) -> UInt8 { unit >= 0x41 && unit <= 0x5A ? unit + 0x20 : unit }
 
-	private static let rawTextTags = ["pre", "script", "style", "textarea"].map { Array($0.utf16) }
+	private static let rawTextTags = ["pre", "script", "style", "textarea"].map { Array($0.utf8) }
 	private static let blockTags: Set<String> = [
 		"address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col",
 		"colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure",
@@ -398,7 +422,7 @@ enum MarkdownCodeProtection {
 	/// raw-text elements and comments span blank lines; known block tags end
 	/// at one; any other complete tag alone on its line does too, but only
 	/// outside a paragraph.
-	private static func htmlBlockStart(_ units: [UInt16], position: Int, end: Int, interruptingParagraph: Bool) -> HTMLBlockKind? {
+	private static func htmlBlockStart(_ units: UnsafeBufferPointer<UInt8>, position: Int, end: Int, interruptingParagraph: Bool) -> HTMLBlockKind? {
 		var cursor = position + 1
 		if cursor + 2 < end, units[cursor] == 0x21, units[cursor + 1] == 0x2D, units[cursor + 2] == 0x2D { return .untilCommentEnd }
 		if cursor < end, units[cursor] == 0x21 || units[cursor] == 0x3F { return .untilBlank }
@@ -407,11 +431,11 @@ enum MarkdownCodeProtection {
 		let nameStart = cursor
 		while cursor < end, (lowercased(units[cursor]) >= 0x61 && lowercased(units[cursor]) <= 0x7A) || (units[cursor] >= 0x30 && units[cursor] <= 0x39) { cursor += 1 }
 		guard cursor > nameStart else { return nil }
-		let name = String(utf16CodeUnits: units[nameStart..<cursor].map(lowercased), count: cursor - nameStart)
+		let name = String(decoding: units[nameStart..<cursor].map(lowercased), as: UTF8.self)
 		let terminated = cursor == end || units[cursor] == space || units[cursor] == tab || units[cursor] == 0x3E
 			|| (units[cursor] == 0x2F && cursor + 1 < end && units[cursor + 1] == 0x3E)
-		if !closing, terminated, let tag = rawTextTags.first(where: { String(utf16CodeUnits: $0, count: $0.count) == name }) {
-			return .untilClosingTag(Array("</".utf16) + tag)
+		if !closing, terminated, let tag = rawTextTags.first(where: { String(decoding: $0, as: UTF8.self) == name }) {
+			return .untilClosingTag(Array("</".utf8) + tag)
 		}
 		if blockTags.contains(name), terminated { return .untilBlank }
 		// Any other tag counts only when it is complete and alone on the line.
@@ -422,9 +446,8 @@ enum MarkdownCodeProtection {
 	/// A cheap rejection for documents that cannot contain code: no backtick,
 	/// tab, or tilde fence, and no line starting with four spaces (indented
 	/// code can follow any block boundary, so the line before is no guide).
-	private static func mayContainCode(_ source: String) -> Bool {
-		var source = source
-		return source.withUTF8 { bytes in
+	private static func mayContainCode(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+		do {
 			var spaces = 0
 			var tildes = 0
 			var lineStart = true
@@ -455,56 +478,106 @@ enum MarkdownCodeProtection {
 		map(source) { masked, restore in transform(masked).map(restore) }
 	}
 
+	private static let blockTag = Array("BLOCK".utf8), inlineTag = Array("INLINE".utf8), endTag = Array("END".utf8)
+
 	static func map<T>(_ source: String, using transform: (String, (String) -> String) -> T) -> T {
 		guard !isProtecting else { return transform(source, { $0 }) }
-		let regions = regions(in: source, blocksOnly: false)
-		guard !regions.isEmpty else { return $isProtecting.withValue(true) { transform(source, { $0 }) } }
-		var prefix: String
-		repeat { prefix = "FELTTIPCODE" + UUID().uuidString.replacingOccurrences(of: "-", with: "") } while source.contains(prefix)
-		let ns = source as NSString
-		var originals: [String] = []
-		var masked = ""
-		var cursor = 0
-		// One token per line preserves block/container boundaries. Restoring
-		// a token never introduces new lines into a transformed quote/list.
-		func appendTokens(for text: String, isBlock: Bool) {
-			for (index, line) in text.components(separatedBy: "\n").enumerated() {
-				if index > 0 { masked += "\n" }
-				if !line.isEmpty {
-					masked += prefix + (isBlock ? "BLOCK" : "INLINE") + String(originals.count) + "END"
-					originals.append(line)
+		var source = source
+		// Everything here works on bytes: every region and token boundary is
+		// ASCII, so slices stay valid UTF-8 and the copies are plain memcpy.
+		let prepared: (masked: String, originals: [[UInt8]], prefix: [UInt8])? = source.withUTF8 { bytes in
+			let regions = regions(in: bytes, blocksOnly: false)
+			guard !regions.isEmpty else { return nil }
+			var prefix: [UInt8]
+			repeat {
+				prefix = Array(("FELTTIPCODE" + UUID().uuidString.replacingOccurrences(of: "-", with: "")).utf8)
+			} while contains(prefix, in: bytes)
+			var originals: [[UInt8]] = []
+			var masked: [UInt8] = []
+			masked.reserveCapacity(bytes.count)
+			var cursor = 0
+			for region in regions {
+				masked.append(contentsOf: bytes[cursor..<region.range.lowerBound])
+				// One token per line preserves block/container boundaries.
+				// Restoring a token never introduces new lines into a
+				// transformed quote/list.
+				var lineStart = region.range.lowerBound
+				while lineStart <= region.range.upperBound {
+					var lineEnd = lineStart
+					while lineEnd < region.range.upperBound, bytes[lineEnd] != newline { lineEnd += 1 }
+					if lineEnd > lineStart {
+						masked.append(contentsOf: prefix)
+						masked.append(contentsOf: region.isBlock ? blockTag : inlineTag)
+						masked.append(contentsOf: String(originals.count).utf8)
+						masked.append(contentsOf: endTag)
+						originals.append(Array(bytes[lineStart..<lineEnd]))
+					}
+					if lineEnd < region.range.upperBound { masked.append(newline) }
+					lineStart = lineEnd + 1
 				}
+				cursor = region.range.upperBound
 			}
+			masked.append(contentsOf: bytes[cursor...])
+			return (String(decoding: masked, as: UTF8.self), originals, prefix)
 		}
-		for region in regions {
-			let range = region.range
-			masked += ns.substring(with: NSRange(location: cursor, length: range.location - cursor))
-			appendTokens(for: ns.substring(with: range), isBlock: region.isBlock)
-			cursor = NSMaxRange(range)
+		guard let (masked, originals, prefix) = prepared else {
+			return $isProtecting.withValue(true) { transform(source, { $0 }) }
 		}
-		masked += ns.substring(from: cursor)
 		func restore(_ processed: String) -> String {
-			var restored = ""
-			var start = processed.startIndex
-			while let marker = processed.range(of: prefix, range: start..<processed.endIndex) {
-				restored += processed[start..<marker.lowerBound]
-				guard let end = processed.range(of: "END", range: marker.upperBound..<processed.endIndex),
-				      let index = Int(processed[marker.upperBound..<end.lowerBound].dropFirst(processed[marker.upperBound...].hasPrefix("BLOCK") ? 5 : 6)),
-				      originals.indices.contains(index) else {
-					restored += prefix
-					start = marker.upperBound
-					continue
+			var processed = processed
+			return processed.withUTF8 { bytes in
+				var restored: [UInt8] = []
+				restored.reserveCapacity(bytes.count + 1024)
+				var start = 0
+				var i = 0
+				while i + prefix.count <= bytes.count {
+					guard bytes[i] == prefix[0], matches(prefix, in: bytes, at: i) else { i += 1; continue }
+					restored.append(contentsOf: bytes[start..<i])
+					var cursor = i + prefix.count
+					let tag = matches(blockTag, in: bytes, at: cursor) ? blockTag : inlineTag
+					var index = 0
+					var valid = matches(tag, in: bytes, at: cursor)
+					cursor += tag.count
+					let digitsStart = cursor
+					while valid, cursor < bytes.count, bytes[cursor] >= 0x30, bytes[cursor] <= 0x39 {
+						index = index * 10 + Int(bytes[cursor] - 0x30)
+						cursor += 1
+					}
+					valid = valid && cursor > digitsStart && matches(endTag, in: bytes, at: cursor) && originals.indices.contains(index)
+					if valid {
+						restored.append(contentsOf: originals[index])
+						start = cursor + endTag.count
+					} else {
+						restored.append(contentsOf: prefix)
+						start = i + prefix.count
+					}
+					i = start
 				}
-				restored += originals[index]
-				start = end.upperBound
+				restored.append(contentsOf: bytes[start...])
+				return String(decoding: restored, as: UTF8.self)
 			}
-			restored += processed[start...]
-			return restored
 		}
+		let prefixString = String(decoding: prefix, as: UTF8.self)
 		return $isProtecting.withValue(true) {
-			$blockMarkerPrefix.withValue(prefix + "BLOCK") {
-				$inlineMarkerPrefix.withValue(prefix + "INLINE") { transform(masked, restore) }
+			$blockMarkerPrefix.withValue(prefixString + "BLOCK") {
+				$inlineMarkerPrefix.withValue(prefixString + "INLINE") { transform(masked, restore) }
 			}
 		}
+	}
+
+	private static func matches(_ needle: [UInt8], in bytes: UnsafeBufferPointer<UInt8>, at index: Int) -> Bool {
+		guard index + needle.count <= bytes.count else { return false }
+		for (offset, byte) in needle.enumerated() where bytes[index + offset] != byte { return false }
+		return true
+	}
+
+	private static func contains(_ needle: [UInt8], in bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+		guard let first = needle.first else { return true }
+		var i = 0
+		while i + needle.count <= bytes.count {
+			if bytes[i] == first, matches(needle, in: bytes, at: i) { return true }
+			i += 1
+		}
+		return false
 	}
 }
