@@ -30,6 +30,17 @@ struct InlineBuilder: MarkupWalker {
 	// the read/write split doesn't widen access beyond the module.
 	var result = AttributedString()
 	var links: [LinkInfo] = []
+	/// Set by the linkify passes when they apply a link over existing runs,
+	/// which is the only way stamped runs get split after they are built.
+	var linkifySplitRuns = false
+	/// Whether any text node could hold a bare URL (`://` or `www.`), so the
+	/// common case skips materialising the plain text for the linkify passes.
+	private var mayContainBareURL = false
+	/// The attribute container for the current style flags, rebuilt only when
+	/// a flag changes. Table-heavy documents create tens of thousands of text
+	/// runs, and building each run from one container is far cheaper than
+	/// applying the attributes one setter at a time.
+	private var cachedStyle: (key: StyleKey, container: AttributeContainer)?
 	private var charOffset = 0
 	private var bold = false
 	private var italic = false
@@ -52,13 +63,13 @@ struct InlineBuilder: MarkupWalker {
 	}
 
 	mutating func finalize(linkifyURLs: Bool = true) -> InlineResult {
-		if linkifyURLs {
+		if linkifyURLs, mayContainBareURL {
 			// Both passes read the plain text; linkifying does not change it.
 			let plainText = String(result.characters)
 			linkifyBareURLs(in: plainText)
 			linkifyWWWPrefix(in: plainText)
 		}
-		repairSplitSourceOffsets()
+		if linkifySplitRuns { repairSplitSourceOffsets() }
 		return InlineResult(attributed: result, links: links)
 	}
 
@@ -98,32 +109,42 @@ struct InlineBuilder: MarkupWalker {
 	mutating func visitText(_ text: Markdown.Text) {
 		// `Text.string` materializes a String from the node each time it is read.
 		let string = text.string
+		if !mayContainBareURL, Self.mayHoldBareURL(string) { mayContainBareURL = true }
 		if let converter = sourceConverter, let range = text.range,
 		   let fragments = converter.fragmentsAroundEscapedPipes(
 			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
 			rendered: string) {
 			for fragment in fragments {
-				var str = AttributedString(fragment.text)
-				applyCurrentStyle(&str)
-				str.markdownSourceOffset = fragment.sourceOffset
-				str.markdownEscapedPipeSourceOffset = fragment.escapedPipeSourceOffset
-				result += str
+				var container = currentStyle()
+				container.markdownSourceOffset = fragment.sourceOffset
+				if let pipe = fragment.escapedPipeSourceOffset { container.markdownEscapedPipeSourceOffset = pipe }
+				result += AttributedString(fragment.text, attributes: container)
 			}
 			charOffset += string.count
 			return
 		}
-		var str = AttributedString(string)
-		applyCurrentStyle(&str)
+		var container = currentStyle()
 		if let converter = sourceConverter, let range = text.range,
 		   let offset = converter.verbatimUTF16Offset(
 			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
 			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
 			rendered: string) {
-			str.markdownSourceOffset = offset
+			container.markdownSourceOffset = offset
 		}
-		result += str
+		result += AttributedString(string, attributes: container)
 		charOffset += string.count
+	}
+
+	/// A byte scan for `://` or a case-insensitive `www.`.
+	private static func mayHoldBareURL(_ string: String) -> Bool {
+		var previous: (UInt8, UInt8, UInt8) = (0, 0, 0)
+		for byte in string.utf8 {
+			if byte == 0x2F, previous.2 == 0x2F, previous.1 == 0x3A { return true }
+			if byte == 0x2E, previous.2 | 0x20 == 0x77, previous.1 | 0x20 == 0x77, previous.0 | 0x20 == 0x77 { return true }
+			previous = (previous.1, previous.2, byte)
+		}
+		return false
 	}
 
 	mutating func visitStrong(_ strong: Strong) {
@@ -193,10 +214,9 @@ struct InlineBuilder: MarkupWalker {
 		// Inline <img> — emit alt text
 		if tag.hasPrefix("<img") {
 			let alt = HTMLAttributeParser.extractAttribute("alt", from: raw) ?? "image"
-			var str = AttributedString(alt)
-			applyCurrentStyle(&str)
-			if let url = currentLinkURL { str.link = url }
-			result += str
+			var container = currentStyle()
+			if let url = currentLinkURL { container.link = url }
+			result += AttributedString(alt, attributes: container)
 			charOffset += alt.count
 			return
 		}
@@ -273,7 +293,22 @@ struct InlineBuilder: MarkupWalker {
 		charOffset += 1
 	}
 
-	private mutating func applyCurrentStyle(_ str: inout AttributedString) {
+	private struct StyleKey: Equatable {
+		let bold, italic, underline, strikethrough, superscript, subscript_, highlight, kbd, inlineCode: Bool
+	}
+
+	private mutating func currentStyle() -> AttributeContainer {
+		let key = StyleKey(
+			bold: bold, italic: italic, underline: underline, strikethrough: strikethrough,
+			superscript: superscript, subscript_: subscript_, highlight: highlight, kbd: kbd, inlineCode: inlineCode)
+		if let cached = cachedStyle, cached.key == key { return cached.container }
+		var container = AttributeContainer()
+		applyCurrentStyle(&container)
+		cachedStyle = (key, container)
+		return container
+	}
+
+	private func applyCurrentStyle(_ str: inout AttributeContainer) {
 		if kbd || inlineCode {
 			str.font = .system(size: fontSize, design: .monospaced)
 			str.foregroundColor = theme.codeForeground

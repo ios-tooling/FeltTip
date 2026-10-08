@@ -61,6 +61,7 @@ extension InlineBuilder {
 
 		result[range].link = url
 		result[range].foregroundColor = theme.linkColor
+		linkifySplitRuns = true
 		links.append(LinkInfo(url: url.absoluteString, characterOffset: startOffset))
 	}
 
