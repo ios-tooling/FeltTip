@@ -440,8 +440,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				context.coordinator.lastCaretToken = caret.token
 				if MarkdownSplitSyncLog.enabled { NSLog("[SplitSync] raw caret scroll to %d", caret.offset) }
 				let clamped = min(max(0, caret.offset), (textView.textStorage?.length ?? 0))
-				textView.setSelectedRange(NSRange(location: clamped, length: 0))
-				textView.scrollRangeToVisible(NSRange(location: clamped, length: 0))
+				let length = min(caret.selectionLength, (textView.textStorage?.length ?? 0) - clamped)
+				let range = NSRange(location: clamped, length: length)
+				textView.setSelectedRange(range)
+				if !caret.preservesScrollPosition { textView.scrollRangeToVisible(range) }
 			}
 		}
 
@@ -454,8 +456,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let selectedLength = min(max(0, target.range.length), length - location)
 			let range = NSRange(location: location, length: selectedLength)
 			textView.setSelectedRange(range)
-			context.coordinator.anchorViewport(
-				toSelection: range, in: textView, scrollView: scrollView)
+			if !target.preservesScrollPosition {
+				context.coordinator.anchorViewport(
+					toSelection: range, in: textView, scrollView: scrollView)
+			}
 			appliedExtendedSelection = range.length > 0
 			// Selection notifications are intentionally ignored while SwiftUI is
 			// driving this update, so publish the cursor position explicitly. Without
@@ -674,6 +678,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	@MainActor
 	public class Coordinator: NSObject, NSTextViewDelegate, @preconcurrency NSTextStorageDelegate {
 		var parent: MarkdownTextEditor
+		private var pendingReplacementSelection: NSRange?
 		var lastScrolledID: String?
 		var scrollObserver: Any?
 		var viewportObserver: Any?
@@ -1091,12 +1096,24 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			highlightDebounceTimer?.invalidate()
 		}
 
+		public func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+			let selected = textView.selectedRange()
+			pendingReplacementSelection = selected.length > 0 && selected == affectedCharRange ? selected : nil
+			return true
+		}
+
 		public func textDidChange(_ notification: Notification) {
 			guard let tv = notification.object as? NSTextView else { return }
 			let updatedText = tv.string
 			pendingLocalText = updatedText
 			lastEditTime = CFAbsoluteTimeGetCurrent()
 			scheduleHeadingIndex(for: updatedText, debounce: true)
+			if let selected = pendingReplacementSelection {
+				// Re-publish immediately before the edit: AppKit may already have
+				// reported the collapsed post-edit caret to the host.
+				parent.onSourceSelectionChanged?(selected)
+			}
+			pendingReplacementSelection = nil
 			if let onSourceEdit = parent.onSourceEdit {
 				onSourceEdit(updatedText, tv.selectedRange().location)
 			} else {

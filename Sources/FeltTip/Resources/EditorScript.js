@@ -1260,7 +1260,7 @@
     placeCaretIn(inlineCaretText, 1, inlineHolder);
     return true;
   }
-  window.__mdPlaceCaret = function (offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, neutralPreviousBoundaryOffset, neutralPreviousBoundarySource, neutralNextBoundaryOffset, neutralNextBoundarySource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap, caretBeforeEmptyUnderline, boundaryPreviousCharacterOffset, boundaryPreviousCharacter, boundaryNextCharacterOffset, boundaryNextCharacter) {
+  function placeSourceCaret(offset, length, sourceLineStart, sourceLineEnd, snapHiddenSyntax, visualBlankOffset, previousSourceCharacter, sourceNeutralCaretHome, neutralPreviousOffset, neutralPreviousCharacter, neutralNextOffset, neutralNextCharacter, neutralWrapperSource, neutralPreviousBoundaryOffset, neutralPreviousBoundarySource, neutralNextBoundaryOffset, neutralNextBoundarySource, caretAfterEmptyUnderline, forceVisibleSyntaxSnap, caretBeforeEmptyUnderline, boundaryPreviousCharacterOffset, boundaryPreviousCharacter, boundaryNextCharacterOffset, boundaryNextCharacter) {
     inlineNavigationSelection = null;
     inlineWordSelectionHome = null;
     length = length || 0;
@@ -1505,6 +1505,18 @@
     target.insertBefore(holder, target.firstChild);
     if (window.__mdStampsInvalidate) { window.__mdStampsInvalidate(); }
     placeCaretIn(holder, 0, holder);
+  }
+
+  window.__mdPlaceCaret = function () {
+    var preserve = window.__mdPreserveNextSelectionScroll === true;
+    window.__mdPreserveNextSelectionScroll = false;
+    var x = window.scrollX, y = window.scrollY;
+    try {
+      return placeSourceCaret.apply(null, arguments);
+    } finally {
+      window.__mdCenterNextSelection = false;
+      if (preserve) window.scrollTo(x, y);
+    }
   };
   // DOM position for the `target`-th character inside `root`.
   function locate(root, target) {
@@ -2570,6 +2582,13 @@
       }
     }
     contextMenuSourceSelection = null;
+    // Capture selected replacement before the browser collapses it. The usual
+    // debounced selection report can arrive after the edit and lose undo's range.
+    var replacementSelection = window.getSelection();
+    if ((e.inputType === 'insertText' || e.inputType === 'insertReplacementText') &&
+        replacementSelection && !replacementSelection.isCollapsed) {
+      reportSelection(true);
+    }
     // A selected Backspace/Delete beside a synthetic home has the same source
     // geometry as Cut, but it must not read or write the clipboard. WebKit may
     // omit its target range or truncate it through the hidden wrapper, so route

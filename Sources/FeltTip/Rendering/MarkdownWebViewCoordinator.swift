@@ -80,10 +80,14 @@ extension MarkdownWebView {
 		/// structural re-render. Style toggles restore the full selection so
 		/// repeated ⌘B/⌘I keep operating on the same text.
 		var pendingSelection: NSRange? {
-			didSet { pendingSelectionIsHandoff = false }
+			didSet {
+				pendingSelectionIsHandoff = false
+				pendingSelectionPreservesScroll = false
+			}
 		}
-		/// The pending selection came from another editor mode, so the page
-		/// should center it rather than merely keep it in view.
+		/// Undo/redo restores selection without moving the viewport.
+		var pendingSelectionPreservesScroll = false
+		/// Pane handoffs deliberately center the transferred selection.
 		var pendingSelectionIsHandoff = false
 		/// The parent's theme with dynamic colors already flattened against the
 		/// live color scheme. Set from `makeUXView`/`updateUXView`, because
@@ -403,6 +407,7 @@ extension MarkdownWebView {
 			let generation = renderGeneration
 			let selection = pendingSelection
 			let centerSelection = pendingSelectionIsHandoff
+			let preserveScroll = pendingSelectionPreservesScroll
 			// Fast edits deliberately leave lastFragments as an inexact but often
 			// useful diff baseline. A later inverse edit can make its changed block
 			// equal that stale baseline even though the live DOM still differs. In
@@ -430,7 +435,7 @@ extension MarkdownWebView {
 				self.pendingStructuralTailBoundary = nil
 				self.pendingStructuralText = nil
 				self.apply(rendered, text: text, into: webView, thenPlaceCaret: selection,
-				           centerSelection: centerSelection,
+				           centerSelection: centerSelection, preserveScroll: preserveScroll,
 				           tailSourceDelta: tailSourceDelta,
 				           tailSourceBoundary: tailSourceBoundary,
 				           requiredPatchedSourceOffset: requiredPatchedSourceOffset)
@@ -446,6 +451,7 @@ extension MarkdownWebView {
 			into webView: WKWebView,
 			thenPlaceCaret selection: NSRange?,
 			centerSelection: Bool = false,
+			preserveScroll: Bool = false,
 			tailSourceDelta: Int? = nil,
 			tailSourceBoundary: Int? = nil,
 			requiredPatchedSourceOffset: Int? = nil
@@ -472,7 +478,7 @@ extension MarkdownWebView {
 					self.renderTask = nil
 					self.log("body swap: \(fragments.count) blocks rev=\(revision)")
 					let caretCall = selection.map {
-						self.caretPlacementScript($0, centered: centerSelection)
+						self.caretPlacementScript($0, centered: centerSelection, preserveScroll: preserveScroll)
 					} ?? ""
 					do {
 						_ = try await MarkdownPDFRenderer.evaluateJavaScript("""
@@ -519,7 +525,7 @@ extension MarkdownWebView {
 			let deltaArgument = tailSourceDelta.map(String.init) ?? "null"
 			let boundaryArgument = tailSourceBoundary.map(String.init) ?? "null"
 			let caretCall = selection.map {
-				caretPlacementScript($0, centered: centerSelection)
+				caretPlacementScript($0, centered: centerSelection, preserveScroll: preserveScroll)
 			} ?? ""
 			let call = """
 				(function () {
@@ -550,19 +556,21 @@ extension MarkdownWebView {
 		private func placeCaretAfterUpdate(
 			_ selection: NSRange?, into webView: WKWebView,
 			centered: Bool = false,
+			preserveScroll: Bool = false,
 			completion: (@MainActor @Sendable () -> Void)? = nil
 		) {
 			guard let selection else { return }
 			webView.evaluateJavaScript(
 				"window.__mdCancelPendingScrollRestore && window.__mdCancelPendingScrollRestore(); "
-				+ caretPlacementScript(selection, centered: centered)
+				+ caretPlacementScript(selection, centered: centered, preserveScroll: preserveScroll)
 			) { _, _ in completion?() }
 		}
 
 		/// The `__mdPlaceCaret` call for `selection`. A centered placement is a
 		/// pane handoff; the page consumes the flag on that one placement.
-		private func caretPlacementScript(_ selection: NSRange, centered: Bool) -> String {
-			(centered ? "window.__mdCenterNextSelection = true; " : "")
+		private func caretPlacementScript(_ selection: NSRange, centered: Bool, preserveScroll: Bool = false) -> String {
+			(preserveScroll ? "window.__mdPreserveNextSelectionScroll = true; " : "")
+				+ (centered ? "window.__mdCenterNextSelection = true; " : "")
 				+ "window.__mdPlaceCaret && window.__mdPlaceCaret(\(caretPlacementArguments(selection)));"
 		}
 
@@ -1253,6 +1261,7 @@ extension MarkdownWebView {
 			// edit wins; then a one-time initial fraction; then the last offset.
 			if let selection = pendingSelection {
 				let centered = pendingSelectionIsHandoff
+				let preserveScroll = pendingSelectionPreservesScroll
 				pendingSelection = nil
 				log("didFinish: restoring selection \(selection) (scrollY \(lastScrollY))")
 				// Put the view back where the user was FIRST — the reload
@@ -1262,7 +1271,8 @@ extension MarkdownWebView {
 				// no-op unless the caret would be off-screen (e.g. Return on
 				// the last visible line), which nudges minimally.
 				webView.evaluateJavaScript(
-					(centered ? "window.__mdCenterNextSelection = true; " : "")
+					(preserveScroll ? "window.__mdPreserveNextSelectionScroll = true; " : "")
+					+ (centered ? "window.__mdCenterNextSelection = true; " : "")
 					+ "window.__mdRestoreScrollThenCaret && window.__mdRestoreScrollThenCaret(\(lastScrollY), \(caretPlacementArguments(selection)));",
 					completionHandler: nil)
 			} else if !didApplyInitialScroll, let initial = parent.initialScrollFraction {
@@ -1368,7 +1378,9 @@ extension MarkdownWebView {
 			// next update pass retries.
 			guard isFirstResponder else { return }
 			lastCaretToken = target.token
-			pendingSelection = NSRange(location: target.offset, length: 0)
+			pendingSelection = composedSelection(
+				NSRange(location: target.offset, length: target.selectionLength), in: parent.text as NSString)
+			pendingSelectionPreservesScroll = target.preservesScrollPosition
 			pendingStructuralTailDelta = nil
 			pendingStructuralTailBoundary = nil
 			pendingStructuralText = nil
@@ -1403,7 +1415,7 @@ extension MarkdownWebView {
 				// separates the page's stale caret report from a real one.
 				guardedSelectionTarget = (selection, target.token)
 				let token = target.token
-				placeCaretAfterUpdate(selection, into: webView, centered: true) { [weak self] in
+				placeCaretAfterUpdate(selection, into: webView, centered: !target.preservesScrollPosition, preserveScroll: target.preservesScrollPosition) { [weak self] in
 					guard self?.guardedSelectionTarget?.token == token else { return }
 					self?.guardedSelectionTarget = nil
 				}
@@ -1411,7 +1423,8 @@ extension MarkdownWebView {
 				// The page is about to be rebuilt at a new revision, so any report
 				// from the current DOM is dropped as stale by the revision check.
 				pendingSelection = selection
-				pendingSelectionIsHandoff = true
+				pendingSelectionIsHandoff = !target.preservesScrollPosition
+				pendingSelectionPreservesScroll = target.preservesScrollPosition
 				pendingStructuralTailDelta = nil
 				pendingStructuralTailBoundary = nil
 				pendingStructuralText = nil

@@ -138,7 +138,13 @@ the normal selection debounce, so clicking the mode picker cannot lose the most
 recent caret or selection. Unmappable rendered positions report nil rather than
 carrying a stale or guessed range into raw mode.
 
-Undo/redo caret restores include their physical source-line bounds. A caret in
+Undo/redo targets carry a UTF-16 selection length as well as the caret offset,
+so replacing selected text can restore the full selection. Native editors capture
+the selection before replacement and publish it immediately before the source
+edit; the styled editor reports it synchronously before selected typing. The
+focused pane consumes the undo target, including either side of Split.
+
+Collapsed undo/redo caret restores include their physical source-line bounds. A caret in
 hidden inline syntax (such as the opening `**` of a restored paragraph) snaps
 to the nearest rendered run on that line; only a truly empty source line gets a
 synthetic empty paragraph as its caret home.
@@ -154,6 +160,11 @@ active editing. Position reports still reach the host for persistence during
 that pause. There is no scroll-source lockout or echo filter at that level because each pane suppresses the
 echo of its own drive (the raw editor's sync flag and reported-offset check,
 the page's `driven` state).
+
+Undo/redo selection and caret targets set `preservesScrollPosition`: they
+restore the range without centering or revealing it. Mode handoffs keep their
+existing centering behavior. The web caret wrapper restores its pixel offset
+synchronously after placement, including collapsed redo carets.
 
 Each pane owns a single **viewport anchor** and re-applies it whenever its
 geometry changes rather than on a timer:

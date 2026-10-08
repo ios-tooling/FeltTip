@@ -37,6 +37,7 @@ extension MarkdownUITextEditor {
 		/// `textViewDidChange` can update the line index and fence cache for just
 		/// that range instead of rebuilding from the whole document.
 		private var pendingEdit: (range: NSRange, replacementLength: Int)?
+		private var pendingReplacementSelection: NSRange?
 		/// Accumulates edited ranges between debounced highlight passes.
 		private var pendingHighlightRange: NSRange?
 		private var highlightDebounceTimer: Timer?
@@ -84,6 +85,8 @@ extension MarkdownUITextEditor {
 		func textView(
 			_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String
 		) -> Bool {
+			let selected = textView.selectedRange
+			pendingReplacementSelection = selected.length > 0 && selected == range ? selected : nil
 			// Two edits before one `textViewDidChange` would make the recorded
 			// range unreliable; fall back to a full rebuild in that case.
 			pendingEdit = pendingEdit == nil ? (range, (text as NSString).length) : nil
@@ -111,6 +114,8 @@ extension MarkdownUITextEditor {
 			pendingEdit = nil
 			let updated = textView.sourceString
 			pendingLocalText = updated
+			if let selected = pendingReplacementSelection { parent.onSourceSelectionChanged?(selected) }
+			pendingReplacementSelection = nil
 			if let onSourceEdit = parent.onSourceEdit {
 				onSourceEdit(updated, textView.selectedRange.location)
 			} else {
@@ -179,8 +184,10 @@ extension MarkdownUITextEditor {
 			lastCaretToken = target.token
 			let length = textView.textStorage.length
 			let clamped = min(max(0, target.offset), length)
-			textView.selectedRange = NSRange(location: clamped, length: 0)
-			textView.scrollRangeToVisible(textView.selectedRange)
+			let offset = textView.contentOffset
+			textView.selectedRange = NSRange(location: clamped, length: min(target.selectionLength, length - clamped))
+			if target.preservesScrollPosition { textView.setContentOffset(offset, animated: false) }
+			if !target.preservesScrollPosition { textView.scrollRangeToVisible(textView.selectedRange) }
 		}
 
 		func applySelectionTarget(to textView: UITextView) {
@@ -189,8 +196,10 @@ extension MarkdownUITextEditor {
 			let length = textView.textStorage.length
 			let location = min(max(0, target.range.location), length)
 			let selected = min(max(0, target.range.length), length - location)
+			let offset = textView.contentOffset
 			textView.selectedRange = NSRange(location: location, length: selected)
-			textView.scrollRangeToVisible(textView.selectedRange)
+			if target.preservesScrollPosition { textView.setContentOffset(offset, animated: false) }
+			if !target.preservesScrollPosition { textView.scrollRangeToVisible(textView.selectedRange) }
 		}
 
 		/// The other pane's selection, drawn as an inactive wash. Goes through

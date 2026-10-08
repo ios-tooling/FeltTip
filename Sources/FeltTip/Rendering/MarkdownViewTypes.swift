@@ -37,16 +37,23 @@ public struct MarkdownScrollTarget: Equatable, Sendable {
 	}
 }
 
-/// A request to place the insertion point at a source (UTF-16) offset, paired
+/// A request to restore a caret or selection at a source (UTF-16) offset, paired
 /// with a token so repeated requests for the same offset (e.g. undo then redo
 /// back to the same place) all fire instead of being deduped by SwiftUI
-/// equality. Used to restore the caret after a host-driven text change such as
+/// equality. Used to restore the selection after a host-driven text change such as
 /// an undo/redo.
 public struct MarkdownCaretTarget: Equatable, Sendable {
+	/// UTF-16 length to reselect after undo; zero restores only the caret.
+	public let selectionLength: Int
 	public let offset: Int
 	public let token: Int
 
-	public init(offset: Int, token: Int) {
+	/// Keep the viewport fixed while restoring an undo/redo selection.
+	public let preservesScrollPosition: Bool
+
+	public init(offset: Int, token: Int, selectionLength: Int = 0, preservesScrollPosition: Bool = false) {
+		self.preservesScrollPosition = preservesScrollPosition
+		self.selectionLength = max(0, selectionLength)
 		self.offset = offset
 		self.token = token
 	}
@@ -61,7 +68,11 @@ public struct MarkdownSelectionTarget: Equatable, Sendable {
 	public let range: NSRange
 	public let token: Int
 
-	public init(range: NSRange, token: Int) {
+	/// Undo can restore a selection without the centering used for pane handoff.
+	public let preservesScrollPosition: Bool
+
+	public init(range: NSRange, token: Int, preservesScrollPosition: Bool = false) {
+		self.preservesScrollPosition = preservesScrollPosition
 		self.range = range
 		self.token = token
 	}
