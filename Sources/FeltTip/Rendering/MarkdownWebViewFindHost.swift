@@ -43,6 +43,7 @@ public final class MarkdownWebViewFindHost: NSView, NSSearchFieldDelegate {
 	private lazy var nextButton = chevronButton(system: "chevron.down", action: #selector(findNext))
 	private lazy var doneButton = NSButton(title: "Done", target: self, action: #selector(dismissBar))
 	let matchCountLabel = NSTextField(labelWithString: "")
+	var matchCountGeneration = 0
 	private var barVisible = false
 	private let barHeight: CGFloat = 34
 	private let barInset: CGFloat = 8

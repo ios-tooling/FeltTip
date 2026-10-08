@@ -22,6 +22,8 @@
 		/// its wrapping, so any index we kept alongside it would be our guess at
 		/// its position, and would drift the first time the two disagreed.
 		func updateMatchCount(for term: String) {
+			matchCountGeneration &+= 1
+			let generation = matchCountGeneration
 			guard !term.isEmpty else {
 				matchCountLabel.stringValue = ""
 				needsLayout = true
@@ -29,7 +31,7 @@
 			}
 			let encoded = String(data: try! JSONEncoder().encode(term), encoding: .utf8) ?? "\"\""
 			webView.evaluateJavaScript(Self.countScript(term: encoded)) { [weak self] result, _ in
-				guard let self else { return }
+				guard let self, generation == matchCountGeneration else { return }
 				let count = (result as? NSNumber)?.intValue ?? 0
 				matchCountLabel.stringValue = Self.label(for: count)
 				needsLayout = true
