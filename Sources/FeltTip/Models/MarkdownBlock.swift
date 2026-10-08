@@ -34,15 +34,16 @@ public enum TableCell: Sendable {
 	/// at (inside the pipes, past the padding). The editable renderer emits
 	/// it as the cell's caret home; non-empty cells derive positions from
 	/// their stamped runs instead and leave it nil.
-	case text(AttributedString, sourceStart: Int? = nil)
+	case text(InlineContent, sourceStart: Int? = nil)
 	case image(source: String, alt: String, link: URL?, width: CGFloat? = nil, height: CGFloat? = nil)
 
-	public init(_ attributed: AttributedString) { self = .text(attributed) }
+	public init(_ content: InlineContent) { self = .text(content) }
 
-	public var characters: AttributedString.CharacterView {
+	/// The cell's plain text.
+	public var characters: String {
 		switch self {
-		case .text(let str, _): str.characters
-		case .image(_, let alt, _, _, _): AttributedString(alt).characters
+		case .text(let content, _): content.characters
+		case .image(_, let alt, _, _, _): alt
 		}
 	}
 }
@@ -70,8 +71,8 @@ public struct ImageRowItem: Sendable {
 }
 
 public enum MarkdownBlock: Identifiable, Sendable {
-	case heading(level: Int, content: AttributedString, id: String)
-	case paragraph(content: AttributedString, links: [LinkInfo], id: String)
+	case heading(level: Int, content: InlineContent, id: String)
+	case paragraph(content: InlineContent, links: [LinkInfo], id: String)
 	case codeBlock(code: String, language: String?, sourceOffset: Int? = nil, id: String)
 	case blockquote(children: [MarkdownBlock], id: String)
 	case orderedList(items: [ListItemContent], start: Int, id: String)

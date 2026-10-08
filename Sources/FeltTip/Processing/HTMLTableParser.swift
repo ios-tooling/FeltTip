@@ -83,7 +83,7 @@ enum HTMLTableParser {
 
 	private static func cellContent(from html: String) -> TableCell {
 		let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
-		if trimmed.isEmpty { return .text(AttributedString()) }
+		if trimmed.isEmpty { return .text(InlineContent()) }
 
 		if let link = HTMLAttributeParser.extractLink(from: trimmed),
 		   let img = HTMLAttributeParser.extractImage(from: link.inner) {

@@ -46,7 +46,7 @@ struct BlockBuilder: MarkupWalker {
 	mutating func visitHeading(_ heading: Heading) {
 		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
 		let inline = builder.build(from: heading, linkifyURLs: linkifyURLs)
-		blocks.append(.heading(level: heading.level, content: inline.attributed, id: nextID()))
+		blocks.append(.heading(level: heading.level, content: inline.content, id: nextID()))
 	}
 
 	mutating func visitParagraph(_ paragraph: Paragraph) {
@@ -246,20 +246,20 @@ struct BlockBuilder: MarkupWalker {
 				context: context)
 			if let entry = InlineParagraphMemo.shared.lookup(key) {
 				// An unstamped (display) build has nothing to re-base.
-				let content = sourceConverter == nil ? entry.attributed
+				let content = sourceConverter == nil ? entry.content
 					: InlineParagraphMemo.shiftingStamps(
-						entry.attributed, by: span.sourceStart - entry.sourceStart)
+						entry.content, by: span.sourceStart - entry.sourceStart)
 				return .paragraph(content: content, links: entry.links, id: nextID())
 			}
 			let inline = buildInline(from: children)
 			InlineParagraphMemo.shared.store(
 				InlineParagraphMemo.Entry(
-					attributed: inline.attributed, links: inline.links, sourceStart: span.sourceStart),
+					content: inline.content, links: inline.links, sourceStart: span.sourceStart),
 				for: key)
-			return .paragraph(content: inline.attributed, links: inline.links, id: nextID())
+			return .paragraph(content: inline.content, links: inline.links, id: nextID())
 		}
 		let inline = buildInline(from: children)
-		return .paragraph(content: inline.attributed, links: inline.links, id: nextID())
+		return .paragraph(content: inline.content, links: inline.links, id: nextID())
 	}
 
 	private func buildInline(from children: [Markup]) -> InlineResult {
@@ -355,7 +355,7 @@ struct BlockBuilder: MarkupWalker {
 	private func makeCell(_ cell: Markdown.Table.Cell) -> TableCell {
 		if let imageCell = imageOnlyTableCell(from: cell) { return imageCell }
 		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
-		return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).attributed,
+		return .text(builder.build(from: cell, linkifyURLs: linkifyURLs).content,
 					 sourceStart: emptyCellSourceStart(cell))
 	}
 

@@ -193,7 +193,7 @@ import Testing
 			Issue.record("Expected paragraph"); return
 		}
 		// Strikethrough should produce a strikethrough style attribute somewhere.
-		let hasStrike = content.runs.contains { $0.strikethroughStyle != nil }
+		let hasStrike = content.runs.contains { $0.style.contains(.strikethrough) }
 		#expect(hasStrike)
 	}
 

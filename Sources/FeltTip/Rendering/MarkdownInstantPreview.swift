@@ -502,7 +502,7 @@ private enum InstantAttributedRenderer {
 		linkReferenceDefinitions: String?,
 		theme: MarkdownTheme,
 		fontSize: CGFloat
-	) -> AttributedString? {
+	) -> InlineContent? {
 		let input = linkReferenceDefinitions.map { markdown + "\n\n" + $0 } ?? markdown
 		let blocks = MarkdownBlockParser.parse(
 			input, theme: theme, fontSize: fontSize, trackSourceOffsets: true)
@@ -536,27 +536,35 @@ private enum InstantAttributedRenderer {
 	}
 
 	private static func appendInline(
-		_ inline: AttributedString, to output: NSMutableAttributedString,
+		_ inline: InlineContent, to output: NSMutableAttributedString,
 		font: NSFont, color: NSColor, theme: MarkdownTheme,
 		sourceOffsetAdjustment: Int = 0
 	) {
 		for run in inline.runs {
-			let substring = String(inline[run.range].characters)
-			let traits = run.inlineFontTraits ?? []
+			let style = run.style
 			var attributes: [NSAttributedString.Key: Any] = [
-				.font: font.applyingInlineTraits(traits, family: theme.fontFamily),
+				.font: font.applyingInlineTraits(style.fontTraits, family: theme.fontFamily),
 				.foregroundColor: color,
 			]
-			if let foreground = run.foregroundColor { attributes[.foregroundColor] = NSColor(foreground) }
-			if let background = run.backgroundColor { attributes[.backgroundColor] = NSColor(background) }
-			if let link = run.link { attributes[.link] = link }
-			if run.underlineStyle != nil { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-			if run.strikethroughStyle != nil { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-			if let baseline = run.baselineOffset { attributes[.baselineOffset] = baseline }
+			if style.contains(.monospaced) {
+				attributes[.foregroundColor] = NSColor(theme.codeForeground)
+				attributes[.backgroundColor] = NSColor(theme.codeBackground)
+			}
+			if style.contains(.secondary) { attributes[.foregroundColor] = NSColor(theme.secondaryColor) }
+			if style.contains(.highlight) { attributes[.backgroundColor] = NSColor(Color.yellow.opacity(0.3)) }
+			if let link = run.link {
+				attributes[.link] = link
+				attributes[.foregroundColor] = NSColor(theme.linkColor)
+			}
+			if style.contains(.underline) { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+			if style.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+			if style.isSuperscript { attributes[.baselineOffset] = font.pointSize * 0.3 }
+			if style.contains(.subscript) { attributes[.baselineOffset] = -(font.pointSize * 0.2) }
+			if let toolTip = run.toolTip { attributes[.toolTip] = toolTip }
 			if let sourceOffset = run.markdownSourceOffset {
 				attributes[.markdownSourceOffset] = sourceOffset + sourceOffsetAdjustment
 			}
-			output.append(NSAttributedString(string: substring, attributes: attributes))
+			output.append(NSAttributedString(string: run.text, attributes: attributes))
 		}
 	}
 

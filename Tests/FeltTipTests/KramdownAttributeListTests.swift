@@ -42,7 +42,7 @@ import Testing
 	@Test func removingAnAttributeListPreservesEditableBodyOffsets() throws {
 		let markdown = "## Heading\n{: .-three-column}\n\nBody text."
 		let blocks = MarkdownBlockParser.parse(markdown, trackSourceOffsets: true)
-		let paragraph = blocks.compactMap { block -> AttributedString? in
+		let paragraph = blocks.compactMap { block -> InlineContent? in
 			if case .paragraph(let content, _, _) = block { return content }
 			return nil
 		}.first

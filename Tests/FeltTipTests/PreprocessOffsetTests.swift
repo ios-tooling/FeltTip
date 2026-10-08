@@ -16,7 +16,7 @@ import Testing
 		var out: [(String, Int?)] = []
 		for block in blocks {
 			if case .paragraph(let content, _, _) = block {
-				for run in content.runs { out.append((String(content[run.range].characters), run.markdownSourceOffset)) }
+				for run in content.runs { out.append((run.text, run.markdownSourceOffset)) }
 			}
 		}
 		return out

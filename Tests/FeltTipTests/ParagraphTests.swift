@@ -46,7 +46,7 @@ import Foundation
 		guard case .paragraph(let content, _, _) = blocks.first else { Issue.record("not para"); return }
 		var foundStrike = false
 		for run in content.runs {
-			if run.strikethroughStyle != nil { foundStrike = true }
+			if run.style.contains(.strikethrough) { foundStrike = true }
 		}
 		#expect(foundStrike)
 	}

@@ -169,21 +169,19 @@ enum HTMLInlineConverter {
 			return [.paragraph(content: paragraph.text, links: paragraph.links, id: nextID())]
 		}
 		let formatted = attributedHTML(html)
-		guard !String(formatted.characters).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+		guard !formatted.characters.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
 		return [.paragraph(content: formatted, links: [], id: nextID())]
 	}
 
-	/// Walks an HTML fragment producing an AttributedString that preserves
+	/// Walks an HTML fragment producing inline content that preserves
 	/// inline emphasis tags: `<b>/<strong>` → bold, `<i>/<em>` → italic,
 	/// `<code>/<kbd>` → monospaced, `<u>` → underline, `<s>/<del>/<strike>` →
 	/// strikethrough. Unknown tags are stripped silently. Replaces the previous
 	/// `stripTags`-only path so HTML-block segments inside `<p align="…">` and
 	/// other non-anchor wrappers keep their formatting.
-	static func attributedHTML(_ html: String) -> AttributedString {
-		var result = AttributedString()
-		var traits: InlineFontTraits = []
-		var underline = false
-		var strikethrough = false
+	static func attributedHTML(_ html: String) -> InlineContent {
+		var result = InlineContent()
+		var style: InlineStyle = []
 		let ns = html as NSString
 		var cursor = 0
 		let matches = inlineTagRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
@@ -191,11 +189,7 @@ enum HTMLInlineConverter {
 		func appendText(_ raw: String) {
 			let decoded = HTMLAttributeParser.decodeEntities(raw)
 			guard !decoded.isEmpty else { return }
-			var run = AttributedString(decoded)
-			if !traits.isEmpty { run[InlineFontTraitsAttribute.self] = traits }
-			if underline { run.underlineStyle = .single }
-			if strikethrough { run.strikethroughStyle = .single }
-			result += run
+			result.append(InlineRun(decoded, style: style))
 		}
 
 		for match in matches {
@@ -206,15 +200,15 @@ enum HTMLInlineConverter {
 			let name = ns.substring(with: match.range(at: 2)).lowercased()
 			switch name {
 			case "b", "strong":
-				if closing { traits.remove(.bold) } else { traits.insert(.bold) }
+				if closing { style.remove(.bold) } else { style.insert(.bold) }
 			case "i", "em":
-				if closing { traits.remove(.italic) } else { traits.insert(.italic) }
+				if closing { style.remove(.italic) } else { style.insert(.italic) }
 			case "code", "kbd":
-				if closing { traits.remove(.monospaced) } else { traits.insert(.monospaced) }
+				if closing { style.remove(.monospaced) } else { style.insert(.monospaced) }
 			case "u":
-				underline = !closing
+				if closing { style.remove(.underline) } else { style.insert(.underline) }
 			case "s", "del", "strike":
-				strikethrough = !closing
+				if closing { style.remove(.strikethrough) } else { style.insert(.strikethrough) }
 			default:
 				break
 			}
@@ -223,6 +217,7 @@ enum HTMLInlineConverter {
 		if cursor < ns.length {
 			appendText(ns.substring(from: cursor))
 		}
+		result.coalesce()
 		return result
 	}
 
@@ -231,23 +226,23 @@ enum HTMLInlineConverter {
 		options: []
 	)
 
-	static func buildParagraph(from html: String, preservingWhitespace: Bool = false) -> (text: AttributedString, links: [LinkInfo])? {
+	static func buildParagraph(from html: String, preservingWhitespace: Bool = false) -> (text: InlineContent, links: [LinkInfo])? {
 		let ns = html as NSString
 		let matches = HTMLAttributeParser.Patterns.anchor.matches(in: html, range: NSRange(location: 0, length: ns.length))
 		guard !matches.isEmpty else { return nil }
 
-		var result = AttributedString()
+		var result = InlineContent()
 		var links: [LinkInfo] = []
 		var lastEnd = 0
 
 		for (i, match) in matches.enumerated() {
 			let beforeHTML = ns.substring(with: NSRange(location: lastEnd, length: match.range.location - lastEnd))
 			let beforeAttr = attributedHTML(preservingWhitespace ? beforeHTML : HTMLAttributeParser.collapseWhitespace(beforeHTML))
-			if !String(beforeAttr.characters).isEmpty {
+			if !beforeAttr.isEmpty {
 				result += beforeAttr
-				if !preservingWhitespace { result += AttributedString(" ") }
+				if !preservingWhitespace { result.append(InlineRun(" ")) }
 			} else if i > 0 {
-				if !preservingWhitespace { result += AttributedString(" ") }
+				if !preservingWhitespace { result.append(InlineRun(" ")) }
 			}
 
 			let href = HTMLAttributeParser.extractAttribute("href", from: ns.substring(with: match.range(at: 1)))
@@ -257,14 +252,14 @@ enum HTMLInlineConverter {
 			// img alt-attribute or the literal "link" so we never emit an empty
 			// anchor — matches the prior stripTags-based behavior.
 			var labelAttr = attributedHTML(inner)
-			if String(labelAttr.characters).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+			if labelAttr.characters.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 				let alt = HTMLAttributeParser.extractAttribute("alt", from: inner) ?? ""
-				labelAttr = AttributedString(alt.isEmpty ? "link" : alt)
+				labelAttr = InlineContent(alt.isEmpty ? "link" : alt)
 			}
 
 			if let href, let url = URL(string: href) {
-				let offset = result.characters.count
-				labelAttr.link = url
+				let offset = result.characterCount
+				labelAttr.setLink(url, fromRun: 0)
 				result += labelAttr
 				links.append(LinkInfo(url: href, characterOffset: offset))
 			} else {
@@ -277,12 +272,13 @@ enum HTMLInlineConverter {
 		if lastEnd < ns.length {
 			let afterHTML = ns.substring(from: lastEnd)
 			let afterAttr = attributedHTML(preservingWhitespace ? afterHTML : HTMLAttributeParser.collapseWhitespace(afterHTML))
-			if !String(afterAttr.characters).isEmpty {
-				if !preservingWhitespace { result += AttributedString(" ") }
+			if !afterAttr.isEmpty {
+				if !preservingWhitespace { result.append(InlineRun(" ")) }
 				result += afterAttr
 			}
 		}
 
-		return result.characters.isEmpty ? nil : (result, links)
+		result.coalesce()
+		return result.isEmpty ? nil : (result, links)
 	}
 }

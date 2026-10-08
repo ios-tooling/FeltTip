@@ -7,29 +7,27 @@ import Foundation
 import SwiftUI
 
 extension MarkdownHTMLRenderer {
-	/// Walks an AttributedString's runs and emits HTML that mirrors the
-	/// inline traits (bold/italic/monospaced), strikethrough, and link
-	/// attributes. Adjacent
-	/// runs may produce `</strong><strong>` boundaries — valid HTML, no
-	/// attempt at minimization since browsers and NSAttributedString import
-	/// handle it identically.
-	static func renderInline(_ attributed: AttributedString) -> String {
+	/// Walks the inline runs and emits HTML that mirrors their style flags
+	/// and links. Adjacent runs may produce `</strong><strong>` boundaries —
+	/// valid HTML, no attempt at minimization since browsers and
+	/// NSAttributedString import handle it identically.
+	static func renderInline(_ content: InlineContent) -> String {
 		var result = ""
 		// Append tags directly instead of rewrapping each run's string per
 		// formatting layer — the latter reallocates the growing run string once
 		// per trait/link/span, which dominated HTML generation on inline-heavy
 		// documents. Nesting (outer→inner):
 		// span > a > strong > em > u > del > mark > sup/sub > code.
-		for run in attributed.runs {
+		for run in content.runs {
 			// A hard line break arrives as a newline in the run text (which the
 			// NSTextView path renders literally). HTML collapses that to a
 			// space, so the break vanished from the styled view; it needs a
 			// <br>. Breaks are their own unstamped run, so replacing the
 			// character leaves every stamped run's text — and so every source
 			// offset — untouched.
-			let text = withLineBreakElements(escape(String(attributed[run.range].characters)))
+			let text = withLineBreakElements(escape(run.text))
 			guard !text.isEmpty else { continue }
-			let traits = run.inlineFontTraits ?? []
+			let style = run.style
 			let offset = emitSourceOffsets ? run.markdownSourceOffset : nil
 			let escapedPipeOffset = emitSourceOffsets ? run.markdownEscapedPipeSourceOffset : nil
 			if let offset { result += "<span data-s=\"\(offset)\">" }
@@ -37,27 +35,26 @@ extension MarkdownHTMLRenderer {
 			if let url = run.link {
 				result += "<a \(linkAttributes(for: url))>"
 			}
-			let struck = run.strikethroughStyle != nil
-			let underlined = run.underlineStyle != nil
-			let highlighted = run.backgroundColor != nil && !traits.contains(.monospaced)
-			let baseline = run.baselineOffset ?? 0
-			if traits.contains(.bold) { result += "<strong>" }
-			if traits.contains(.italic) { result += "<em>" }
+			let struck = style.contains(.strikethrough)
+			let underlined = style.contains(.underline)
+			let highlighted = style.contains(.highlight) && !style.contains(.monospaced)
+			if style.contains(.bold) { result += "<strong>" }
+			if style.contains(.italic) { result += "<em>" }
 			if underlined { result += "<u>" }
 			if struck { result += "<del>" }
 			if highlighted { result += "<mark>" }
-			if baseline > 0 { result += "<sup>" }
-			if baseline < 0 { result += "<sub>" }
-			if traits.contains(.monospaced) { result += "<code>" }
+			if style.isSuperscript { result += "<sup>" }
+			if style.contains(.subscript) { result += "<sub>" }
+			if style.contains(.monospaced) { result += "<code>" }
 			result += text
-			if traits.contains(.monospaced) { result += "</code>" }
-			if baseline < 0 { result += "</sub>" }
-			if baseline > 0 { result += "</sup>" }
+			if style.contains(.monospaced) { result += "</code>" }
+			if style.contains(.subscript) { result += "</sub>" }
+			if style.isSuperscript { result += "</sup>" }
 			if highlighted { result += "</mark>" }
 			if struck { result += "</del>" }
 			if underlined { result += "</u>" }
-			if traits.contains(.italic) { result += "</em>" }
-			if traits.contains(.bold) { result += "</strong>" }
+			if style.contains(.italic) { result += "</em>" }
+			if style.contains(.bold) { result += "</strong>" }
 			if run.link != nil { result += "</a>" }
 			if escapedPipeOffset != nil { result += "</span>" }
 			if offset != nil { result += "</span>" }

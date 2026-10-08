@@ -22,7 +22,7 @@ import Testing
 	@Test func bodyOffsetSkipsFrontmatter() throws {
 		// Without the frontmatter shift this would report 2 (the body-relative
 		// offset) and an edit would land 18 characters too early in the source.
-		let heading = blocks(track: true).compactMap { block -> AttributedString? in
+		let heading = blocks(track: true).compactMap { block -> InlineContent? in
 			if case .heading(_, let content, _) = block { return content }
 			return nil
 		}.first
@@ -55,7 +55,7 @@ import Testing
 		let markdown = "\n\n---\ntitle: Hi\n---\n# Heading"
 		let parsed = MarkdownBlockParser.parse(
 			markdown, preprocessed: true, trackSourceOffsets: true)
-		let heading = parsed.compactMap { block -> AttributedString? in
+		let heading = parsed.compactMap { block -> InlineContent? in
 			if case .heading(_, let content, _) = block { return content }
 			return nil
 		}.first

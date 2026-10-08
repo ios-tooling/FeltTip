@@ -29,7 +29,7 @@ enum HTMLHeadingParser {
 		).trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !text.isEmpty else { return nil }
 
-		let heading = MarkdownBlock.heading(level: level, content: AttributedString(text), id: "\(id)-h")
+		let heading = MarkdownBlock.heading(level: level, content: InlineContent(text), id: "\(id)-h")
 		if let alignment = alignment(in: attrs) {
 			return .aligned(alignment: alignment, block: heading, id: id)
 		}

@@ -141,30 +141,23 @@ extension MarkdownHTMLRenderer {
 		var shifted = content
 		let sourceText = sourceText ?? markdown
 		if sourceText == markdown {
-			for run in content.runs {
-				if let offset = run.markdownSourceOffset {
-					shifted[run.range].markdownSourceOffset = sourceStart + offset
-				}
-			}
-			return renderInline(shifted)
+			return renderInline(content.shiftingStamps(by: sourceStart))
 		}
 		let offsetMap = MarkdownPreprocessor.offsetMap(from: sourceText, to: markdown)
 		let source = sourceText as NSString
-		let offsets = content.runs.map { run -> (Range<AttributedString.Index>, Int?) in
-			guard let offset = run.markdownSourceOffset else { return (run.range, nil) }
-			let text = String(content[run.range].characters)
+		for index in shifted.runs.indices {
+			let run = shifted.runs[index]
+			guard let offset = run.markdownSourceOffset else { continue }
+			let text = run.text
 			let length = (text as NSString).length
 			guard offset >= 0, offset < offsetMap.count,
-			      offset + length <= offsetMap.count else { return (run.range, nil) }
+			      offset + length <= offsetMap.count else { shifted.runs[index].markdownSourceOffset = nil; continue }
 			let mappedStart = offsetMap[offset]
 			guard mappedStart + length <= source.length,
 			      (0..<length).allSatisfy({ offsetMap[offset + $0] == mappedStart + $0 }),
 			      source.substring(with: NSRange(location: mappedStart, length: length)) == text
-			else { return (run.range, nil) }
-			return (run.range, sourceStart + mappedStart)
-		}
-		for (range, offset) in offsets {
-			shifted[range].markdownSourceOffset = offset
+			else { shifted.runs[index].markdownSourceOffset = nil; continue }
+			shifted.runs[index].markdownSourceOffset = sourceStart + mappedStart
 		}
 		return renderInline(shifted)
 	}
@@ -261,8 +254,8 @@ extension MarkdownHTMLRenderer {
 
 	private static func renderCell(_ cell: TableCell) -> String {
 		switch cell {
-		case .text(let attributed, let sourceStart):
-			let inline = renderInline(attributed)
+		case .text(let content, let sourceStart):
+			let inline = renderInline(content)
 			// An empty cell renders no run, leaving the caret nowhere to map
 			// typing from. Give it the same stamped, text-less home that
 			// __mdPlaceCaret synthesizes for empty paragraphs.

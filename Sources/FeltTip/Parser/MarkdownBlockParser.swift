@@ -550,7 +550,7 @@ public enum MarkdownBlockParser {
 					case .paragraph(let content, let links, let paraID) = firstChild else {
 				return block
 			}
-			let text = String(content.characters)
+			let text = content.characters
 			guard let alertType = extractAlertType(from: text) else { return block }
 
 			// Strip the [!TYPE] marker and keep remaining text from the first paragraph
@@ -560,9 +560,7 @@ public enum MarkdownBlockParser {
 			if !afterMarker.isEmpty {
 				// Rebuild paragraph without the marker
 				var remaining = content
-				let charsToDrop = text.count - afterMarker.count
-				let dropEnd = remaining.characters.index(remaining.startIndex, offsetBy: charsToDrop)
-				remaining.removeSubrange(remaining.startIndex..<dropEnd)
+				remaining.removeFirst(characters: text.count - afterMarker.count)
 				alertChildren.append(.paragraph(content: remaining, links: links, id: paraID))
 			}
 			alertChildren.append(contentsOf: Array(children.dropFirst()))

@@ -2,11 +2,11 @@
 //  InlineFontTraits.swift
 //  FeltTip
 //
-//  A custom AttributedString attribute carrying per-run font traits (bold,
-//  italic, monospaced). InlineBuilder writes it; the NSAttributedString
-//  converter reads it back to reconstruct the right NSFont. This is how we
-//  preserve inline emphasis when bridging SwiftUI's opaque Font values into
-//  AppKit's NSFont world.
+//  Per-run font traits (bold, italic, monospaced). Parsed inline content
+//  carries them as `InlineStyle` flags; the AttributedString attribute here
+//  is written by `InlineContent.attributedString(theme:fontSize:)` for hosts
+//  that display inline content with SwiftUI text, so the NSAttributedString
+//  converter can reconstruct the right NSFont from SwiftUI's opaque Font.
 //
 
 import Foundation

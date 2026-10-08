@@ -20,7 +20,7 @@ struct MarkdownMetaWalker {
 	mutating func walk(_ block: MarkdownBlock) {
 		switch block {
 		case .heading(let level, let content, _):
-			headings.append(.init(level: level, text: String(content.characters)))
+			headings.append(.init(level: level, text: content.characters))
 			collectLinks(in: content)
 
 		case .paragraph(let content, _, _):
@@ -73,11 +73,10 @@ struct MarkdownMetaWalker {
 		}
 	}
 
-	private mutating func collectLinks(in attributed: AttributedString) {
-		for run in attributed.runs {
+	private mutating func collectLinks(in content: InlineContent) {
+		for run in content.runs {
 			guard let url = run.link else { continue }
-			let text = String(attributed[run.range].characters)
-			links.append(.init(url: url.absoluteString, text: text))
+			links.append(.init(url: url.absoluteString, text: run.text))
 		}
 	}
 

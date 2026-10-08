@@ -8,7 +8,7 @@ import Markdown
 import SwiftUI
 
 public struct InlineResult: Sendable {
-	public let attributed: AttributedString
+	public let content: InlineContent
 	public let links: [LinkInfo]
 }
 
@@ -28,19 +28,11 @@ struct InlineBuilder: MarkupWalker {
 	// `internal` rather than `private(set)` so the linkify extension (in its
 	// own file) can write to them. The whole type is internal, so dropping
 	// the read/write split doesn't widen access beyond the module.
-	var result = AttributedString()
+	var result = InlineContent()
 	var links: [LinkInfo] = []
-	/// Set by the linkify passes when they apply a link over existing runs,
-	/// which is the only way stamped runs get split after they are built.
-	var linkifySplitRuns = false
 	/// Whether any text node could hold a bare URL (`://` or `www.`), so the
 	/// common case skips materialising the plain text for the linkify passes.
 	private var mayContainBareURL = false
-	/// The attribute container for the current style flags, rebuilt only when
-	/// a flag changes. Table-heavy documents create tens of thousands of text
-	/// runs, and building each run from one container is far cheaper than
-	/// applying the attributes one setter at a time.
-	private var cachedStyle: (key: StyleKey, container: AttributeContainer)?
 	private var charOffset = 0
 	private var bold = false
 	private var italic = false
@@ -52,10 +44,10 @@ struct InlineBuilder: MarkupWalker {
 	private var kbd = false
 	private var inlineCode = false
 	private var currentLinkURL: URL?
-	private var linkStartIndex: AttributedString.Index?
+	private var linkStartIndex: Int?
 	private var linkStartChar: Int = 0
 	private var currentAbbrTitle: String?
-	private var abbrStartIndex: AttributedString.Index?
+	private var abbrStartIndex: Int?
 
 	mutating func build(from markup: Markup, linkifyURLs: Bool = true) -> InlineResult {
 		for child in markup.children { visit(child) }
@@ -65,45 +57,12 @@ struct InlineBuilder: MarkupWalker {
 	mutating func finalize(linkifyURLs: Bool = true) -> InlineResult {
 		if linkifyURLs, mayContainBareURL {
 			// Both passes read the plain text; linkifying does not change it.
-			let plainText = String(result.characters)
+			let plainText = result.characters
 			linkifyBareURLs(in: plainText)
 			linkifyWWWPrefix(in: plainText)
 		}
-		if linkifySplitRuns { repairSplitSourceOffsets() }
-		return InlineResult(attributed: result, links: links)
-	}
-
-	/// Post-hoc passes (bare-URL linkify) apply attributes over sub-ranges of
-	/// already-stamped runs, splitting them — and every fragment inherits the
-	/// original run's source offset, leaving all but the first stamped too low.
-	/// Advance each later fragment's stamp past the text its predecessors
-	/// consumed, so every stamp addresses the fragment's own first character.
-	private mutating func repairSplitSourceOffsets() {
-		guard sourceConverter != nil else { return }
-		var base: Int?
-		var consumedUTF16 = 0
-		var position = 0
-		var fixes: [(start: Int, length: Int, stamp: Int)] = []
-		for run in result.runs {
-			let text = String(result[run.range].characters)
-			defer { position += text.count }
-			guard let stamp = run.markdownSourceOffset else {
-				base = nil
-				continue
-			}
-			if stamp == base {
-				fixes.append((position, text.count, stamp + consumedUTF16))
-			} else {
-				base = stamp
-				consumedUTF16 = 0
-			}
-			consumedUTF16 += text.utf16.count
-		}
-		for fix in fixes {
-			let lower = result.characters.index(result.startIndex, offsetBy: fix.start)
-			let upper = result.characters.index(lower, offsetBy: fix.length)
-			result[lower..<upper].markdownSourceOffset = fix.stamp
-		}
+		result.coalesce()
+		return InlineResult(content: result, links: links)
 	}
 
 	mutating func visitText(_ text: Markdown.Text) {
@@ -116,23 +75,22 @@ struct InlineBuilder: MarkupWalker {
 			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
 			rendered: string) {
 			for fragment in fragments {
-				var container = currentStyle()
-				container.markdownSourceOffset = fragment.sourceOffset
-				if let pipe = fragment.escapedPipeSourceOffset { container.markdownEscapedPipeSourceOffset = pipe }
-				result += AttributedString(fragment.text, attributes: container)
+				result.append(InlineRun(
+					fragment.text, style: currentStyle,
+					markdownSourceOffset: fragment.sourceOffset,
+					markdownEscapedPipeSourceOffset: fragment.escapedPipeSourceOffset))
 			}
 			charOffset += string.count
 			return
 		}
-		var container = currentStyle()
-		if let converter = sourceConverter, let range = text.range,
-		   let offset = converter.verbatimUTF16Offset(
-			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
-			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
-			rendered: string) {
-			container.markdownSourceOffset = offset
+		var offset: Int?
+		if let converter = sourceConverter, let range = text.range {
+			offset = converter.verbatimUTF16Offset(
+				lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
+				upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
+				rendered: string)
 		}
-		result += AttributedString(string, attributes: container)
+		result.append(InlineRun(string, style: currentStyle, markdownSourceOffset: offset))
 		charOffset += string.count
 	}
 
@@ -166,38 +124,30 @@ struct InlineBuilder: MarkupWalker {
 	}
 
 	mutating func visitInlineCode(_ code: InlineCode) {
-		var str = AttributedString(code.code)
-		str.font = .system(size: fontSize, design: .monospaced)
-		str.foregroundColor = theme.codeForeground
-		str.backgroundColor = theme.codeBackground
-		str.inlineFontTraits = .monospaced
-		if let converter = sourceConverter, let range = code.range,
-		   let offset = converter.verbatimInlineCodeUTF16Offset(
-			lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
-			upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
-			rendered: code.code) {
-			str.markdownSourceOffset = offset
+		var offset: Int?
+		if let converter = sourceConverter, let range = code.range {
+			offset = converter.verbatimInlineCodeUTF16Offset(
+				lowerLine: range.lowerBound.line, lowerColumn: range.lowerBound.column,
+				upperLine: range.upperBound.line, upperColumn: range.upperBound.column,
+				rendered: code.code)
 		}
-		result += str
+		result.append(InlineRun(code.code, style: .monospaced, markdownSourceOffset: offset))
 		charOffset += code.code.count
 	}
 
 	mutating func visitLink(_ link: Markdown.Link) {
-		let start = result.endIndex
+		let start = result.runs.count
 		let startChar = charOffset
 		descendInto(link)
-		if start < result.endIndex, let dest = link.destination, let url = URL(string: dest) {
-			result[start..<result.endIndex].link = url
-			result[start..<result.endIndex].foregroundColor = theme.linkColor
+		if start < result.runs.count, let dest = link.destination, let url = URL(string: dest) {
+			result.setLink(url, fromRun: start)
 			links.append(LinkInfo(url: dest, characterOffset: startChar))
 		}
 	}
 
 	mutating func visitImage(_ image: Markdown.Image) {
 		// Images handled at block level; emit alt text as placeholder
-		var str = AttributedString(image.plainText)
-		str.foregroundColor = theme.secondaryColor
-		result += str
+		result.append(InlineRun(image.plainText, style: .secondary))
 		charOffset += image.plainText.count
 	}
 
@@ -206,7 +156,7 @@ struct InlineBuilder: MarkupWalker {
 		let tag = raw.lowercased()
 
 		if tag == "<br>" || tag == "<br/>" || tag == "<br />" {
-			result += AttributedString("\n")
+			result.append(InlineRun("\n"))
 			charOffset += 1
 			return
 		}
@@ -214,9 +164,7 @@ struct InlineBuilder: MarkupWalker {
 		// Inline <img> — emit alt text
 		if tag.hasPrefix("<img") {
 			let alt = HTMLAttributeParser.extractAttribute("alt", from: raw) ?? "image"
-			var container = currentStyle()
-			if let url = currentLinkURL { container.link = url }
-			result += AttributedString(alt, attributes: container)
+			result.append(InlineRun(alt, style: currentStyle, link: currentLinkURL))
 			charOffset += alt.count
 			return
 		}
@@ -224,7 +172,7 @@ struct InlineBuilder: MarkupWalker {
 		// Inline <a href="..."> — start tracking link
 		if tag.hasPrefix("<a "), let href = HTMLAttributeParser.extractAttribute("href", from: raw), let url = URL(string: href) {
 			currentLinkURL = url
-			linkStartIndex = result.endIndex
+			linkStartIndex = result.runs.count
 			linkStartChar = charOffset
 			return
 		}
@@ -232,17 +180,17 @@ struct InlineBuilder: MarkupWalker {
 		// <abbr title="..."> — start tracking abbreviation tooltip
 		if tag.hasPrefix("<abbr") {
 			currentAbbrTitle = HTMLAttributeParser.extractAttribute("title", from: raw)
-			abbrStartIndex = result.endIndex
+			abbrStartIndex = result.runs.count
 			return
 		}
 
 		// </abbr> — finalize the abbreviation by applying underline + tooltip
 		if tag == "</abbr>" {
-			if let title = currentAbbrTitle, let start = abbrStartIndex, start < result.endIndex {
-				result[start..<result.endIndex].underlineStyle = .single
-				#if canImport(AppKit)
-				result[start..<result.endIndex].toolTip = title
-				#endif
+			if let title = currentAbbrTitle, let start = abbrStartIndex, start < result.runs.count {
+				for index in start..<result.runs.count {
+					result.runs[index].style.insert(.underline)
+					result.runs[index].toolTip = title
+				}
 			}
 			currentAbbrTitle = nil
 			abbrStartIndex = nil
@@ -251,9 +199,8 @@ struct InlineBuilder: MarkupWalker {
 
 		// </a> — apply link to accumulated content
 		if tag == "</a>" {
-			if let url = currentLinkURL, let start = linkStartIndex, start < result.endIndex {
-				result[start..<result.endIndex].link = url
-				result[start..<result.endIndex].foregroundColor = theme.linkColor
+			if let url = currentLinkURL, let start = linkStartIndex, start < result.runs.count {
+				result.setLink(url, fromRun: start)
 				links.append(LinkInfo(url: url.absoluteString, characterOffset: linkStartChar))
 			}
 			currentLinkURL = nil
@@ -284,59 +231,28 @@ struct InlineBuilder: MarkupWalker {
 
 
 	mutating func visitSoftBreak(_ softBreak: SoftBreak) {
-		result += AttributedString(" ")
+		result.append(InlineRun(" "))
 		charOffset += 1
 	}
 
 	mutating func visitLineBreak(_ lineBreak: LineBreak) {
-		result += AttributedString("\n")
+		result.append(InlineRun("\n"))
 		charOffset += 1
 	}
 
-	private struct StyleKey: Equatable {
-		let bold, italic, underline, strikethrough, superscript, subscript_, highlight, kbd, inlineCode: Bool
-	}
-
-	private mutating func currentStyle() -> AttributeContainer {
-		let key = StyleKey(
-			bold: bold, italic: italic, underline: underline, strikethrough: strikethrough,
-			superscript: superscript, subscript_: subscript_, highlight: highlight, kbd: kbd, inlineCode: inlineCode)
-		if let cached = cachedStyle, cached.key == key { return cached.container }
-		var container = AttributeContainer()
-		applyCurrentStyle(&container)
-		cachedStyle = (key, container)
-		return container
-	}
-
-	private func applyCurrentStyle(_ str: inout AttributeContainer) {
-		if kbd || inlineCode {
-			str.font = .system(size: fontSize, design: .monospaced)
-			str.foregroundColor = theme.codeForeground
-			str.backgroundColor = theme.codeBackground
-		} else {
-			var font = Font.system(size: superscript || subscript_ ? fontSize * 0.75 : fontSize)
-			if bold { font = font.bold() }
-			if italic { font = font.italic() }
-			str.font = font
-			// Intentionally NOT setting str.foregroundColor here. Pre-painting
-			// every run with theme.textColor caused the consuming appender's
-			// defaultColor (e.g. headingColor for headings) to be overridden,
-			// which made bold-in-heading color and heading accent invisible.
-		}
-		if underline { str.underlineStyle = .single }
-		if strikethrough { str.strikethroughStyle = .single }
-		if superscript { str.baselineOffset = fontSize * 0.3 }
-		if subscript_ { str.baselineOffset = -(fontSize * 0.2) }
-		if highlight { str.backgroundColor = .yellow.opacity(0.3) }
-
-		// Mirror the inline traits in a custom attribute so the NSAttributedString
-		// converter can reconstruct an NSFont with matching traits — SwiftUI's
-		// Font is opaque, so we can't extract bold/italic from it directly.
-		var traits: InlineFontTraits = []
-		if bold { traits.insert(.bold) }
-		if italic { traits.insert(.italic) }
-		if kbd || inlineCode { traits.insert(.monospaced) }
-		if !traits.isEmpty { str.inlineFontTraits = traits }
+	/// The flags in force for the next run. Colors are not recorded: the
+	/// renderers derive them from these flags and the theme.
+	private var currentStyle: InlineStyle {
+		var style: InlineStyle = []
+		if kbd || inlineCode { style.insert(.monospaced) }
+		if bold { style.insert(.bold) }
+		if italic { style.insert(.italic) }
+		if underline { style.insert(.underline) }
+		if strikethrough { style.insert(.strikethrough) }
+		if superscript { style.insert(.superscript) }
+		if subscript_ { style.insert(.subscript) }
+		if highlight { style.insert(.highlight) }
+		return style
 	}
 
 }

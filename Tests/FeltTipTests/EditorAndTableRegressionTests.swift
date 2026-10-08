@@ -56,7 +56,7 @@ extension EditorAndTableRegressionTests {
   #expect(String(text.characters) == "Read A & B, then C.")
   #expect(text.runs.contains { $0.link?.absoluteString == "https://a.test" })
   #expect(text.runs.contains { $0.link?.absoluteString == "https://b.test" })
-  #expect(text.runs.contains { ($0.inlineFontTraits ?? []).contains(.bold) })
+  #expect(text.runs.contains { $0.inlineFontTraits.contains(.bold) })
  }
  @Test func mixedCellsStayInBodyRows() throws {
   let parsed = try #require(HTMLTableParser.parse(html: "<table><tr><th>Name</th><td>Alice</td></tr><tr><th>Role</th><td>Author</td></tr></table>"))

@@ -19,7 +19,7 @@ import Testing
 			case .orderedList(let items, _, _): for item in items { out += runs(item.blocks) }
 			case .blockquote(let children, _): out += runs(children)
 			case .paragraph(let content, _, _):
-				for run in content.runs { out.append((String(content[run.range].characters), run.markdownSourceOffset)) }
+				for run in content.runs { out.append((run.text, run.markdownSourceOffset)) }
 			default: break
 			}
 		}

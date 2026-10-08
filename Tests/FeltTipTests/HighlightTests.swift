@@ -29,12 +29,8 @@ import Foundation
 		guard case .paragraph(let content, _, _) = blocks.first else {
 			Issue.record("Expected paragraph"); return
 		}
-		// The <mark> tag should trigger highlight in the attributed string
-		var foundHighlight = false
-		for run in content.runs {
-			if run.backgroundColor != nil { foundHighlight = true }
-		}
-		#expect(foundHighlight, "Highlighted text should have background color")
+		// The <mark> tag should set the highlight style on its run.
+		#expect(content.runs.contains { $0.style.contains(.highlight) }, "Highlighted text should carry the highlight style")
 	}
 
 	@Test func highlightSurvivesHTMLRenderingForTheStyledPane() {

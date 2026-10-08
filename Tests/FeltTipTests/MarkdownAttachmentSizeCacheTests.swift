@@ -4,8 +4,8 @@ import Foundation
 
 @Suite @MainActor struct MarkdownAttachmentSizeCacheTests {
 	private func table(_ cells: [[String]]) -> MarkdownBlock {
-		let header = cells[0].map { TableCell.text(AttributedString($0)) }
-		let rows = cells.dropFirst().map { row in row.map { TableCell.text(AttributedString($0)) } }
+		let header = cells[0].map { TableCell.text(InlineContent($0)) }
+		let rows = cells.dropFirst().map { row in row.map { TableCell.text(InlineContent($0)) } }
 		return .table(header: header, rows: Array(rows), columnAlignments: [.default, .default], id: "t")
 	}
 

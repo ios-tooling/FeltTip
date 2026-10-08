@@ -146,25 +146,18 @@ struct StampRelativeHasher {
 		hasher.combine(offset - base!)
 	}
 
-	/// `AttributedString`'s own `hash(into:)` walks Characters and cost more
-	/// than rendering the HTML it was meant to save. Hash each run's text as
-	/// UTF-8 bytes plus its attributes instead, with the two source-offset
-	/// attributes taken out of the container and folded in relative to the
-	/// base. Runs are canonical, so equal strings hash equally.
-	mutating func combine(_ attributed: AttributedString) {
-		for run in attributed.runs {
-			var text = String(attributed[run.range].characters)
+	/// Hash each run's text as UTF-8 bytes plus its formatting, with the two
+	/// source offsets folded in relative to the base so a shifted block still
+	/// hashes equally.
+	mutating func combine(_ content: InlineContent) {
+		for run in content.runs {
+			var text = run.text
 			text.withUTF8 { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
-			var attributes = run.attributes
-			let offset = attributes.markdownSourceOffset
-			let pipe = attributes.markdownEscapedPipeSourceOffset
-			if offset != nil || pipe != nil {
-				attributes.markdownSourceOffset = nil
-				attributes.markdownEscapedPipeSourceOffset = nil
-			}
-			hasher.combine(attributes)
-			combineOffset(offset)
-			combineOffset(pipe)
+			hasher.combine(run.style.rawValue)
+			hasher.combine(run.link)
+			hasher.combine(run.toolTip)
+			combineOffset(run.markdownSourceOffset)
+			combineOffset(run.markdownEscapedPipeSourceOffset)
 		}
 	}
 

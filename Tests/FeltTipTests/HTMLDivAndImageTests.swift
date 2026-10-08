@@ -142,8 +142,8 @@ import Testing
 		}
 		#expect(String(content.characters).contains("Knowledge is powerful"))
 		let hasItalic = content.runs.contains { run in
-			(run.inlineFontTraits ?? []).contains(.italic) &&
-				String(content.characters[run.range]).contains("Knowledge")
+			run.inlineFontTraits.contains(.italic) &&
+				run.text.contains("Knowledge")
 		}
 		#expect(hasItalic, "Italic trait should be preserved on the inner text run")
 	}
@@ -157,8 +157,8 @@ import Testing
 			return
 		}
 		let hasBold = content.runs.contains { run in
-			(run.inlineFontTraits ?? []).contains(.bold) &&
-				String(content.characters[run.range]).contains("Heads up")
+			run.inlineFontTraits.contains(.bold) &&
+				run.text.contains("Heads up")
 		}
 		#expect(hasBold, "Bold trait should be preserved on the inner text run")
 	}
@@ -171,8 +171,8 @@ import Testing
 			Issue.record("Expected .aligned(.center, .paragraph), got \(blocks.first.debugDescription)")
 			return
 		}
-		let hasUnderline = content.runs.contains { String(content.characters[$0.range]).contains("under") && $0.underlineStyle != nil }
-		let hasStrike = content.runs.contains { String(content.characters[$0.range]).contains("strike") && $0.strikethroughStyle != nil }
+		let hasUnderline = content.runs.contains { $0.text.contains("under") && $0.style.contains(.underline) }
+		let hasStrike = content.runs.contains { $0.text.contains("strike") && $0.style.contains(.strikethrough) }
 		#expect(hasUnderline, "<u> should set underlineStyle")
 		#expect(hasStrike, "<s> should set strikethroughStyle")
 	}
@@ -189,14 +189,14 @@ import Testing
 			return
 		}
 		let hasItalicOnSee = content.runs.contains { run in
-			(run.inlineFontTraits ?? []).contains(.italic) &&
-				String(content.characters[run.range]).contains("See")
+			run.inlineFontTraits.contains(.italic) &&
+				run.text.contains("See")
 		}
 		#expect(hasItalicOnSee, "Italic outside the anchor should survive buildParagraph")
 		#expect(links.contains { $0.url == "https://apple.com" }, "Link URL should reach LinkInfo")
 		let hasLinkAttr = content.runs.contains { run in
 			run.link?.absoluteString == "https://apple.com" &&
-				String(content.characters[run.range]).contains("docs")
+				run.text.contains("docs")
 		}
 		#expect(hasLinkAttr, "Link attribute should land on the anchor label")
 	}
@@ -211,9 +211,9 @@ import Testing
 			return
 		}
 		let italicLinkRun = content.runs.first { run in
-			(run.inlineFontTraits ?? []).contains(.italic) &&
+			run.inlineFontTraits.contains(.italic) &&
 				run.link?.absoluteString == "https://example.com" &&
-				String(content.characters[run.range]).contains("more")
+				run.text.contains("more")
 		}
 		#expect(italicLinkRun != nil, "Anchor inner italic should be carried on the link run")
 	}

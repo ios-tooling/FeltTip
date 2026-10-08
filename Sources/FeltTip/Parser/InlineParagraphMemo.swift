@@ -33,7 +33,7 @@ final class InlineParagraphMemo: @unchecked Sendable {
 	}
 
 	struct Entry {
-		let attributed: AttributedString
+		let content: InlineContent
 		let links: [LinkInfo]
 		/// Absolute source offset of the first line the entry was built from.
 		let sourceStart: Int
@@ -132,18 +132,8 @@ final class InlineParagraphMemo: @unchecked Sendable {
 		}
 	}
 
-	/// `attributed` with every source stamp moved by `delta`.
-	static func shiftingStamps(_ attributed: AttributedString, by delta: Int) -> AttributedString {
-		guard delta != 0 else { return attributed }
-		var result = attributed
-		for run in attributed.runs {
-			if let offset = run.markdownSourceOffset {
-				result[run.range].markdownSourceOffset = offset + delta
-			}
-			if let pipe = run.markdownEscapedPipeSourceOffset {
-				result[run.range].markdownEscapedPipeSourceOffset = pipe + delta
-			}
-		}
-		return result
+	/// `content` with every source stamp moved by `delta`.
+	static func shiftingStamps(_ content: InlineContent, by delta: Int) -> InlineContent {
+		content.shiftingStamps(by: delta)
 	}
 }

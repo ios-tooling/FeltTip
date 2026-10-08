@@ -41,27 +41,13 @@ extension InlineBuilder {
 		}
 	}
 
-	/// Convert a `Range<String.Index>` in the plain text to the corresponding
-	/// `AttributedString` range, skip if any existing link already covers it
-	/// or if the range overlaps monospaced (code-span / `<kbd>`) content, and
-	/// otherwise apply the link/colour and record a `LinkInfo`.
+	/// Convert a `Range<String.Index>` in the plain text to a grapheme range
+	/// and link it, unless an existing link or verbatim code already covers
+	/// part of it, and record a `LinkInfo`.
 	private mutating func applyLink(url: URL, sourceRange: Range<String.Index>, in plainText: String) {
 		let startOffset = plainText.distance(from: plainText.startIndex, to: sourceRange.lowerBound)
 		let endOffset = plainText.distance(from: plainText.startIndex, to: sourceRange.upperBound)
-		let start = result.characters.index(result.startIndex, offsetBy: startOffset)
-		let end = result.characters.index(result.startIndex, offsetBy: endOffset)
-		let range = start..<end
-
-		for run in result[range].runs {
-			if run.link != nil { return }
-			// Code spans and `<kbd>` text are verbatim — neither markdown's
-			// inline rules nor GFM autolinking apply inside them.
-			if let traits = run.inlineFontTraits, traits.contains(.monospaced) { return }
-		}
-
-		result[range].link = url
-		result[range].foregroundColor = theme.linkColor
-		linkifySplitRuns = true
+		guard result.applyLink(url, characterRange: startOffset..<endOffset) else { return }
 		links.append(LinkInfo(url: url.absoluteString, characterOffset: startOffset))
 	}
 
