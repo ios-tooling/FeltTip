@@ -78,16 +78,58 @@ final class InlineParagraphMemo: @unchecked Sendable {
 
 	/// The build context for one document. Link reference definitions are the
 	/// only part of a document outside a paragraph that changes how its
-	/// inline content parses. Return nil when references may be present.
+	/// inline content parses, so they are folded into the key.
 	static func context(
 		theme: MarkdownTheme, fontSize: CGFloat, linkifyURLs: Bool, stamped: Bool,
 		processedText: String
-	) -> String? {
-		// cmark permits multiline definitions and definitions inside containers.
-		// Until its resolved reference table is available here, bypass memoization
-		// for potential definition documents rather than approximate that grammar.
-		guard !DocumentScan.containsASCII("]:", in: processedText) else { return nil }
-		return "\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(stamped)"
+	) -> String {
+		"\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(stamped)|\(definitionContext(in: processedText))"
+	}
+
+	/// Every run of non-blank lines that contains a `]:` line. cmark allows a
+	/// definition to continue onto following lines, to sit inside a container
+	/// (`> [id]: url`), and to be cancelled by a preceding paragraph line, so
+	/// the whole blank-line-delimited chunk is keyed rather than one line.
+	/// Over-inclusion only costs a cache miss; it never serves a stale parse.
+	static func definitionContext(in processedText: String) -> String {
+		guard DocumentScan.containsASCII("]:", in: processedText) else { return "" }
+		var text = processedText
+		return text.withUTF8 { bytes -> String in
+			var output: [UInt8] = []
+			var lineStart = 0
+			var chunkStart = 0
+			var chunkHasDefinition = false
+			var chunkIsBlank = true
+			var previousByte: UInt8 = 0
+			var index = 0
+			func flushChunk(upTo end: Int) {
+				if chunkHasDefinition {
+					let trimmedEnd = end > chunkStart && bytes[end - 1] == 0x0A ? end - 1 : end
+					output.append(contentsOf: bytes[chunkStart..<trimmedEnd])
+					output.append(0x0A)
+				}
+				chunkHasDefinition = false
+				chunkIsBlank = true
+			}
+			while index <= bytes.count {
+				let byte: UInt8 = index < bytes.count ? bytes[index] : 0x0A
+				if byte == 0x0A {
+					if chunkIsBlank {
+						flushChunk(upTo: lineStart)
+						chunkStart = index + 1
+					}
+					chunkIsBlank = true
+					lineStart = index + 1
+				} else {
+					if byte != 0x20, byte != 0x09, byte != 0x0D { chunkIsBlank = false }
+					if byte == 0x3A, previousByte == 0x5D { chunkHasDefinition = true }
+				}
+				previousByte = byte
+				index += 1
+			}
+			flushChunk(upTo: bytes.count)
+			return String(decoding: output, as: UTF8.self)
+		}
 	}
 
 	/// `attributed` with every source stamp moved by `delta`.

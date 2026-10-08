@@ -38,6 +38,12 @@ extension EditorAndTableRegressionTests {
   #expect(HTMLAttributeParser.extractImage(from: tag)?.src == "right.png")
   #expect(ImageRegions.collect(in: tag).first?.src == "right.png")
  }
+ @Test func attributesMayFollowQuotedValuesDirectly() {
+  let image = HTMLAttributeParser.extractImage(from: "<img src=\"a.png\"alt=\"Logo\"width=\"40\">")
+  #expect(image?.src == "a.png")
+  #expect(image?.alt == "Logo")
+  #expect(image?.width == 40)
+ }
  @Test func missingRealAttributesAreNotInvented() {
   #expect(HTMLAttributeParser.extractImage(from: "<img data-src='wrong.png'>") == nil)
   #expect(HTMLAttributeParser.extractLink(from: "<a data-href='https://wrong.test'>text</a>") == nil)

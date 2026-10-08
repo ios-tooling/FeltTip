@@ -21,6 +21,22 @@ struct ReviewRegressionTests {
 		#expect(initial.contains("https://one.example"))
 		#expect(cached.contains("https://two.example"))
 	}
+	@Test(arguments: [false, true]) func continuationReferenceCache(stamped: Bool) {
+		// A `]:` line that continues a paragraph is not a definition; the
+		// preceding line must be part of the key so the two parses differ.
+		let first = "[label][dest]\n\nintro\n[dest]: https://one.example\n"
+		let second = "[label][dest]\n\nintro\n\n[dest]: https://one.example\n"
+		let initial = MarkdownHTMLRenderer.renderBodyFragment(markdown: first, includeSourceOffsets: stamped)
+		let cached = MarkdownHTMLRenderer.renderBodyFragment(markdown: second, includeSourceOffsets: stamped)
+		#expect(!initial.contains(">label</a>"))
+		#expect(cached.contains("<a href=\"https://one.example\">label</a>"))
+	}
+	@Test func definitionContextKeysOnlyDefinitionChunks() {
+		let text = "para one\n\n> [a]:\n>   https://a.example\n\npara two\n\n[b]: https://b.example\n"
+		let context = InlineParagraphMemo.definitionContext(in: text)
+		#expect(context == "> [a]:\n>   https://a.example\n[b]: https://b.example\n")
+		#expect(InlineParagraphMemo.definitionContext(in: "no definitions here") == "")
+	}
 	@Test func malformedCommentCannotExecuteScript() async throws {
 		let source = "Before\n\n<div><!--x--!><script>window.__reviewExecuted='yes'</script></div>\n"
 		let harness = try await CoordinatorBridgeHarness(source: source)

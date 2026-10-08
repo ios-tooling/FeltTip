@@ -55,6 +55,7 @@ public enum HTMLAttributeParser {
 
 	/// Scan complete attributes, consuming quoted values as a unit so names
 	/// embedded in data attributes or other values cannot become real attributes.
+	/// A name may follow whitespace or, as browsers allow, a previous quoted value.
 	static func extractAttribute(_ name: String, from html: String) -> String? {
 		let ns = html as NSString
 		for match in attributePattern.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
@@ -67,7 +68,7 @@ public enum HTMLAttributeParser {
 	}
 
 	private static let attributePattern = try! NSRegularExpression(
-		pattern: #"\s+([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+))"#
+		pattern: #"(?<=[\s"'])([^\s=/>"']+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+))"#
 	)
 
 	static func extractDimensions(from html: String) -> (width: CGFloat?, height: CGFloat?) {
