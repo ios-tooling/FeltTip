@@ -70,6 +70,69 @@ struct PreprocessorParityTests {
 /// they shadow on every ASCII line. Random lines drawn from the characters
 /// those processors care about exercise the segment-boundary and
 /// word-boundary rules far more densely than real prose does.
+/// Re-rendering with a baseline reuses fragments for unchanged blocks; the
+/// result must equal a fresh render byte for byte, in both render modes and
+/// across edits that shift stamps and checkbox indices.
+@Suite struct FragmentReuseParityTests {
+	private func fragments(_ markdown: String, offsets: Bool, baseline: [MarkdownBlockFragment]? = nil) -> [String] {
+		MarkdownHTMLRenderer.renderBlockFragments(
+			markdown: markdown, theme: .default, fontSize: 14,
+			includeSourceOffsets: offsets, interactiveCheckboxes: true, baseline: baseline
+		).map(\.html)
+	}
+
+	private func check(_ text: String, name: String, mismatches: inout [String]) {
+		for offsets in [false, true] {
+			let baseline = MarkdownHTMLRenderer.renderBlockFragments(
+				markdown: text, theme: .default, fontSize: 14,
+				includeSourceOffsets: offsets, interactiveCheckboxes: true)
+			let edits: [(String, String)] = [
+				("top", "- [ ] Inserted task at the top.\n\nInserted line.\n\n" + text),
+				("middle", { var e = text; e.insert("X", at: e.index(e.startIndex, offsetBy: e.count / 2)); return e }()),
+				("same", text),
+			]
+			for (label, edited) in edits {
+				let reused = fragments(edited, offsets: offsets, baseline: baseline)
+				let fresh = fragments(edited, offsets: offsets)
+				if reused != fresh { mismatches.append("\(name) (\(label), offsets=\(offsets))") }
+			}
+		}
+	}
+
+	@Test func reusedFragmentsMatchFreshRendersAcrossTheCorpus() throws {
+		var mismatches: [String] = []
+		check("""
+			# Tasks
+
+			- [ ] alpha
+			- [x] bravo
+			  - [ ] nested
+			- plain
+
+			| a | b |
+			|:--|--:|
+			| 1 | 2 |
+
+			> quote with **bold**
+
+			Term
+			: Definition
+
+			Para with [^1] footnote.
+
+			[^1]: Note text.
+			""", name: "synthetic", mismatches: &mismatches)
+		let files = try FileManager.default
+			.contentsOfDirectory(at: PipelineBenchmarkTests.samplesDir, includingPropertiesForKeys: nil)
+			.filter { $0.pathExtension.lowercased() == "md" }
+			.sorted { $0.lastPathComponent < $1.lastPathComponent }
+		for file in files {
+			check(try String(contentsOf: file, encoding: .utf8), name: file.lastPathComponent, mismatches: &mismatches)
+		}
+		#expect(mismatches.isEmpty, "reuse changed output for: \(mismatches.prefix(20))")
+	}
+}
+
 @Suite struct EmojiShortcodeScanParityTests {
 	/// The regex the byte scanner replaced, kept as the semantic oracle: the
 	/// leftmost `:name:` match is consumed whole whether or not it is known.

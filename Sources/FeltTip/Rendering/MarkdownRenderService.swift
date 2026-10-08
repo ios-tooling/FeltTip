@@ -62,7 +62,8 @@ actor MarkdownRenderService {
 		let fragments = MarkdownHTMLRenderer.renderBlockFragments(
 			markdown: markdown, theme: theme, fontSize: fontSize,
 			includeSourceOffsets: includeSourceOffsets,
-			interactiveCheckboxes: interactiveCheckboxes)
+			interactiveCheckboxes: interactiveCheckboxes,
+			baseline: baseline)
 		if let baseline,
 		   let patch = MarkdownBlockDiff.patch(from: baseline, to: fragments),
 		   let patchHTMLJSON = Self.jsonString(for: patch.html) {

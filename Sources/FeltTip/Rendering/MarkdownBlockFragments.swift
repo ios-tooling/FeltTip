@@ -19,13 +19,17 @@ public struct MarkdownBlockFragment: Sendable, Equatable {
 	public var signature: String { signatureCache.value(html: html, base: firstStamp) }
 	/// The fragment's first absolute data-s stamp; nil for unstamped blocks.
 	public let firstStamp: Int?
+	/// `MarkdownBlock.contentHash` of the block this HTML was rendered from,
+	/// so a later render can reuse the fragment for an unchanged block.
+	public let blockHash: Int?
 	private let signatureCache = SignatureCache()
 
 	/// `mayContainStamps` is false for renders without source offsets, where
 	/// no fragment can carry a stamp and the scan would be wasted per block.
-	init(html: String, mayContainStamps: Bool = true) {
+	init(html: String, mayContainStamps: Bool = true, blockHash: Int? = nil) {
 		self.html = html
 		firstStamp = mayContainStamps ? Self.firstStamp(in: html) : nil
+		self.blockHash = blockHash
 	}
 
 	private static let stampAttribute = Array("data-s=\"".utf8)
@@ -144,19 +148,38 @@ extension MarkdownHTMLRenderer {
 		fontSize: CGFloat = 16,
 		options: MarkdownOptions = .default,
 		includeSourceOffsets: Bool = false,
-		interactiveCheckboxes: Bool = false
+		interactiveCheckboxes: Bool = false,
+		baseline: [MarkdownBlockFragment]? = nil
 	) -> [MarkdownBlockFragment] {
 		let blocks = includeSourceOffsets
 			? MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, trackSourceOffsets: true, options: options)
 			: MarkdownBlockParser.parse(markdown, theme: theme, fontSize: fontSize, options: options)
+		// A block's HTML depends only on its content and these two flags, so a
+		// block whose content hash matches a baseline fragment rendered under
+		// the same flags can take that fragment as is. Stamps and checkbox
+		// indices are part of the content, so anything an edit shifted misses.
+		let flags = (includeSourceOffsets ? 1 : 0) | (interactiveCheckboxes ? 2 : 0)
+		var reusable: [Int: MarkdownBlockFragment] = [:]
+		if let baseline {
+			reusable.reserveCapacity(baseline.count)
+			for fragment in baseline {
+				if let hash = fragment.blockHash, reusable[hash] == nil { reusable[hash] = fragment }
+			}
+		}
 		return $emitSourceOffsets.withValue(includeSourceOffsets) {
 			$emitInteractiveCheckboxes.withValue(interactiveCheckboxes) {
 				var fragments: [MarkdownBlockFragment] = []
 				fragments.reserveCapacity(blocks.count)
 				for block in blocks {
 					if Task.isCancelled { break }
+					let hash = block.contentHash(flags: flags)
+					if let previous = reusable[hash] {
+						fragments.append(previous)
+						continue
+					}
 					fragments.append(MarkdownBlockFragment(
-						html: renderBlock(block), mayContainStamps: includeSourceOffsets))
+						html: renderBlock(block), mayContainStamps: includeSourceOffsets,
+						blockHash: hash))
 				}
 				return fragments
 			}
