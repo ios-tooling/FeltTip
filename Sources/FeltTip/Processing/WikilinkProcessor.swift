@@ -9,6 +9,10 @@ public enum WikilinkProcessor {
 	/// Converts `[[Page Name]]` and `[[Page Name|Display Text]]` into
 	/// markdown links with a `wikilink://` scheme.
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		guard DocumentScan.hasWikilink(in: text) else { return text }
 
 		var result = ""

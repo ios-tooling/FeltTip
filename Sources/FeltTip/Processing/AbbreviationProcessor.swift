@@ -19,6 +19,10 @@ import Foundation
 /// rewritten.
 public enum AbbreviationProcessor {
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		// `**[link](url)**` appears in nearly every README; only a `*[KEY]: value`
 		// line at the start of a line defines anything.
 		guard DocumentScan.hasBracketColonDefinitionLine(

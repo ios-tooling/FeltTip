@@ -12,6 +12,10 @@ public enum EmojiShortcodes {
 	/// colon), but as a single byte scan: the regex form cost ~24 ms per
 	/// display render of a 375 KB document that contains no shortcodes at all.
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		var copy = text
 		let replaced: String? = copy.withUTF8 { bytes in
 			guard bytes.contains(0x3A) else { return nil }

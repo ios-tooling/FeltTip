@@ -13,6 +13,10 @@ import Foundation
 public enum SuperSubProcessor {
 
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		// Doc-level fast-fail: nothing to do if neither marker is present.
 		guard text.contains("^") || text.contains("~") else { return text }
 		var output: [String] = []

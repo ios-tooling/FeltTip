@@ -8,6 +8,10 @@ extension MarkdownFootnote {
 	/// Returns text with footnote markers replaced by numbered superscript links
 	/// (`[¹](footnote://id)`) that the formatted view can intercept via openURL.
 	public static func renderableContent(from text: String, footnotes: [MarkdownFootnote]) -> String {
+		MarkdownCodeProtection.transform(text) { renderUnprotected(from: $0, footnotes: footnotes) } ?? text
+	}
+
+	private static func renderUnprotected(from text: String, footnotes: [MarkdownFootnote]) -> String {
 		guard !footnotes.isEmpty else { return text }
 
 		let indexByID = Dictionary(uniqueKeysWithValues: footnotes.map { ($0.id, $0.displayIndex) })
@@ -37,6 +41,8 @@ extension MarkdownFootnote {
 							let label = String(line[labelStart..<closeIdx])
 							if let n = indexByID[label] {
 								result += "[\(superscript(for: n))](footnote://\(label))"
+							} else {
+								result += line[i...closeIdx]
 							}
 							i = afterClose; continue
 						}

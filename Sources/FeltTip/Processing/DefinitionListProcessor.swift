@@ -16,6 +16,10 @@ public enum DefinitionListProcessor {
 	/// Converts definition list syntax (`term\n: definition`) into `<dl>` HTML
 	/// blocks that survive CommonMark parsing as HTML blocks.
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		// A list needs a `: definition` line; a leading colon alone (emoji
 		// shortcodes at the start of a line, say) is not one.
 		guard DocumentScan.hasDefinitionListLine(in: text) else { return text }
@@ -38,6 +42,7 @@ public enum DefinitionListProcessor {
 
 			// Look for: non-empty term line followed by one or more `: definition` lines
 			if !trimmed.isEmpty,
+			   !MarkdownCodeProtection.containsProtectedBlock(line),
 			   !trimmed.hasPrefix(":"),
 			   !trimmed.hasPrefix("#"),
 			   !trimmed.hasPrefix(">"),
@@ -64,6 +69,7 @@ public enum DefinitionListProcessor {
 					if lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 						let next = i + 1
 						if next < lines.count,
+						   !MarkdownCodeProtection.containsProtectedBlock(lines[next]),
 						   !lines[next].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
 						   !isDefinitionLine(lines[next]),
 						   next + 1 < lines.count,
@@ -114,12 +120,16 @@ public enum DefinitionListProcessor {
 
 		var groups: [[SourceItem]] = []
 		var i = 0
-		var inCodeBlock = false
+		let codeRanges = MarkdownCodeProtection.ranges(in: text, blocksOnly: true)
+		var codeIndex = 0
 		while i < lines.count {
 			let line = lines[i]
 			let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
-			if inCodeBlock { i += 1; continue }
+			while codeIndex < codeRanges.count, NSMaxRange(codeRanges[codeIndex]) <= starts[i] { codeIndex += 1 }
+			if codeIndex < codeRanges.count,
+			   NSIntersectionRange(codeRanges[codeIndex], NSRange(location: starts[i], length: (line as NSString).length)).length > 0 {
+				i += 1; continue
+			}
 			guard !trimmed.isEmpty,
 				  !trimmed.hasPrefix(":"), !trimmed.hasPrefix("#"),
 				  !trimmed.hasPrefix(">"), !trimmed.hasPrefix("-"),
@@ -154,6 +164,9 @@ public enum DefinitionListProcessor {
 					  lines[i].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { break }
 				let next = i + 1
 				guard next < lines.count,
+					  !codeRanges.contains(where: {
+						  NSIntersectionRange($0, NSRange(location: starts[next], length: (lines[next] as NSString).length)).length > 0
+					  }),
 					  !lines[next].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
 					  !isDefinitionLine(lines[next]), next + 1 < lines.count,
 					  isDefinitionLine(lines[next + 1]) else { break }

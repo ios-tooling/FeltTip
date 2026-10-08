@@ -19,6 +19,10 @@ public enum HighlightSyntax {
 	}
 
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		guard text.contains("==") else { return text }
 		var output: [String] = []
 		var inFence = false

@@ -18,6 +18,10 @@ import Foundation
 /// to `note`. Skips fenced code blocks so source listings keep `:::` intact.
 public enum CustomContainerProcessor {
 	public static func process(_ text: String) -> String {
+		MarkdownCodeProtection.transform(text) { processUnprotected($0) } ?? text
+	}
+
+	private static func processUnprotected(_ text: String) -> String {
 		guard DocumentScan.hasLine(startingWith: ":::", in: text) else { return text }
 		var output: [String] = []
 		var inFence = false

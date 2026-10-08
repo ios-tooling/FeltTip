@@ -4,9 +4,8 @@
 //
 //  Byte-for-byte parity of the preprocessor against a recorded fixture over
 //  the 900-document sample corpus, in both display and editable modes. The
-//  fixture pins the output of the implementation that preceded the UTF-8
-//  rewrite of the per-line pass. Regenerate it only for an intentional
-//  behavior change: FELTTIP_REGENERATE_FIXTURES=1. Opt in to run it:
+//  fixture pins extension preprocessing, including verbatim code regions.
+//  Regenerate it only for an intentional behavior change: FELTTIP_REGENERATE_FIXTURES=1. Opt in to run it:
 //  FELTTIP_RUN_PARITY=1 (it preprocesses ~17 MB of Markdown).
 //
 

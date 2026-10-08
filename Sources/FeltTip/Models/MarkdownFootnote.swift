@@ -13,6 +13,16 @@ public struct MarkdownFootnote: Identifiable, Equatable, Sendable {
 	/// Parses all footnotes — named references ([^label]) and inline (^[content]) —
 	/// ordered by first occurrence in the document.
 	public static func parse(from text: String) -> [MarkdownFootnote] {
+		guard DocumentScan.hasBracketColonDefinitionLine(startingWith: "[^", minimumLabel: 1, in: text)
+			|| DocumentScan.containsASCII("^[", in: text) else { return [] }
+		return MarkdownCodeProtection.map(text) { masked, restore in
+			parseUnprotected(from: masked).map {
+				MarkdownFootnote(id: $0.id, content: restore($0.content), displayIndex: $0.displayIndex)
+			}
+		}
+	}
+
+	private static func parseUnprotected(from text: String) -> [MarkdownFootnote] {
 		// Normal documents should not pay for two arrays of every source line.
 		// A cheap syntax check also keeps absent-feature preprocessing
 		// responsive for very large files.
@@ -116,6 +126,10 @@ public struct MarkdownFootnote: Identifiable, Equatable, Sendable {
 
 	/// Returns text with footnote syntax removed for clean rendering.
 	public static func cleanedForRendering(from text: String) -> String {
+		MarkdownCodeProtection.transform(text) { cleanUnprotected(from: $0) } ?? text
+	}
+
+	private static func cleanUnprotected(from text: String) -> String {
 		var inCodeBlock = false
 		var lines: [String] = []
 		for line in text.components(separatedBy: "\n") {

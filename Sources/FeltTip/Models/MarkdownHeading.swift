@@ -15,7 +15,8 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 
 	public static func parse(from markdown: String) -> [MarkdownHeading] {
 		var headings: [MarkdownHeading] = []
-		var inCodeBlock = false
+		let codeRanges = MarkdownCodeProtection.ranges(in: markdown, blocksOnly: true)
+		var codeIndex = 0
 		// Walk the source storage directly rather than materializing every line.
 		// The supplied ranges also preserve exact UTF-16 locations for either
 		// LF or CRLF line endings.
@@ -30,11 +31,8 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 			let sourceRange = NSRange(lineRange, in: markdown)
 			let trimmed = markdown[lineRange].trimmingCharacters(in: .whitespaces)
 
-			if trimmed.hasPrefix("```") {
-				inCodeBlock.toggle()
-				return
-			}
-			guard !inCodeBlock else { return }
+			while codeIndex < codeRanges.count, NSMaxRange(codeRanges[codeIndex]) <= sourceRange.location { codeIndex += 1 }
+			if codeIndex < codeRanges.count, NSIntersectionRange(codeRanges[codeIndex], sourceRange).length > 0 { return }
 
 			if let (level, text) = parseHeadingLine(trimmed) {
 				let id = "\(headings.count)-\(text)"
@@ -62,38 +60,7 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 	}
 
 	public static func heading(atCharacterOffset offset: Int, in text: String) -> MarkdownHeading? {
-		var inCodeBlock = false
-		var headingIndex = 0
-		var charOffset = 0
-		var lastHeading: MarkdownHeading?
-
-		// Walk the string manually instead of allocating a substring per line
-		// via components(separatedBy:). This runs on every scroll tick the
-		// document's visible heading changes, so the allocation pressure adds
-		// up.
-		var lineStart = text.startIndex
-		let end = text.endIndex
-		while lineStart <= end {
-			let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? end
-			let line = text[lineStart..<lineEnd]
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
-			if !inCodeBlock, let (level, headingText) = parseHeadingLine(trimmed) {
-				let heading = MarkdownHeading(
-					id: "\(headingIndex)-\(headingText)", level: level, text: headingText,
-					sourceRange: NSRange(location: charOffset, length: line.utf16.count))
-				if charOffset > offset { return lastHeading }
-				lastHeading = heading
-				headingIndex += 1
-			}
-			// Every caller supplies NSTextView / JavaScript source offsets,
-			// which are UTF-16. Swift `Character` counts drift as soon as a
-			// preceding line contains emoji or a composed character.
-			charOffset += line.utf16.count + 1
-			if lineEnd == end { break }
-			lineStart = text.index(after: lineEnd)
-		}
-		return lastHeading
+		heading(atCharacterOffset: offset, in: parse(from: text))
 	}
 
 	/// Finds the heading at or immediately before a UTF-16 source offset in an
@@ -119,23 +86,6 @@ public struct MarkdownHeading: Identifiable, Equatable, Sendable {
 	}
 
 	public static func characterRange(for headingID: String, in text: String) -> NSRange? {
-		var inCodeBlock = false
-		var headingIndex = 0
-		var charOffset = 0
-
-		for line in text.components(separatedBy: .newlines) {
-			let trimmed = line.trimmingCharacters(in: .whitespaces)
-			if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
-
-			if !inCodeBlock, let (_, headingText) = parseHeadingLine(trimmed) {
-				let id = "\(headingIndex)-\(headingText)"
-				if id == headingID {
-					return NSRange(location: charOffset, length: line.utf16.count)
-				}
-				headingIndex += 1
-			}
-			charOffset += line.utf16.count + 1
-		}
-		return nil
+		parse(from: text).first { $0.id == headingID }?.sourceRange
 	}
 }

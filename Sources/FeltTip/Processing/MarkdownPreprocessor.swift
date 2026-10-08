@@ -28,6 +28,14 @@ public enum MarkdownPreprocessor {
 		options: MarkdownOptions,
 		preservingSourceText: Bool
 	) -> String? {
+		MarkdownCodeProtection.transform(body) { protected in
+			processUnprotected(protected, options: options, preservingSourceText: preservingSourceText)
+		}
+	}
+
+	private static func processUnprotected(
+		_ body: String, options: MarkdownOptions, preservingSourceText: Bool
+	) -> String? {
 		guard !Task.isCancelled else { return nil }
 		let citations = Citation.parse(from: body)
 		guard !Task.isCancelled else { return nil }
@@ -169,9 +177,9 @@ public enum MarkdownPreprocessor {
 	/// (editable rendering) skips the cosmetic character substitutions so
 	/// rendered run text stays byte-for-byte the source's.
 	public static func common(after withFootnotes: String, options: MarkdownOptions = .default, preservingSourceText: Bool = false) -> String {
-		commonCancellable(
-			after: withFootnotes, options: options,
-			preservingSourceText: preservingSourceText) ?? withFootnotes
+		MarkdownCodeProtection.transform(withFootnotes) { protected in
+			commonCancellable(after: protected, options: options, preservingSourceText: preservingSourceText)
+		} ?? withFootnotes
 	}
 
 	private static func commonCancellable(

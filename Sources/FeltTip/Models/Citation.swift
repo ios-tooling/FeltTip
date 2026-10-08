@@ -14,6 +14,15 @@ public struct Citation: Identifiable, Equatable, Sendable {
 	/// Definitions: `[@key]: Author. Title. Year.`
 	/// References: `[@key]` in body text.
 	public static func parse(from text: String) -> [Citation] {
+		guard DocumentScan.hasBracketColonDefinitionLine(startingWith: "[@", minimumLabel: 1, in: text) else { return [] }
+		return MarkdownCodeProtection.map(text) { masked, restore in
+			parseUnprotected(from: masked).map {
+				Citation(id: $0.id, content: restore($0.content), displayIndex: $0.displayIndex)
+			}
+		}
+	}
+
+	private static func parseUnprotected(from text: String) -> [Citation] {
 		// The preprocessing pipeline calls this for every document. Avoid two
 		// eager split-and-trim passes when citation syntax is absent, which is
 		// the overwhelmingly common case.
@@ -60,6 +69,10 @@ public struct Citation: Identifiable, Equatable, Sendable {
 
 	/// Returns text with citation markers replaced by numbered superscript links.
 	public static func renderableContent(from text: String, citations: [Citation]) -> String {
+		MarkdownCodeProtection.transform(text) { renderUnprotected(from: $0, citations: citations) } ?? text
+	}
+
+	private static func renderUnprotected(from text: String, citations: [Citation]) -> String {
 		guard !citations.isEmpty else { return text }
 
 		let indexByID = Dictionary(uniqueKeysWithValues: citations.map { ($0.id, $0.displayIndex) })
@@ -86,6 +99,8 @@ public struct Citation: Identifiable, Equatable, Sendable {
 						if let n = indexByID[key] {
 							let sup = MarkdownFootnote.superscript(for: n)
 							result += "[\(sup)](citation://\(key))"
+						} else {
+							result += line[i...closeIdx]
 						}
 						i = line.index(after: closeIdx)
 						continue
