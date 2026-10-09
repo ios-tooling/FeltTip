@@ -243,7 +243,9 @@ struct BlockBuilder: MarkupWalker {
 			let key = InlineParagraphMemo.Key(
 				text: Array(converter.processedSlice(span.range)),
 				childRange: (childRange.lowerBound - span.range.lowerBound)..<(childRange.upperBound - span.range.lowerBound),
-				context: context, resolvedReferences: InlineParagraphMemo.resolvedReferences(in: children))
+				context: context,
+				resolvedReferences: InlineParagraphMemo.hasDefinitions(context)
+					? InlineParagraphMemo.resolvedReferences(in: children) : [])
 			if let entry = InlineParagraphMemo.shared.lookup(key) {
 				// An unstamped (display) build has nothing to re-base.
 				let content = sourceConverter == nil ? entry.content

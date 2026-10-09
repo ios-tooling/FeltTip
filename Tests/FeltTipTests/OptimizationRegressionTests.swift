@@ -94,3 +94,16 @@ extension OptimizationRegressionTests {
 		#expect(!render(fullReference).contains("[\(second)]"))
 	}
 }
+
+extension OptimizationRegressionTests {
+	@Test(arguments: [
+		("plain paragraph", false),
+		("text with a colon: here", false),
+		("[id]: https://example.com", true),
+		("intro\n\n> [id]: https://example.com\n", true)
+	]) func memoContextReportsDefinitions(source: String, expected: Bool) {
+		let context = InlineParagraphMemo.context(
+			theme: .default, fontSize: 14, linkifyURLs: true, stamped: false, processedText: source)
+		#expect(InlineParagraphMemo.hasDefinitions(context) == expected)
+	}
+}

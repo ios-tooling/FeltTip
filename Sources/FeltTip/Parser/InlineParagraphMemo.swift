@@ -121,6 +121,14 @@ final class InlineParagraphMemo: @unchecked Sendable {
 		"\(theme.signature)|\(fontSize)|\(linkifyURLs)|\(stamped)|\(definitionContext(in: processedText))"
 	}
 
+	/// Whether a `context` carries any definition chunk. Without one no
+	/// reference can resolve, so the paragraph text alone determines its
+	/// links and the resolved-reference walk can be skipped. A non-empty
+	/// definition context always ends in a newline, never the separator.
+	static func hasDefinitions(_ context: String) -> Bool {
+		!context.hasSuffix("|")
+	}
+
 	/// Every run of non-blank lines that contains a `]:` line. cmark allows a
 	/// definition to continue onto following lines, to sit inside a container
 	/// (`> [id]: url`), and to be cancelled by a preceding paragraph line, so
