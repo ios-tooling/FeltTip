@@ -82,11 +82,15 @@ final class LineNumberRulerView: NSRulerView {
 		guard !thicknessUpdateScheduled else { return }
 		thicknessUpdateScheduled = true
 		RunLoop.main.perform { [weak self] in
-			guard let self else { return }
-			self.thicknessUpdateScheduled = false
-			let newThickness = self.thickness(for: self.lineStarts.count)
-			if self.ruleThickness != newThickness {
-				self.ruleThickness = newThickness
+			// This callback runs on the main run loop; make that isolation
+			// explicit while retaining the deferred, coalesced layout update.
+			MainActor.assumeIsolated {
+				guard let self else { return }
+				self.thicknessUpdateScheduled = false
+				let newThickness = self.thickness(for: self.lineStarts.count)
+				if self.ruleThickness != newThickness {
+					self.ruleThickness = newThickness
+				}
 			}
 		}
 	}

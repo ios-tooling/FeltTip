@@ -324,7 +324,7 @@ enum MarkdownCodeProtection {
 			}
 			// A setext underline turns the open paragraph into a heading; a
 			// delimiter row turns a one-line paragraph into a table header.
-			if relative <= 3, let open = paragraph, !leftListItem,
+			if relative <= 3, paragraph != nil, !leftListItem,
 			   units[position] == 0x3D || units[position] == 0x2D,
 			   units[position..<contentEnd].allSatisfy({ $0 == units[position] }) {
 				closeParagraph()

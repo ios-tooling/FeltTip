@@ -84,7 +84,7 @@ public enum Tokenizer {
 
 	public static func highlightedText(_ code: String) -> Text {
 		coalesce(tokenize(code)).reduce(Text("")) { result, token in
-			result + Text(token.text).foregroundColor(token.color)
+			Text("\(result)\(Text(token.text).foregroundColor(token.color))")
 		}
 	}
 
@@ -104,7 +104,7 @@ public enum Tokenizer {
 		}
 		return lines.map { tokens in
 			guard !tokens.isEmpty else { return Text(" ") }
-			return tokens.reduce(Text("")) { $0 + Text($1.text).foregroundColor($1.color) }
+			return tokens.reduce(Text("")) { Text("\($0)\(Text($1.text).foregroundColor($1.color))") }
 		}
 	}
 
