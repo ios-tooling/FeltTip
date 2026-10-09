@@ -103,7 +103,7 @@ public struct InlineContent: Hashable, Sendable {
 	public var isEmpty: Bool { runs.allSatisfy { $0.text.isEmpty } }
 
 	/// Grapheme count of the rendered text, matching `characters.count`.
-	public var characterCount: Int { runs.reduce(0) { $0 + $1.text.count } }
+	public var characterCount: Int { characters.count }
 
 	/// Appends a run, dropping empty text so run indices always address
 	/// visible content. Builders record run indices while they work, so
@@ -158,12 +158,24 @@ public struct InlineContent: Hashable, Sendable {
 	/// Markdown's inline rules nor GFM autolinking apply.
 	@discardableResult
 	public mutating func applyLink(_ url: URL, characterRange range: Range<Int>) -> Bool {
-		guard !range.isEmpty else { return false }
+		let text = characters
+		guard range.lowerBound >= 0, !range.isEmpty,
+		      let lower = text.index(text.startIndex, offsetBy: range.lowerBound, limitedBy: text.endIndex),
+		      let upper = text.index(lower, offsetBy: range.count, limitedBy: text.endIndex) else { return false }
+		let offsets = NSRange(lower..<upper, in: text)
+		return applyLink(url, utf16Range: offsets.location..<NSMaxRange(offsets))
+	}
+
+	/// UTF-16 lengths are additive across runs; grapheme counts are not when
+	/// a combining character or emoji sequence crosses a formatting boundary.
+	@discardableResult
+	mutating func applyLink(_ url: URL, utf16Range range: Range<Int>) -> Bool {
+		guard range.lowerBound >= 0, !range.isEmpty else { return false }
 		var position = 0
 		var first: Int?
 		var last: Int?
 		for (index, run) in runs.enumerated() {
-			let end = position + run.text.count
+			let end = position + run.text.utf16.count
 			defer { position = end }
 			guard end > range.lowerBound, position < range.upperBound else { continue }
 			if run.link != nil || run.style.contains(.monospaced) { return false }
@@ -178,14 +190,14 @@ public struct InlineContent: Hashable, Sendable {
 		rebuilt.reserveCapacity(runs.count + 2)
 		position = 0
 		for (index, run) in runs.enumerated() {
-			let end = position + run.text.count
+			let end = position + run.text.utf16.count
 			defer { position = end }
 			guard index >= first, index <= last else { rebuilt.append(run); continue }
 			let lower = max(range.lowerBound, position) - position
 			let upper = min(range.upperBound, end) - position
 			let text = run.text
-			let lowerIndex = text.index(text.startIndex, offsetBy: lower)
-			let upperIndex = text.index(lowerIndex, offsetBy: upper - lower)
+			let lowerIndex = String.Index(utf16Offset: lower, in: text)
+			let upperIndex = String.Index(utf16Offset: upper, in: text)
 			func fragment(_ slice: Substring, stamp: Int?, linked: Bool) -> InlineRun {
 				var piece = run
 				piece.text = String(slice)
@@ -213,17 +225,20 @@ public struct InlineContent: Hashable, Sendable {
 	/// Drops the first `count` graphemes. A run that loses a prefix keeps its
 	/// stamp pointing at its own first remaining character.
 	public mutating func removeFirst(characters count: Int) {
-		var remaining = count
+		guard count > 0 else { return }
+		let plain = characters
+		let end = plain.index(plain.startIndex, offsetBy: count, limitedBy: plain.endIndex) ?? plain.endIndex
+		var remaining = plain[..<end].utf16.count
 		var index = 0
 		while remaining > 0, index < runs.count {
-			let length = runs[index].text.count
+			let length = runs[index].text.utf16.count
 			if length <= remaining {
 				remaining -= length
 				index += 1
 				continue
 			}
 			let text = runs[index].text
-			let cut = text.index(text.startIndex, offsetBy: remaining)
+			let cut = String.Index(utf16Offset: remaining, in: text)
 			if let stamp = runs[index].markdownSourceOffset {
 				runs[index].markdownSourceOffset = stamp + text[..<cut].utf16.count
 			}

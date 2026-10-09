@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import Markdown
 
 final class InlineParagraphMemo: @unchecked Sendable {
 	static let shared = InlineParagraphMemo()
@@ -30,6 +31,40 @@ final class InlineParagraphMemo: @unchecked Sendable {
 		/// Theme signature, font size, linkify flag, and the document's link
 		/// reference definitions — everything else the build reads.
 		let context: String
+		/// Resolved nodes also depend on block context outside a definition's
+		/// blank-line-delimited chunk (for example, an enclosing code fence).
+		let resolvedReferences: [ResolvedReference]
+	}
+
+	struct ResolvedReference: Hashable {
+		let nodeIndex: Int
+		let isImage: Bool
+		let destination: String?
+		let sourceRange: SourceRange?
+	}
+
+	static func resolvedReferences(in children: [Markup]) -> [ResolvedReference] {
+		var result: [ResolvedReference] = []
+		var nodeIndex = 0
+		let firstLine = children.first?.range?.lowerBound.line ?? 1
+		func relativeRange(_ node: Markup) -> SourceRange? {
+			guard let range = node.range else { return nil }
+			let lower = SourceLocation(line: range.lowerBound.line - firstLine + 1, column: range.lowerBound.column, source: nil)
+			let upper = SourceLocation(line: range.upperBound.line - firstLine + 1, column: range.upperBound.column, source: nil)
+			return lower..<upper
+		}
+		func visit(_ node: Markup) {
+			let index = nodeIndex
+			nodeIndex += 1
+			if let link = node as? Markdown.Link {
+				result.append(ResolvedReference(nodeIndex: index, isImage: false, destination: link.destination, sourceRange: relativeRange(node)))
+			} else if let image = node as? Markdown.Image {
+				result.append(ResolvedReference(nodeIndex: index, isImage: true, destination: image.source, sourceRange: relativeRange(node)))
+			}
+			for child in node.children { visit(child) }
+		}
+		for child in children { visit(child) }
+		return result
 	}
 
 	struct Entry {
@@ -90,7 +125,8 @@ final class InlineParagraphMemo: @unchecked Sendable {
 	/// definition to continue onto following lines, to sit inside a container
 	/// (`> [id]: url`), and to be cancelled by a preceding paragraph line, so
 	/// the whole blank-line-delimited chunk is keyed rather than one line.
-	/// Over-inclusion only costs a cache miss; it never serves a stale parse.
+	/// Resolved-reference nodes in the key additionally cover enclosing block
+	/// context that can extend across blank lines.
 	static func definitionContext(in processedText: String) -> String {
 		guard DocumentScan.containsASCII("]:", in: processedText) else { return "" }
 		var text = processedText

@@ -77,7 +77,7 @@ enum MarkdownCodeProtection {
 		let count = units.count
 		var regions: [Region] = []
 
-		struct Fence { let character: UInt8; let length: Int; let quoteDepth: Int; let start: Int; var lastLineEnd: Int }
+		struct Fence { let character: UInt8; let length: Int; let quoteDepth: Int; let listIndent: Int; let start: Int; var lastLineEnd: Int }
 		struct ListItem { let contentIndent: Int; let quoteDepth: Int }
 
 		var fence: Fence?
@@ -177,8 +177,8 @@ enum MarkdownCodeProtection {
 			let indent = column
 
 			if var open = fence {
-				if quoteDepth < open.quoteDepth {
-					// The quote holding the fence ended; the block ends with it.
+				if quoteDepth < open.quoteDepth || (!isBlank && quoteDepth == open.quoteDepth && indent < open.listIndent) {
+					// A fence cannot lazily continue outside its quote or list item.
 					regions.append(Region(range: open.start..<open.lastLineEnd, isBlock: true))
 					fence = nil
 					atBlockBoundary = true
@@ -232,15 +232,7 @@ enum MarkdownCodeProtection {
 			}
 
 			// Which block constructs this line could start, after its prefix.
-			let fenceRun: (character: UInt8, length: Int)? = {
-				let character = units[position]
-				guard character == backtick || character == tilde else { return nil }
-				var run = position
-				while run < contentEnd, units[run] == character { run += 1 }
-				guard run - position >= 3 else { return nil }
-				if character == backtick, units[run..<contentEnd].contains(backtick) { return nil }
-				return (character, run - position)
-			}()
+			let fenceRun = fenceOpening(in: units, from: position, to: contentEnd)
 			let listMarkerEnd: Int? = {
 				let unit = units[position]
 				var end = position + 1
@@ -292,7 +284,7 @@ enum MarkdownCodeProtection {
 
 			if relative <= 3, let fenceRun {
 				closeParagraph()
-				fence = Fence(character: fenceRun.character, length: fenceRun.length, quoteDepth: quoteDepth, start: position, lastLineEnd: lineEnd)
+				fence = Fence(character: fenceRun.character, length: fenceRun.length, quoteDepth: quoteDepth, listIndent: base(for: quoteDepth), start: position, lastLineEnd: lineEnd)
 				previousLineBlank = false
 				continue
 			}
@@ -309,7 +301,15 @@ enum MarkdownCodeProtection {
 				while contentStart < contentEnd, units[contentStart] == space || units[contentStart] == tab { spaces += 1; contentStart += 1 }
 				let padding = spaces >= 1 && spaces <= 4 && contentStart < contentEnd ? spaces : 1
 				listItems.append(ListItem(contentIndent: indent + (markerEnd - position) + padding, quoteDepth: quoteDepth))
-				if contentStart < contentEnd { extendParagraph(from: contentStart, to: contentEnd) }
+				if contentStart < contentEnd {
+					if spaces <= 4, let opening = fenceOpening(in: units, from: contentStart, to: contentEnd) {
+						fence = Fence(character: opening.character, length: opening.length,
+							quoteDepth: quoteDepth, listIndent: base(for: quoteDepth),
+							start: contentStart, lastLineEnd: lineEnd)
+					} else {
+						extendParagraph(from: contentStart, to: contentEnd)
+					}
+				}
 				previousLineBlank = false
 				atBlockBoundary = contentStart >= contentEnd
 				continue
@@ -443,33 +443,31 @@ enum MarkdownCodeProtection {
 		return units[(close + 1)..<end].allSatisfy({ $0 == space || $0 == tab }) ? .untilBlank : nil
 	}
 
-	/// A cheap rejection for documents that cannot contain code: no backtick,
-	/// tab, or tilde fence, and no line starting with four spaces (indented
-	/// code can follow any block boundary, so the line before is no guide).
+	private static func fenceOpening(
+		in units: UnsafeBufferPointer<UInt8>, from start: Int, to end: Int
+	) -> (character: UInt8, length: Int)? {
+		guard start < end else { return nil }
+		let character = units[start]
+		guard character == backtick || character == tilde else { return nil }
+		var run = start
+		while run < end, units[run] == character { run += 1 }
+		guard run - start >= 3 else { return nil }
+		if character == backtick, units[run..<end].contains(backtick) { return nil }
+		return (character, run - start)
+	}
+
+	/// Conservative rejection: indentation may follow quote/list prefixes,
+	/// so four consecutive spaces anywhere must reach the container scanner.
 	private static func mayContainCode(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
-		do {
-			var spaces = 0
-			var tildes = 0
-			var lineStart = true
-			for byte in bytes {
-				if byte == 0x60 || byte == 0x09 { return true }
-				if byte == 0x0A {
-					lineStart = true
-					spaces = 0
-					tildes = 0
-					continue
-				}
-				if lineStart, byte == 0x20 {
-					spaces += 1
-					if spaces == 4 { return true }
-				} else {
-					lineStart = false
-				}
-				tildes = byte == 0x7E ? tildes + 1 : 0
-				if tildes == 3 { return true }
-			}
-			return false
+		var spaces = 0
+		var tildes = 0
+		for byte in bytes {
+			if byte == backtick || byte == tab { return true }
+			spaces = byte == space ? spaces + 1 : 0
+			tildes = byte == tilde ? tildes + 1 : 0
+			if spaces == 4 || tildes == 3 { return true }
 		}
+		return false
 	}
 
 	// MARK: - Masking

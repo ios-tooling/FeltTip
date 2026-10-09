@@ -41,13 +41,13 @@ extension InlineBuilder {
 		}
 	}
 
-	/// Convert a `Range<String.Index>` in the plain text to a grapheme range
+	/// Convert a `Range<String.Index>` in the plain text to UTF-16 offsets
 	/// and link it, unless an existing link or verbatim code already covers
 	/// part of it, and record a `LinkInfo`.
 	private mutating func applyLink(url: URL, sourceRange: Range<String.Index>, in plainText: String) {
 		let startOffset = plainText.distance(from: plainText.startIndex, to: sourceRange.lowerBound)
-		let endOffset = plainText.distance(from: plainText.startIndex, to: sourceRange.upperBound)
-		guard result.applyLink(url, characterRange: startOffset..<endOffset) else { return }
+		let offsets = NSRange(sourceRange, in: plainText)
+		guard result.applyLink(url, utf16Range: offsets.location..<NSMaxRange(offsets)) else { return }
 		links.append(LinkInfo(url: url.absoluteString, characterOffset: startOffset))
 	}
 
