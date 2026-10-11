@@ -55,11 +55,13 @@ struct RawEditorTextSynchronizationTests {
 			previousHostText: "before", incomingText: "after"))
 	}
 
-	@Test("Closing a raw editor cancels outstanding prelayout")
-	func closingEditorCancelsPrelayout() async {
+	@Test("Closing a raw editor cancels its outstanding heading index build")
+	func closingEditorCancelsHeadingIndexBuild() async {
+		// (The chunked prelayout this used to cover is gone: TextKit 2 lays out
+		// only the viewport, so there is no document-wide layout to cancel.)
 		let flag = RawEditorCancellationFlag()
 		var coordinator: MarkdownTextEditor.Coordinator? = coordinator(text: "large document")
-		coordinator?.prelayoutTask = Task { @MainActor in
+		coordinator?.headingIndexTask = Task { @MainActor in
 			do {
 				try await Task.sleep(for: .seconds(5))
 			} catch {
