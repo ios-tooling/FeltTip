@@ -243,5 +243,22 @@ import Testing
 
 		#expect(elapsed < .seconds(1))
 	}
+
+	/// Fence exclusion is checked once per regex match, so it must not scan
+	/// every fence: a 1 MB document with thousands of code blocks took ~20 s
+	/// to open. The binary search has to agree with the plain definition,
+	/// including matches that straddle a fence edge or span several fences.
+	@Test
+	func fenceExclusionMatchesLinearDefinition() {
+		let fences = (0..<50).map { NSRange(location: $0 * 20 + 5, length: 10) }
+		for location in 0..<1_010 {
+			for length in [1, 3, 12, 40] {
+				let range = NSRange(location: location, length: length)
+				let expected = fences.contains { NSIntersectionRange($0, range).length > 0 }
+				#expect(MarkdownSyntaxHighlighter.intersects(range, fences) == expected, "\(range)")
+			}
+		}
+		#expect(!MarkdownSyntaxHighlighter.intersects(NSRange(location: 3, length: 2), []))
+	}
 }
 #endif

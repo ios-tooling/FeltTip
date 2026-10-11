@@ -234,8 +234,16 @@ enum MarkdownSyntaxHighlighter {
 		regex.matches(in: string, range: searchRange).map(\.range)
 	}
 
-	private static func intersects(_ range: NSRange, _ exclusions: [NSRange]) -> Bool {
-		exclusions.contains { NSIntersectionRange($0, range).length > 0 }
+	/// `exclusions` are fence ranges: sorted and non-overlapping, so binary
+	/// search for the first one ending after `range` starts. A linear scan made
+	/// full-document highlighting O(matches × fences) and froze large files.
+	static func intersects(_ range: NSRange, _ exclusions: [NSRange]) -> Bool {
+		var low = 0, high = exclusions.count
+		while low < high {
+			let mid = (low + high) / 2
+			if NSMaxRange(exclusions[mid]) <= range.location { low = mid + 1 } else { high = mid }
+		}
+		return low < exclusions.count && NSIntersectionRange(exclusions[low], range).length > 0
 	}
 
 	/// Markup is drawn in a faded secondary color so it recedes behind the prose.
