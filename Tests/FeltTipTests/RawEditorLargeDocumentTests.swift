@@ -122,6 +122,14 @@ import Testing
 				"\(label): drag to \(fraction) shows line \(line), expected about \(expected)")
 			#expect(try inkedRows(in: textView) > 20, "\(label): blank viewport after drag to \(fraction)")
 			#expect(try rulerInkedRows(scrollView) > 20, "\(label): no line numbers after drag to \(fraction)")
+			// A click in the middle of the view resolves to a character whose
+			// line is drawn under the click.
+			let clip = scrollView.contentView
+			let click = textView.convert(CGPoint(x: clip.bounds.minX + 40, y: clip.bounds.midY), from: clip)
+			let hit = try #require(textView.sourceCharacterOffset(at: click), "\(label): click at \(fraction) hit nothing")
+			let hitLine = try #require(textView.sourceLineRect(atCharacterOffset: hit))
+			#expect(hitLine.minY - 1 <= click.y && click.y <= hitLine.maxY + 1,
+				"\(label): click at y \(click.y) resolved to a line at \(hitLine)")
 			try await Task.sleep(for: .milliseconds(600))  // past the geometry window
 			#expect(abs(topLine(textView, scrollView) - line) <= 2,
 				"\(label): viewport drifted after drag to \(fraction)")
@@ -158,6 +166,55 @@ import Testing
 		#expect(typingTime < .seconds(2.5), "\(label): typing at the end took \(typingTime)")
 		#expect(textView.string.hasSuffix("typed"))
 		#expect(textView.textLayoutManager != nil, "\(label): editing fell back to TextKit 1")
+	}
+
+	@Test("Typewriter mode keeps the caret line centered deep in a large document")
+	func typewriterCentersDeepInALargeDocument() async throws {
+		let megabytes = ProcessInfo.processInfo.environment["FELTTIP_LARGE_DOC_MB"]?
+			.split(separator: ",").compactMap { Double($0) }.max() ?? 2
+		let source = Self.document(bytes: Int(megabytes * 1_048_576))
+		var text = source
+		var heading: String?
+		let root = RawMarkdownScreen(
+			text: Binding(get: { text }, set: { text = $0 }),
+			selectedHeadingID: Binding(get: { heading }, set: { heading = $0 }),
+			fontSize: 13, typewriterMode: true, theme: .default)
+			.environment(\.syntaxHighlightingEnabled, true)
+		let hosting = NSHostingView(rootView: root)
+		hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+		let window = NSWindow(
+			contentRect: hosting.frame, styleMask: [.titled], backing: .buffered, defer: false)
+		defer { closeTestWindow(window) }
+		window.contentView = hosting
+		window.makeKeyAndOrderFront(nil)
+		hosting.layoutSubtreeIfNeeded()
+		var found: NSTextView?
+		for _ in 0..<400 where found == nil {
+			found = findTextView(in: hosting)
+			if found == nil { try await Task.sleep(for: .milliseconds(10)) }
+		}
+		let textView = try #require(found)
+		let scrollView = try #require(textView.enclosingScrollView)
+		try await settle(window)
+		window.makeFirstResponder(textView)
+		// Park the caret about two thirds in, then type a few lines there.
+		let length = textView.textStorage?.length ?? 0
+		let deep = (textView.string as NSString).lineRange(
+			for: NSRange(location: length * 2 / 3, length: 0)).location
+		textView.setSelectedRange(NSRange(location: deep, length: 0))
+		textView.scrollRangeToVisible(NSRange(location: deep, length: 0))
+		try await settle(window)
+		for _ in 0..<12 {
+			textView.insertText("typed\n", replacementRange: textView.selectedRange())
+			try await settle(window)
+		}
+		let caret = try #require(textView.sourceLineRect(atCharacterOffset: textView.selectedRange().location))
+		let clip = scrollView.contentView
+		let caretMid = textView.convert(caret, to: clip).midY - clip.bounds.minY
+		let height = clip.bounds.height
+		#expect(abs(caretMid - height / 2) <= height * 0.2 + caret.height,
+			"\(megabytes) MB: caret line at \(caretMid) of a \(height)-point viewport")
+		#expect(try inkedRows(in: textView) > 20, "\(megabytes) MB: blank viewport while typing deep")
 	}
 
 	// MARK: Plumbing
