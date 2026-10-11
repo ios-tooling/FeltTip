@@ -637,6 +637,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		if let previous = coordinator.lastMirroredSelection,
 		   previous.location + previous.length <= textLength {
 			sink?.clearBackground(in: previous)
+			textView.redisplaySource(previous)
 		}
 		coordinator.lastMirroredSelection = mirroredSelection
 		if let range = mirroredSelection, range.length > 0, range.location + range.length <= textLength {
@@ -648,6 +649,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			sink?.setBackground(
 				theme.map { NSColor($0.mirrorHighlightColor) } ?? .unemphasizedSelectedTextBackgroundColor,
 				in: range)
+			textView.redisplaySource(range)
 		}
 	}
 
@@ -1388,6 +1390,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if let stale = lastMirroredSelection,
 			   stale.location + stale.length <= (textView.textStorage?.length ?? 0) {
 				textView.highlightSink?.clearBackground(in: stale)
+				textView.redisplaySource(stale)
 			}
 			let range = textView.selectedRange()
 			parent.applyFocusMode(to: textView, coordinator: self)

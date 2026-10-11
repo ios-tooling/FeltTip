@@ -138,6 +138,28 @@ extension NSTextView {
 			.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
 	}
 
+	/// Repaint the text in `range`. Overlay colors (TextKit 2 rendering
+	/// attributes) change what is drawn without changing layout, and TextKit 2
+	/// does not repaint for them on its own the way TextKit 1 did for temporary
+	/// attributes: a mirrored selection wash was set but never appeared.
+	///
+	/// On TextKit 2 the text view draws through internal subviews, one per
+	/// visible layout fragment, which keep their contents when only the text
+	/// view is marked for display. Mark every subview under the changed text.
+	func redisplaySource(_ range: NSRange) {
+		let rect = sourceRect(for: range)?.insetBy(dx: -2, dy: -2) ?? visibleRect
+		setNeedsDisplay(rect)
+		func mark(_ view: NSView) {
+			for child in view.subviews {
+				let local = child.convert(rect, from: self)
+				guard child.bounds.intersects(local) else { continue }
+				child.setNeedsDisplay(child.bounds.intersection(local))
+				mark(child)
+			}
+		}
+		mark(self)
+	}
+
 	/// The UTF-16 offset of the character drawn at `point` (text view
 	/// coordinates), or nil when nothing is laid out there yet.
 	func sourceCharacterOffset(at point: CGPoint) -> Int? {
