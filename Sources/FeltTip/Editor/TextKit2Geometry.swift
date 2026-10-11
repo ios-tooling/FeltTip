@@ -53,22 +53,34 @@ extension NSTextLayoutManager {
 	/// The laid-out fragment containing the character at `offset`, laying it
 	/// out first. The document's end location belongs to no fragment, so a
 	/// caret at EOF resolves to the final one.
+	///
+	/// Deep in a document nobody has scrolled to, TextKit 2 hands back a
+	/// fragment whose frame is only an estimate (and `ensureLayout` over an
+	/// empty range does nothing). Scrolling to an estimate lays out text
+	/// there, which refines the estimate, which moves the target — a viewport
+	/// replay chasing it laid out an entire 20 MB document. So lay out the
+	/// fragment's own range and return the laid-out one.
 	func layoutFragment(atCharacterOffset offset: Int) -> NSTextLayoutFragment? {
 		guard let contentManager = textContentManager,
 			  let location = contentManager.location(atCharacterOffset: offset) else { return nil }
-		ensureLayout(for: NSTextRange(location: location))
-		var found: NSTextLayoutFragment?
-		enumerateTextLayoutFragments(from: location, options: [.ensuresLayout]) { fragment in
-			found = fragment
-			return false
-		}
-		if found == nil {
-			enumerateTextLayoutFragments(from: location, options: [.ensuresLayout, .reverse]) { fragment in
+		func fragment(at location: NSTextLocation) -> NSTextLayoutFragment? {
+			var found: NSTextLayoutFragment?
+			enumerateTextLayoutFragments(from: location, options: [.ensuresLayout]) { fragment in
 				found = fragment
 				return false
 			}
+			if found == nil {
+				enumerateTextLayoutFragments(from: location, options: [.ensuresLayout, .reverse]) { fragment in
+					found = fragment
+					return false
+				}
+			}
+			return found
 		}
-		return found
+		guard let candidate = fragment(at: location) else { return nil }
+		guard candidate.state != .layoutAvailable else { return candidate }
+		ensureLayout(for: candidate.rangeInElement)
+		return fragment(at: location) ?? candidate
 	}
 }
 

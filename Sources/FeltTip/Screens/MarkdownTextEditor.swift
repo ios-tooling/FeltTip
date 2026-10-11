@@ -165,6 +165,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		// Only now: the initial string and selection above are setup, not the
 		// user moving the caret, and must not be reported or anchored as such.
 		textView.delegate = context.coordinator
+		// The editor's own drives move the clip view directly and never pass
+		// through here, so this is always the text view acting for the user —
+		// even while a drive's echo flag is still up (a ⌘↓ right after open
+		// lands inside the initial geometry replays).
+		textView.onSelfScroll = { [weak coordinator = context.coordinator, weak scrollView] in
+			guard let coordinator, let scrollView else { return }
+			coordinator.adoptCurrentViewport(in: scrollView)
+		}
 		let shouldRevealInitialCaret = selectionTarget == nil
 			&& caretTarget == nil
 			&& selectedHeadingID == nil
@@ -248,6 +256,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						guard let scrollView, let coordinator else { return }
 						coordinator.scrollReportScheduled = false
 						(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+						if let textView { coordinator.ensureHighlightWindow(in: textView) }
 						guard !coordinator.isSyncScroll else { return }
 						let documentFrame = scrollView.documentView?.frame ?? .zero
 						let visibleHeight = scrollView.contentView.bounds.height
@@ -576,10 +585,22 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let fences = coordinator.codeFenceRanges
 				?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
 			coordinator.codeFenceRanges = fences
+			guard coordinator.usesHighlightWindow(textView) else {
+				MarkdownSyntaxHighlighter.highlight(
+					textView: textView, theme: theme, options: markdownOptions,
+					codeFenceRanges: fences)
+				return
+			}
+			// Heading fonts for the whole document in one pass, so moving the
+			// colored window later never has to write to the text storage.
 			MarkdownSyntaxHighlighter.highlight(
 				textView: textView, theme: theme, options: markdownOptions,
-				codeFenceRanges: fences)
+				limitedTo: NSRange(location: 0, length: textView.textStorage?.length ?? 0),
+				codeFenceRanges: fences, colors: false)
+			coordinator.highlightedWindow = nil
+			coordinator.ensureHighlightWindow(in: textView, force: true)
 		} else if !syntaxHighlightingEnabled {
+			coordinator.highlightedWindow = nil
 			MarkdownSyntaxHighlighter.clearHighlighting(textView: textView)
 		}
 	}
@@ -836,6 +857,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		func adoptCurrentViewport(in scrollView: NSScrollView) {
 			guard !isLiveScrolling else { return }
 			viewportAnchor = captureViewportAnchor(in: scrollView)
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw adopt clip=%.1f anchor=%@",
+					scrollView.contentView.bounds.minY, String(describing: viewportAnchor))
+			}
 			selectionDrivenScrollPending = true
 			// Runs after any bounds report already queued this turn.
 			RunLoop.main.perform { [weak self] in
@@ -872,6 +897,79 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// Cancellable off-main heading-index build. Its matching content
 		/// revision gates use of source ranges after rapid local or host edits.
 		var headingIndexTask: Task<Void, Never>?
+		/// The part of a large document that currently carries syntax color.
+		///
+		/// A large document is colored only in a window around the viewport,
+		/// which moves as the view scrolls. TextKit 2 keeps overlay colors as
+		/// rendering attributes on the layout manager, and their cost grows
+		/// with how many runs exist: coloring all of a 20 MB document after it
+		/// has drawn did not finish in fifteen minutes, and with a whole
+		/// document's runs in place every keystroke near the top took about
+		/// two seconds. A bounded window keeps both costs constant. Nothing
+		/// outside it is visible, and it is recolored before it can be.
+		var highlightedWindow: NSRange?
+		/// UTF-16 units colored on each side of the viewport's first character.
+		/// A screenful is a few thousand; scrolling within the margin costs
+		/// nothing, and recoloring a window takes a few tens of milliseconds.
+		static let highlightWindowRadius = 60_000
+
+		/// Documents this size or smaller are colored whole, as before.
+		func usesHighlightWindow(_ textView: NSTextView) -> Bool {
+			textView.textLayoutManager != nil
+				&& (textView.textStorage?.length ?? 0) > Self.highlightWindowRadius * 2
+		}
+
+		/// Recolor around the viewport when it has moved near or past the edge
+		/// of the colored window (or always, with `force`).
+		func ensureHighlightWindow(in textView: NSTextView, force: Bool = false) {
+			guard parent.syntaxHighlightingEnabled, let theme = parent.theme,
+				  !lastFocusModeEnabled, usesHighlightWindow(textView),
+				  let sink = textView.highlightSink else { return }
+			let length = textView.textStorage?.length ?? 0
+			let origin = textView.textContainerOrigin
+			guard let top = textView.sourceCharacterOffset(
+				at: CGPoint(x: origin.x, y: max(origin.y, textView.visibleRect.minY))) else { return }
+			let radius = Self.highlightWindowRadius
+			if !force, let window = highlightedWindow,
+			   top - window.location > radius / 4 || window.location == 0,
+			   NSMaxRange(window) - top > radius / 2 || NSMaxRange(window) >= length {
+				return
+			}
+			let start = max(0, top - radius)
+			let next = NSRange(location: start, length: min(length, top + radius) - start)
+			let began = CFAbsoluteTimeGetCurrent()
+			defer {
+				if MarkdownSplitSyncLog.enabled {
+					NSLog("[SplitSync] raw recolor window %@ -> %@ (%.0f ms)",
+						highlightedWindow.map { NSStringFromRange($0) } ?? "nil", NSStringFromRange(next),
+						(CFAbsoluteTimeGetCurrent() - began) * 1000)
+				}
+			}
+			if let previous = highlightedWindow {
+				sink.resetColor(in: previous, base: NSColor(theme.textColor))
+			}
+			let fences = codeFenceRanges ?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
+			codeFenceRanges = fences
+			// Colors only: heading fonts were applied document-wide on load and
+			// are kept current by the per-edit pass.
+			MarkdownSyntaxHighlighter.highlight(
+				textView: textView, theme: theme, options: parent.markdownOptions,
+				limitedTo: next, codeFenceRanges: fences, fonts: false)
+			highlightedWindow = next
+		}
+
+		/// Keep the window over the same text across an edit.
+		private func shiftHighlightWindow(editedRange: NSRange, delta: Int) {
+			guard var window = highlightedWindow else { return }
+			let oldEnd = editedRange.location + max(0, editedRange.length - delta)
+			if oldEnd <= window.location {
+				window.location += delta
+			} else if editedRange.location < NSMaxRange(window) {
+				window.length = max(0, window.length + delta)
+			}
+			highlightedWindow = window
+		}
+
 		var indexedHeadings: [MarkdownHeading] = []
 		var indexedHeadingRevision = -1
 		weak var lineNumberRuler: LineNumberRulerView?
@@ -992,6 +1090,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if abs(clip.bounds.origin.y - offset) > 0.5 {
 				clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: offset))
 				scrollView.reflectScrolledClipView(clip)
+				(scrollView.documentView as? MarkdownFormattingTextView)?.layOutViewportAfterJump()
 			}
 			lastReportedScrollOffset = clip.bounds.origin.y
 		}
@@ -1051,6 +1150,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					guard let self, let scrollView else { return }
 					self.geometryReplayScheduled = false
 					guard !self.isLiveScrolling else { return }
+					// A caret move this turn (⌘↓, page down, a click) scrolled the
+					// view and is about to be adopted as the anchor. The layout it
+					// triggered is what changed the frame; replaying the old anchor
+					// now would undo the move. NSTextView posts the selection change
+					// after the scroll, so this replay can be queued first.
+					guard !self.anchorCaptureScheduled else { return }
 					if MarkdownSplitSyncLog.enabled {
 						NSLog("[SplitSync] raw geometry doc=%.1f anchor=%@",
 							scrollView.documentView?.frame.height ?? 0, String(describing: self.viewportAnchor))
@@ -1130,6 +1235,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			scrollView.contentView.scroll(to: NSPoint(
 				x: scrollView.contentView.bounds.origin.x, y: centeredY))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
+			(textView as? MarkdownFormattingTextView)?.layOutViewportAfterJump()
 			// The bounds observer treats this programmatic move as an echo, not a
 			// user scroll, so it cannot demote a selection anchor to a fraction.
 			lastReportedScrollOffset = scrollView.contentView.bounds.origin.y
@@ -1174,6 +1280,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			codeFenceRanges = codeFenceRanges.flatMap {
 				MarkdownFenceRangeTracker.updating($0, after: editedRange, delta: delta, in: storage)
 			}
+			shiftHighlightWindow(editedRange: editedRange, delta: delta)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
@@ -1254,9 +1361,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					let fences = self.codeFenceRanges
 						?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
 					self.codeFenceRanges = fences
+					let windowed = self.usesHighlightWindow(textView)
+					if windowed, self.highlightedWindow == nil {
+						self.ensureHighlightWindow(in: textView, force: true)
+						return
+					}
 					MarkdownSyntaxHighlighter.highlight(
 						textView: textView, theme: theme,
 						options: self.parent.markdownOptions, editedRange: edited,
+						fallbackScope: windowed ? self.highlightedWindow : nil,
 						codeFenceRanges: fences)
 				}
 			}

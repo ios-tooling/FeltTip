@@ -156,16 +156,30 @@ final class LineNumberRulerView: NSRulerView {
 	/// from the viewport range when that point is not laid out yet — and stops
 	/// at the first fragment below the visible bottom, so the cost is the
 	/// screenful rather than the document.
+	///
+	/// It never starts from the top of the document. Mid-jump (⌘↓ in a 20 MB
+	/// file) neither lookup may resolve yet, and enumerating from the start
+	/// with `.ensuresLayout` until reaching the viewport lays out the entire
+	/// document — after which every keystroke near the top costs seconds,
+	/// because each edit shifts every laid-out fragment after it. Skipping the
+	/// draw is harmless: the ruler is redrawn once the viewport has laid out.
 	private func enumerateVisibleLayoutFragments(
 		in textLayoutManager: NSTextLayoutManager,
 		visibleRect: CGRect,
 		_ body: (CGRect, Int) -> Void
 	) {
-		guard let contentManager = textLayoutManager.textContentManager else { return }
-		let start = textLayoutManager.textLayoutFragment(for: visibleRect.origin)?.rangeInElement.location
-			?? textLayoutManager.textViewportLayoutController.viewportRange?.location
-			?? contentManager.documentRange.location
+		guard let contentManager = textLayoutManager.textContentManager,
+			  let start = textLayoutManager.textLayoutFragment(for: visibleRect.origin)?.rangeInElement.location
+				?? textLayoutManager.textViewportLayoutController.viewportRange?.location else {
+			needsDisplay = true
+			return
+		}
+		// A screenful is at most a few hundred fragments; the cap only guards
+		// against an estimate that places `start` far above the viewport.
+		var budget = 2_000
 		textLayoutManager.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+			budget -= 1
+			guard budget > 0 else { return false }
 			let frame = fragment.layoutFragmentFrame
 			guard frame.minY < visibleRect.maxY else { return false }
 			guard frame.maxY > visibleRect.minY else { return true }
