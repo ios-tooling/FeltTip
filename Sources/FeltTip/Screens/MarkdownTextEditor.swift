@@ -682,6 +682,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		let sink = textView.highlightSink
 		sink?.setColor(dim, in: full)
 		sink?.setColor(active, in: nextRange)
+		textView.redisplayVisibleText()
 	}
 
 	private func clearFocusMode(from textView: NSTextView, coordinator: Coordinator) {

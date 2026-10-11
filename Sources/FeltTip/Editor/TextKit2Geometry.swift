@@ -147,7 +147,26 @@ extension NSTextView {
 	/// visible layout fragment, which keep their contents when only the text
 	/// view is marked for display. Mark every subview under the changed text.
 	func redisplaySource(_ range: NSRange) {
-		let rect = sourceRect(for: range)?.insetBy(dx: -2, dy: -2) ?? visibleRect
+		redisplayText(in: sourceRect(for: range)?.insetBy(dx: -2, dy: -2) ?? visibleRect)
+	}
+
+	/// Repaint whatever text is on screen: after a highlight pass or a focus
+	/// change recolors more than one can cheaply locate.
+	func redisplayVisibleText() {
+		redisplayText(in: visibleRect)
+	}
+
+	private func redisplayText(in rect: CGRect) {
+		markTextForDisplay(in: rect)
+		// Called mid-event (a click that moves the caret), the text view can
+		// rebuild its fragment views after this returns and keep their old
+		// contents. Mark again once the current turn has finished.
+		RunLoop.main.perform { [weak self] in
+			MainActor.assumeIsolated { self?.markTextForDisplay(in: rect) }
+		}
+	}
+
+	private func markTextForDisplay(in rect: CGRect) {
 		setNeedsDisplay(rect)
 		func mark(_ view: NSView) {
 			for child in view.subviews {

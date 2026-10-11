@@ -64,7 +64,13 @@ enum MarkdownSyntaxHighlighter {
 		// valid NSLayoutManager temporary attribute key). Wrap in begin/end
 		// to coalesce the per-range updates into a single layout pass.
 		textStorage.beginEditing()
-		defer { textStorage.endEditing() }
+		defer {
+			textStorage.endEditing()
+			#if os(macOS)
+				// Overlay colors are not repainted on their own (see redisplaySource).
+				if colors { textView.redisplayVisibleText() }
+			#endif
+		}
 		if colors { sink.resetColor(in: scope, base: UXColor(theme.textColor)) }
 
 		// Colors are painted into a per-character buffer first, in the same pass
@@ -216,6 +222,9 @@ enum MarkdownSyntaxHighlighter {
 			to: textStorage)
 		textStorage.endEditing()
 		sink.resetColor(in: fullRange, base: UXColor(theme?.textColor ?? .primary))
+		#if os(macOS)
+			textView.redisplayVisibleText()
+		#endif
 	}
 
 	// MARK: - Scope selection
