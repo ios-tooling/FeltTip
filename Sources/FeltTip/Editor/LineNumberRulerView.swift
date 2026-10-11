@@ -102,7 +102,7 @@ final class LineNumberRulerView: NSRulerView {
 	}
 
 	override func drawHashMarksAndLabels(in rect: NSRect) {
-		guard let textView, let layoutManager = textView.layoutManager,
+		guard let textView, let layoutManager = textView.textKit1LayoutManager,
 			  let container = textView.textContainer else { return }
 		rebuildLineStartsIfNeeded()
 		guard !lineStarts.isEmpty else { return }

@@ -602,7 +602,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		let textLength = (textView.textStorage?.length ?? 0)
 		if let previous = coordinator.lastMirroredSelection,
 		   previous.location + previous.length <= textLength {
-			textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: previous)
+			textView.textKit1LayoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: previous)
 		}
 		coordinator.lastMirroredSelection = mirroredSelection
 		if let range = mirroredSelection, range.length > 0, range.location + range.length <= textLength {
@@ -611,7 +611,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if textView.window?.firstResponder !== textView, textView.selectedRange().length > 0 {
 				textView.setSelectedRange(NSRange(location: textView.selectedRange().location, length: 0))
 			}
-			textView.layoutManager?.addTemporaryAttribute(
+			textView.textKit1LayoutManager?.addTemporaryAttribute(
 				.backgroundColor,
 				value: theme.map { NSColor($0.mirrorHighlightColor) } ?? .unemphasizedSelectedTextBackgroundColor,
 				forCharacterRange: range)
@@ -644,8 +644,8 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		// attribute is translucent, making valid source appear to lose text.
 		let dim = active.blended(withFraction: 0.7, of: background)?
 			.withAlphaComponent(1) ?? active
-		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: dim, forCharacterRange: full)
-		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: active, forCharacterRange: nextRange)
+		textView.textKit1LayoutManager?.addTemporaryAttribute(.foregroundColor, value: dim, forCharacterRange: full)
+		textView.textKit1LayoutManager?.addTemporaryAttribute(.foregroundColor, value: active, forCharacterRange: nextRange)
 	}
 
 	private func clearFocusMode(from textView: NSTextView, coordinator: Coordinator) {
@@ -754,7 +754,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			revealStartWhenComplete: Bool = false
 		) {
 			prelayoutTask?.cancel()
-			guard let layoutManager = textView.layoutManager else { return }
+			guard let layoutManager = textView.textKit1LayoutManager else { return }
 			let length = (textView.textStorage?.length ?? 0)
 			guard length > 100_000 else {
 				layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: length))
@@ -766,7 +766,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			prelayoutTask = Task { @MainActor [weak textView] in
 				var location = 0
 				while location < length, !Task.isCancelled {
-					guard let textView, let layoutManager = textView.layoutManager else { return }
+					guard let textView, let layoutManager = textView.textKit1LayoutManager else { return }
 					let end = min(location + 30_000, length)
 					layoutManager.ensureLayout(forCharacterRange: NSRange(location: location, length: end - location))
 					location = end
@@ -990,7 +990,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		fileprivate func revealSelectionRange(
 			_ range: NSRange, in textView: NSTextView, scrollView: NSScrollView
 		) {
-			guard let layoutManager = textView.layoutManager,
+			guard let layoutManager = textView.textKit1LayoutManager,
 				let textContainer = textView.textContainer,
 				let documentView = scrollView.documentView else { return }
 			layoutManager.ensureLayout(forCharacterRange: range)
@@ -1071,7 +1071,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// scroll observer's hot path so active scrolling doesn't fire
 		/// SwiftUI invalidations through onVisibleHeadingChanged.
 		fileprivate func computeAndReportHeading(textView: NSTextView) {
-			guard let layoutManager = textView.layoutManager,
+			guard let layoutManager = textView.textKit1LayoutManager,
 				  let textContainer = textView.textContainer else { return }
 			let origin = textView.textContainerOrigin
 			let point = NSPoint(x: 0, y: max(0, textView.visibleRect.minY - origin.y))
@@ -1163,7 +1163,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 			if let stale = lastMirroredSelection,
 			   stale.location + stale.length <= (textView.textStorage?.length ?? 0) {
-				textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
+				textView.textKit1LayoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
 			}
 			let range = textView.selectedRange()
 			parent.applyFocusMode(to: textView, coordinator: self)
@@ -1218,7 +1218,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// once the caret has drifted past the band's top or bottom edge.
 		private func centerCursor(in textView: NSTextView) {
 			guard let scrollView = textView.enclosingScrollView,
-					let layoutManager = textView.layoutManager else { return }
+					let layoutManager = textView.textKit1LayoutManager else { return }
 			let visibleHeight = scrollView.contentView.bounds.height
 			guard visibleHeight > 0 else { return }
 			let insertionPoint = textView.selectedRange().location
