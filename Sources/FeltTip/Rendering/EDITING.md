@@ -241,7 +241,12 @@ underneath it, not in what the page asks for.
     well covered; what isn't is the `dataTransfer` fallback the branch uses
     when `e.data` is null. A synthetic event can't drive it — unlike cut and
     paste, `insertReplacementText` has no live-selection fallback, because a
-    real one always carries target ranges.
+    real one always carries target ranges. Those ranges are `StaticRange`s,
+    not live `Range`s — no `commonAncestorContainer`, `comparePoint`, or
+    useful `toString()` — so convert with `liveRangeOf` before using any of
+    them. Tests that build target ranges with `cloneRange()` hide this;
+    `replacementThroughAStaticTargetRangeReachesTheSource` uses a real
+    `StaticRange` (missing it broke accepting QuickType suggestions on iOS).
   - *Dictation and predictive text* arrive as a **composition**, reconciled by
     diffing the whole run at `compositionend`, then structurally re-rendered so
     delimiter or autolink changes cannot leave stale traits. `EditBridgeTextSubstitutionTests`

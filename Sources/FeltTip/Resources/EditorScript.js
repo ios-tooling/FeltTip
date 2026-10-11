@@ -246,7 +246,11 @@
   // user selected none of that preceding run. Recover the first and last
   // actually selected stamped characters so replacement keeps an inline
   // wrapper such as `[label](url)` instead of consuming it as a cross-run edit.
-  function selectedStampedTextEndpoints(range) {
+  function selectedStampedTextEndpoints(targetRange) {
+    // beforeinput's target ranges are StaticRanges on real WebKit input
+    // (autocorrect, an accepted QuickType suggestion): no
+    // commonAncestorContainer, comparePoint, or useful toString().
+    var range = liveRangeOf(targetRange);
     if (!range || range.collapsed || !plain(range.toString())) return null;
     var root = range.commonAncestorContainer;
     if (root.nodeType === 3) root = root.parentNode;
@@ -1923,16 +1927,23 @@
   // swap is 1:1 in UTF-16 so offsets are unaffected; normalize every
   // string that crosses the bridge so it can't fail verification.
   function plain(s) { return s ? s.replace(/\u00A0/g, ' ') : s; }
-  // getTargetRanges() yields StaticRanges, whose toString() is useless
-  // ("[object StaticRange]"). Build a live Range to read the replaced text.
-  function rangeText(r) {
-    if (r.collapsed) return '';
+  // getTargetRanges() yields StaticRanges, which have none of a live Range's
+  // methods: toString() is "[object StaticRange]", and commonAncestorContainer
+  // and comparePoint are missing. Build a live Range before using any of them.
+  function liveRangeOf(r) {
+    if (!r) return null;
+    if (typeof r.comparePoint === 'function') return r;
     try {
       var live = document.createRange();
       live.setStart(r.startContainer, r.startOffset);
       live.setEnd(r.endContainer, r.endOffset);
-      return live.toString();
-    } catch (e) { return ''; }
+      return live;
+    } catch (e) { return null; }
+  }
+  function rangeText(r) {
+    if (r.collapsed) return '';
+    var live = liveRangeOf(r);
+    return live ? live.toString() : '';
   }
   // A mapped escaped pipe consumes two source characters despite showing one.
   // Clone only the selected DOM so a partial selection keeps its exact source

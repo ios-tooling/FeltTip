@@ -79,6 +79,44 @@ import Testing
 		try await assertHealthy(harness)
 	}
 
+	/// Real WebKit hands `beforeinput` its target ranges as `StaticRange`s,
+	/// which have no `commonAncestorContainer`, `comparePoint`, or useful
+	/// `toString()`. Accepting a QuickType suggestion on iOS selects the word
+	/// and replaces it through such a range; treating it as a live `Range`
+	/// threw, the source kept the misspelling, and the next keystroke was
+	/// rejected against a page that already showed the correction.
+	@Test(arguments: [true, false])
+	func replacementThroughAStaticTargetRangeReachesTheSource(wordSelected: Bool) async throws {
+		let source = "prefix teh"
+		let range = (source as NSString).range(of: "teh")
+		let harness = try await CoordinatorBridgeHarness(source: source)
+		try await harness.run("""
+			window.__mdPlaceCaret(\(range.location), \(range.length))
+			var live = window.getSelection().getRangeAt(0)
+			var target = new StaticRange({
+			  startContainer: live.startContainer, startOffset: live.startOffset,
+			  endContainer: live.endContainer, endOffset: live.endOffset
+			})
+			if (!\(wordSelected)) window.__mdPlaceCaret(\(NSMaxRange(range)), 0)
+			var replacement = new InputEvent('beforeinput', {
+			  inputType: 'insertReplacementText', data: 'the', bubbles: true, cancelable: true
+			})
+			Object.defineProperty(replacement, 'getTargetRanges', { value: function () { return [target] } })
+			var allowed = document.body.dispatchEvent(replacement)
+			if (allowed) {
+			  var node = target.startContainer
+			  node.nodeValue = node.nodeValue.substring(0, target.startOffset)
+			    + 'the' + node.nodeValue.substring(target.endOffset)
+			  document.body.dispatchEvent(new InputEvent('input', {
+			    inputType: 'insertReplacementText', data: 'the', bubbles: true
+			  }))
+			}
+			""")
+		try await harness.waitForSourceEdits(1)
+		#expect(harness.source == "prefix the")
+		try await assertHealthy(harness)
+	}
+
 	@Test func nullReplacementPayloadIsBlockedWithoutFreezingThePage() async throws {
 		let source = "Alpha beta omega"
 		let harness = try await CoordinatorBridgeHarness(source: source)
