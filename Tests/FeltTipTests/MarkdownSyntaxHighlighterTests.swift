@@ -23,14 +23,13 @@ import Testing
 
 	@MainActor
 	private func boldRanges(in tv: NSTextView) -> [NSRange] {
-		guard let layoutManager = tv.layoutManager, let textStorage = tv.textStorage else { return [] }
+		guard let textStorage = tv.textStorage else { return [] }
 		var ranges: [NSRange] = []
 		let full = NSRange(location: 0, length: textStorage.length)
 		let boldFont = NSFont.monospacedSystemFont(ofSize: tv.font?.pointSize ?? 13, weight: .bold)
 		textStorage.enumerateAttribute(.font, in: full) { value, range, _ in
 			if let font = value as? NSFont, font == boldFont { ranges.append(range) }
 		}
-		_ = layoutManager // silence
 		return ranges
 	}
 

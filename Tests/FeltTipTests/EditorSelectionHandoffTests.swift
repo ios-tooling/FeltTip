@@ -761,31 +761,18 @@ struct EditorSelectionHandoffTests {
 	private func caretIsVisible(
 		_ location: Int, in textView: NSTextView, scrollView: NSScrollView
 	) -> Bool {
-		guard let layoutManager = textView.layoutManager else { return false }
-		layoutManager.ensureLayout(forCharacterRange: NSRange(location: location, length: 0))
-		let glyph = layoutManager.glyphRange(
-			forCharacterRange: NSRange(location: location, length: 0),
-			actualCharacterRange: nil)
-		guard glyph.location < layoutManager.numberOfGlyphs else { return false }
-		let textRect = layoutManager.boundingRect(
-			forGlyphRange: NSRange(location: glyph.location, length: 1),
-			in: textView.textContainer!)
-			.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+		// Through the TextKit 2 geometry the editor itself uses: touching
+		// `layoutManager` here would convert the editor to TextKit 1 mid-test.
+		let length = textView.textStorage?.length ?? 0
+		guard location <= length,
+			let textRect = textView.sourceRect(
+				for: NSRange(location: location, length: min(1, length - location))) else { return false }
 		let clipRect = textView.convert(textRect, to: scrollView.contentView)
 		return scrollView.contentView.bounds.intersects(clipRect)
 	}
 
 	private func selectionMidY(_ range: NSRange, in textView: NSTextView) -> CGFloat? {
-		guard let layoutManager = textView.layoutManager,
-			let textContainer = textView.textContainer else { return nil }
-		layoutManager.ensureLayout(forCharacterRange: range)
-		let glyphRange = layoutManager.glyphRange(
-			forCharacterRange: range, actualCharacterRange: nil)
-		return layoutManager.boundingRect(
-			forGlyphRange: glyphRange, in: textContainer
-		).offsetBy(
-			dx: textView.textContainerOrigin.x,
-			dy: textView.textContainerOrigin.y).midY
+		textView.sourceRect(for: range)?.midY
 	}
 }
 

@@ -17,6 +17,17 @@ import CrossPlatformKit
 	typealias UXTextView = UITextView
 #endif
 
+#if os(macOS)
+extension NSTextView {
+	/// The TextKit 1 layout manager, or nil on a TextKit 2 view. Reading
+	/// `layoutManager` on a TextKit 2 view permanently converts it to TextKit 1,
+	/// losing viewport-based layout, so every TextKit 1 path goes through here.
+	var textKit1LayoutManager: NSLayoutManager? {
+		textLayoutManager == nil ? layoutManager : nil
+	}
+}
+#endif
+
 extension UXTextView {
 	/// `NSTextView.string` is non-optional; `UITextView.text` is not.
 	var sourceString: String {
@@ -33,7 +44,7 @@ extension UXTextView {
 
 	var uxLayoutManager: NSLayoutManager? {
 		#if os(macOS)
-			layoutManager
+			textKit1LayoutManager
 		#else
 			// Reading `layoutManager` on a TextKit 2 view silently drops it
 			// into TextKit 1 compatibility mode, which would leave the view in

@@ -29,7 +29,20 @@ import Testing
 			search = NSRange(location: NSMaxRange(found), length: ns.length - NSMaxRange(found))
 			found = ns.range(of: substring, range: search)
 		}
-		return tv.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: found.location, effectiveRange: nil) != nil
+		return tv.highlightSink?.overlayColor(at: found.location) != nil
+	}
+
+	@Test @MainActor
+	func highlightingKeepsTheViewOnTextKit2() {
+		// Color goes through rendering attributes. Reading `layoutManager`
+		// would silently convert the view to TextKit 1 and whole-document
+		// layout, which is exactly what the raw editor must never do.
+		let tv = highlighted("## Title\n\nSome **bold** prose.")
+		#expect(tv.textLayoutManager != nil)
+		#expect(isColored("##", in: tv))
+		MarkdownSyntaxHighlighter.clearHighlighting(textView: tv)
+		#expect(tv.textLayoutManager != nil)
+		#expect(!isColored("##", in: tv))
 	}
 
 	@Test @MainActor
@@ -89,7 +102,7 @@ import Testing
 		let markers = ["## ", "**", "*i", "`c", "[l", "](", "> ", "- ", "---", "```"]
 		for marker in markers {
 			let location = (tv.string as NSString).range(of: marker).location
-			let color = tv.layoutManager?.temporaryAttribute(.foregroundColor, atCharacterIndex: location, effectiveRange: nil) as? NSColor
+			let color = tv.highlightSink?.overlayColor(at: location)
 			#expect(color == dimmed, "\(marker) should be dimmed")
 		}
 	}

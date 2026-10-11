@@ -127,7 +127,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 
 	public func makeNSView(context: Context) -> NSScrollView {
 		let scrollView = RulerInsetScrollView()
-		let textView = MarkdownFormattingTextView()
+		// TextKit 2 lays out only the viewport, which is what lets a 20 MB
+		// document open in about a second instead of never. Nothing in the
+		// editor may read `textView.layoutManager`: that single access converts
+		// the view to TextKit 1 and brings back whole-document layout. Geometry
+		// goes through TextKit2Geometry.swift; color through the highlight sink.
+		let textView = MarkdownFormattingTextView(usingTextLayoutManager: true)
 		scrollView.setAccessibilityIdentifier("raw-markdown-scroll-view")
 		textView.setAccessibilityIdentifier("raw-markdown-editor")
 
@@ -144,7 +149,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		textView.isAutomaticQuoteSubstitutionEnabled = false
 		textView.isAutomaticTextReplacementEnabled = false
 		textView.isAutomaticSpellingCorrectionEnabled = false
-		textView.delegate = context.coordinator
 		textView.isVerticallyResizable = true
 		textView.isHorizontallyResizable = false
 		textView.autoresizingMask = [.width]
@@ -158,6 +162,17 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		// A pre-filled document should open at its beginning; on a large document,
 		// leaving the caret at EOF also makes AppKit scroll the first frame to the end.
 		textView.setSelectedRange(NSRange(location: 0, length: 0))
+		// Only now: the initial string and selection above are setup, not the
+		// user moving the caret, and must not be reported or anchored as such.
+		textView.delegate = context.coordinator
+		// The editor's own drives move the clip view directly and never pass
+		// through here, so this is always the text view acting for the user —
+		// even while a drive's echo flag is still up (a ⌘↓ right after open
+		// lands inside the initial geometry replays).
+		textView.onSelfScroll = { [weak coordinator = context.coordinator, weak scrollView] in
+			guard let coordinator, let scrollView else { return }
+			coordinator.adoptCurrentViewport(in: scrollView)
+		}
 		let shouldRevealInitialCaret = selectionTarget == nil
 			&& caretTarget == nil
 			&& selectedHeadingID == nil
@@ -176,8 +191,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
 			}
 		}
-		context.coordinator.scheduleIncrementalLayout(
-			for: textView, revealStartWhenComplete: shouldRevealInitialCaret)
 		// Wire the textStorage delegate so the coordinator can capture the
 		// edited range — the incremental highlight path needs it to scope
 		// re-styling to the paragraph that actually changed.
@@ -243,6 +256,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						guard let scrollView, let coordinator else { return }
 						coordinator.scrollReportScheduled = false
 						(scrollView.verticalRulerView as? LineNumberRulerView)?.invalidateLineNumbers()
+						if let textView { coordinator.ensureHighlightWindow(in: textView) }
 						guard !coordinator.isSyncScroll else { return }
 						let documentFrame = scrollView.documentView?.frame ?? .zero
 						let visibleHeight = scrollView.contentView.bounds.height
@@ -255,7 +269,14 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						// the clip origin on its own (clamping, a frame-origin shift).
 						// Unless the user is actually scrolling, that is layout noise:
 						// put the view back on its anchor instead of adopting it.
-						if coordinator.takeScrollIsLayoutNoise() {
+						// The same line at the same offset is the same viewport: the
+						// origin moved because TextKit refined an estimate above it.
+						let captured = coordinator.captureViewportAnchor(in: scrollView)
+						let selectionDriven = coordinator.takeSelectionDrivenScroll()
+						if Coordinator.anchorsMatch(captured, coordinator.viewportAnchor) { return }
+						// A scroll the text view made to reveal a moved caret is the
+						// user's doing too, even inside a geometry window.
+						if coordinator.takeScrollIsLayoutNoise(), !selectionDriven {
 							coordinator.replayViewportAnchor(in: scrollView)
 							return
 						}
@@ -263,13 +284,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 						// the anchor and ends any restore in progress (including a
 						// handoff selection that was being kept onscreen).
 						coordinator.geometryWindowDeadline = 0
-						let fraction = MarkdownScrollGeometry.fraction(
-							originY: offset,
-							documentFrame: documentFrame,
-							visibleHeight: visibleHeight)
-						coordinator.viewportAnchor = .fraction(fraction)
+						coordinator.viewportAnchor = captured
+						let fraction = coordinator.hostFraction(in: scrollView)
 						if MarkdownSplitSyncLog.enabled {
-							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f", offset, documentFrame.height, fraction)
+							NSLog("[SplitSync] raw report offset=%.1f doc=%.1f frac=%.4f anchor=%@", offset, documentFrame.height, fraction, String(describing: coordinator.viewportAnchor))
 						}
 						coordinator.parent.onScrollFractionChanged?(fraction)
 
@@ -423,7 +441,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					coordinator.reportCursorPosition(in: textView)
 				}
 			}
-			context.coordinator.scheduleIncrementalLayout(for: textView)
 		}
 		updateHighlightingIfNeeded(textView: textView, coordinator: context.coordinator)
 
@@ -443,7 +460,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				let length = min(caret.selectionLength, (textView.textStorage?.length ?? 0) - clamped)
 				let range = NSRange(location: clamped, length: length)
 				textView.setSelectedRange(range)
-				if !caret.preservesScrollPosition { textView.scrollRangeToVisible(range) }
+				if !caret.preservesScrollPosition {
+					textView.scrollRangeToVisible(range)
+					context.coordinator.adoptCurrentViewport(in: scrollView)
+				}
 			}
 		}
 
@@ -482,6 +502,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 				: nil
 			if let range = indexedRange ?? MarkdownHeading.characterRange(for: headingID, in: text) {
 				textView.scrollRangeToVisible(range)
+				context.coordinator.adoptCurrentViewport(in: scrollView)
 				textView.showFindIndicator(for: range)
 			}
 			Task { @MainActor in selectedHeadingID = nil }
@@ -564,10 +585,22 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let fences = coordinator.codeFenceRanges
 				?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
 			coordinator.codeFenceRanges = fences
+			guard coordinator.usesHighlightWindow(textView) else {
+				MarkdownSyntaxHighlighter.highlight(
+					textView: textView, theme: theme, options: markdownOptions,
+					codeFenceRanges: fences)
+				return
+			}
+			// Heading fonts for the whole document in one pass, so moving the
+			// colored window later never has to write to the text storage.
 			MarkdownSyntaxHighlighter.highlight(
 				textView: textView, theme: theme, options: markdownOptions,
-				codeFenceRanges: fences)
+				limitedTo: NSRange(location: 0, length: textView.textStorage?.length ?? 0),
+				codeFenceRanges: fences, colors: false)
+			coordinator.highlightedWindow = nil
+			coordinator.ensureHighlightWindow(in: textView, force: true)
 		} else if !syntaxHighlightingEnabled {
+			coordinator.highlightedWindow = nil
 			MarkdownSyntaxHighlighter.clearHighlighting(textView: textView)
 		}
 	}
@@ -600,9 +633,10 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 	private func applyMirroredSelection(to textView: NSTextView, coordinator: Coordinator) {
 		guard coordinator.lastMirroredSelection != mirroredSelection else { return }
 		let textLength = (textView.textStorage?.length ?? 0)
+		let sink = textView.highlightSink
 		if let previous = coordinator.lastMirroredSelection,
 		   previous.location + previous.length <= textLength {
-			textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: previous)
+			sink?.clearBackground(in: previous)
 		}
 		coordinator.lastMirroredSelection = mirroredSelection
 		if let range = mirroredSelection, range.length > 0, range.location + range.length <= textLength {
@@ -611,10 +645,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			if textView.window?.firstResponder !== textView, textView.selectedRange().length > 0 {
 				textView.setSelectedRange(NSRange(location: textView.selectedRange().location, length: 0))
 			}
-			textView.layoutManager?.addTemporaryAttribute(
-				.backgroundColor,
-				value: theme.map { NSColor($0.mirrorHighlightColor) } ?? .unemphasizedSelectedTextBackgroundColor,
-				forCharacterRange: range)
+			sink?.setBackground(
+				theme.map { NSColor($0.mirrorHighlightColor) } ?? .unemphasizedSelectedTextBackgroundColor,
+				in: range)
 		}
 	}
 
@@ -644,8 +677,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		// attribute is translucent, making valid source appear to lose text.
 		let dim = active.blended(withFraction: 0.7, of: background)?
 			.withAlphaComponent(1) ?? active
-		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: dim, forCharacterRange: full)
-		textView.layoutManager?.addTemporaryAttribute(.foregroundColor, value: active, forCharacterRange: nextRange)
+		let sink = textView.highlightSink
+		sink?.setColor(dim, in: full)
+		sink?.setColor(active, in: nextRange)
 	}
 
 	private func clearFocusMode(from textView: NSTextView, coordinator: Coordinator) {
@@ -693,7 +727,19 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// geometry change (late TextKit layout, a rewrap, a resize) re-applies
 		/// whatever it currently is, so no replay can resurrect a superseded
 		/// position and no timer has to guess when layout is done.
+		///
+		/// On TextKit 2 the document height is an estimate that is refined as
+		/// content is laid out, so a pixel fraction names a different place
+		/// after every refinement. The anchor is therefore a character: the
+		/// line at the top of the viewport. Host fractions are converted to
+		/// and from character offsets, which keeps a saved viewport exact
+		/// across sessions and keeps replays from moving the text under the
+		/// reader as estimates settle.
 		var viewportAnchor: ViewportAnchor = .fraction(0)
+		/// A caret move made the text view scroll on its own this turn; the
+		/// resulting bounds change is the user's, not layout noise.
+		var selectionDrivenScrollPending = false
+		var anchorCaptureScheduled = false
 		var documentFrameObserver: Any?
 		var liveScrollObservers: [Any] = []
 		var isLiveScrolling = false
@@ -712,8 +758,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var quietPeriodReplayPending = false
 
 		enum ViewportAnchor: Equatable {
+			/// A host fraction not yet resolved against the text (no text view,
+			/// or nothing laid out at the target yet).
 			case fraction(Double)
 			case selection(NSRange)
+			/// The line holding the character at `offset` has its top
+			/// `lineOffset` points above the viewport's top edge.
+			case character(offset: Int, lineOffset: CGFloat)
 		}
 
 		/// Classifies the clip-origin change being reported this turn, consuming
@@ -722,6 +773,115 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			let live = isLiveScrolling || liveScrolledThisTurn
 			liveScrolledThisTurn = false
 			return !live && CFAbsoluteTimeGetCurrent() < geometryWindowDeadline
+		}
+
+		func takeSelectionDrivenScroll() -> Bool {
+			defer { selectionDrivenScrollPending = false }
+			return selectionDrivenScrollPending
+		}
+
+		/// The viewport as it is now, as a character anchor. Falls back to a
+		/// pixel fraction when nothing is laid out at the top edge yet.
+		func captureViewportAnchor(in scrollView: NSScrollView) -> ViewportAnchor {
+			guard let textView = scrollView.documentView as? NSTextView else {
+				return .fraction(currentFraction(in: scrollView))
+			}
+			let clip = scrollView.contentView
+			let top = clip.convert(CGPoint(x: clip.bounds.minX, y: clip.bounds.minY), to: textView)
+			let origin = textView.textContainerOrigin
+			let probe = CGPoint(x: origin.x, y: max(origin.y, top.y))
+			guard let offset = textView.sourceCharacterOffset(at: probe),
+				  let lineRect = textView.sourceLineRect(atCharacterOffset: offset) else {
+				return .fraction(currentFraction(in: scrollView))
+			}
+			let lineTop = textView.convert(lineRect, to: clip).minY
+			return .character(offset: offset, lineOffset: clip.bounds.minY - lineTop)
+		}
+
+		/// The host-facing fraction for the current anchor: the top line's share
+		/// of the document's lines, with the ends pinned so a pane scrolled to
+		/// its bottom drives the other pane to its bottom. Lines rather than
+		/// pixels because TextKit 2 only estimates the pixel height, and the
+		/// estimate changes as layout proceeds; a line fraction round-trips
+		/// through `anchor(forFraction:)` to exactly the same line.
+		func hostFraction(in scrollView: NSScrollView) -> Double {
+			let pixel = currentFraction(in: scrollView)
+			switch viewportAnchor {
+			case .character(let offset, _):
+				let lineCount = lineIndex.starts.count
+				guard lineCount > 1, offset > 0 else { return 0 }
+				guard pixel < 0.999 else { return 1 }
+				let line = lineIndex.position(at: offset).line
+				return min(1, max(0, Double(line) / Double(lineCount - 1)))
+			case .fraction(let fraction):
+				return fraction
+			case .selection:
+				return pixel
+			}
+		}
+
+		/// A host fraction resolved to the line it names, so that applying and
+		/// replaying it land on the same text whatever TextKit's current height
+		/// estimate is. The end of the text stands for "the bottom".
+		func anchor(forFraction fraction: Double, in scrollView: NSScrollView) -> ViewportAnchor {
+			guard let textView = scrollView.documentView as? NSTextView,
+				  let length = textView.textStorage?.length, length > 0 else {
+				return .fraction(fraction)
+			}
+			let clamped = min(1, max(0, fraction))
+			guard clamped < 1 else { return .character(offset: length, lineOffset: 0) }
+			let starts = lineIndex.starts
+			guard starts.count > 1 else { return .character(offset: 0, lineOffset: 0) }
+			let line = min(starts.count - 1, Int((clamped * Double(starts.count - 1)).rounded()))
+			// The first line sits below the container inset; fraction 0 is the
+			// very top of the document, inset included.
+			let lineOffset = line == 0 ? -textView.textContainerInset.height : 0
+			return .character(offset: min(length, starts[line]), lineOffset: lineOffset)
+		}
+
+		/// Two anchors that name the same line at the same offset describe the
+		/// same viewport, even when the clip origin differs — TextKit 2 moves
+		/// the origin to keep content still when it refines an estimate above
+		/// the viewport, and that is not a scroll.
+		static func anchorsMatch(_ lhs: ViewportAnchor, _ rhs: ViewportAnchor) -> Bool {
+			if case .character(let offset, let lineOffset) = lhs,
+			   case .character(let otherOffset, let otherLineOffset) = rhs {
+				return offset == otherOffset && abs(lineOffset - otherLineOffset) < 1
+			}
+			return lhs == rhs
+		}
+
+		/// Adopt the viewport the text view just scrolled to (a caret reveal,
+		/// a heading jump) as the anchor, and let the pending bounds report
+		/// publish it as a scroll rather than revert it as layout noise.
+		func adoptCurrentViewport(in scrollView: NSScrollView) {
+			guard !isLiveScrolling else { return }
+			viewportAnchor = captureViewportAnchor(in: scrollView)
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw adopt clip=%.1f anchor=%@",
+					scrollView.contentView.bounds.minY, String(describing: viewportAnchor))
+			}
+			selectionDrivenScrollPending = true
+			// Runs after any bounds report already queued this turn.
+			RunLoop.main.perform { [weak self] in
+				MainActor.assumeIsolated { self?.selectionDrivenScrollPending = false }
+			}
+		}
+
+		/// The text view reveals a moved caret synchronously, after the
+		/// selection delegate returns; adopt the result at the end of the turn,
+		/// ahead of any geometry replay that would otherwise pull it back.
+		func noteSelectionMoved(in textView: NSTextView) {
+			guard !anchorCaptureScheduled else { return }
+			anchorCaptureScheduled = true
+			RunLoop.main.perform { [weak self, weak textView] in
+				MainActor.assumeIsolated {
+					guard let self else { return }
+					self.anchorCaptureScheduled = false
+					guard let scrollView = textView?.enclosingScrollView else { return }
+					self.adoptCurrentViewport(in: scrollView)
+				}
+			}
 		}
 
 		private func openGeometryWindow() {
@@ -734,50 +894,85 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		var lastReportedScrollOffset: CGFloat = -1
 		/// An end-of-turn scroll report is queued (see the bounds observer).
 		var scrollReportScheduled = false
-		/// In-flight incremental pre-layout of freshly set text.
-		var prelayoutTask: Task<Void, Never>?
 		/// Cancellable off-main heading-index build. Its matching content
 		/// revision gates use of source ranges after rapid local or host edits.
 		var headingIndexTask: Task<Void, Never>?
+		/// The part of a large document that currently carries syntax color.
+		///
+		/// A large document is colored only in a window around the viewport,
+		/// which moves as the view scrolls. TextKit 2 keeps overlay colors as
+		/// rendering attributes on the layout manager, and their cost grows
+		/// with how many runs exist: coloring all of a 20 MB document after it
+		/// has drawn did not finish in fifteen minutes, and with a whole
+		/// document's runs in place every keystroke near the top took about
+		/// two seconds. A bounded window keeps both costs constant. Nothing
+		/// outside it is visible, and it is recolored before it can be.
+		var highlightedWindow: NSRange?
+		/// UTF-16 units colored on each side of the viewport's first character.
+		/// A screenful is a few thousand; scrolling within the margin costs
+		/// nothing, and recoloring a window takes a few tens of milliseconds.
+		static let highlightWindowRadius = 60_000
+
+		/// Documents this size or smaller are colored whole, as before.
+		func usesHighlightWindow(_ textView: NSTextView) -> Bool {
+			textView.textLayoutManager != nil
+				&& (textView.textStorage?.length ?? 0) > Self.highlightWindowRadius * 2
+		}
+
+		/// Recolor around the viewport when it has moved near or past the edge
+		/// of the colored window (or always, with `force`).
+		func ensureHighlightWindow(in textView: NSTextView, force: Bool = false) {
+			guard parent.syntaxHighlightingEnabled, let theme = parent.theme,
+				  !lastFocusModeEnabled, usesHighlightWindow(textView),
+				  let sink = textView.highlightSink else { return }
+			let length = textView.textStorage?.length ?? 0
+			let origin = textView.textContainerOrigin
+			guard let top = textView.sourceCharacterOffset(
+				at: CGPoint(x: origin.x, y: max(origin.y, textView.visibleRect.minY))) else { return }
+			let radius = Self.highlightWindowRadius
+			if !force, let window = highlightedWindow,
+			   top - window.location > radius / 4 || window.location == 0,
+			   NSMaxRange(window) - top > radius / 2 || NSMaxRange(window) >= length {
+				return
+			}
+			let start = max(0, top - radius)
+			let next = NSRange(location: start, length: min(length, top + radius) - start)
+			let began = CFAbsoluteTimeGetCurrent()
+			defer {
+				if MarkdownSplitSyncLog.enabled {
+					NSLog("[SplitSync] raw recolor window %@ -> %@ (%.0f ms)",
+						highlightedWindow.map { NSStringFromRange($0) } ?? "nil", NSStringFromRange(next),
+						(CFAbsoluteTimeGetCurrent() - began) * 1000)
+				}
+			}
+			if let previous = highlightedWindow {
+				sink.resetColor(in: previous, base: NSColor(theme.textColor))
+			}
+			let fences = codeFenceRanges ?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
+			codeFenceRanges = fences
+			// Colors only: heading fonts were applied document-wide on load and
+			// are kept current by the per-edit pass.
+			MarkdownSyntaxHighlighter.highlight(
+				textView: textView, theme: theme, options: parent.markdownOptions,
+				limitedTo: next, codeFenceRanges: fences, fonts: false)
+			highlightedWindow = next
+		}
+
+		/// Keep the window over the same text across an edit.
+		private func shiftHighlightWindow(editedRange: NSRange, delta: Int) {
+			guard var window = highlightedWindow else { return }
+			let oldEnd = editedRange.location + max(0, editedRange.length - delta)
+			if oldEnd <= window.location {
+				window.location += delta
+			} else if editedRange.location < NSMaxRange(window) {
+				window.length = max(0, window.length + delta)
+			}
+			highlightedWindow = window
+		}
+
 		var indexedHeadings: [MarkdownHeading] = []
 		var indexedHeadingRevision = -1
 		weak var lineNumberRuler: LineNumberRulerView?
-
-		/// Lay the document out ahead of scrolling. TextKit lays out lazily,
-		/// so unvisited regions stall the scroll as they're reached — a
-		/// fraction-of-second pause every screenful, worst deep in large
-		/// files. A synchronous full pass fixes that but beachballs multi-
-		/// hundred-KB documents at open, so big documents are laid out in
-		/// chunks spread across runloop turns instead.
-		func scheduleIncrementalLayout(
-			for textView: NSTextView,
-			revealStartWhenComplete: Bool = false
-		) {
-			prelayoutTask?.cancel()
-			guard let layoutManager = textView.layoutManager else { return }
-			let length = (textView.textStorage?.length ?? 0)
-			guard length > 100_000 else {
-				layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: length))
-				if revealStartWhenComplete {
-					textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
-				}
-				return
-			}
-			prelayoutTask = Task { @MainActor [weak textView] in
-				var location = 0
-				while location < length, !Task.isCancelled {
-					guard let textView, let layoutManager = textView.layoutManager else { return }
-					let end = min(location + 30_000, length)
-					layoutManager.ensureLayout(forCharacterRange: NSRange(location: location, length: end - location))
-					location = end
-					try? await Task.sleep(for: .milliseconds(10))
-				}
-				guard !Task.isCancelled else { return }
-				if revealStartWhenComplete, let textView {
-					textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
-				}
-			}
-		}
 
 		/// Build a source-ordered heading index away from the AppKit thread.
 		/// Local typing is debounced so a burst creates one parse; initial and
@@ -854,28 +1049,50 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		init(_ parent: MarkdownTextEditor) { self.parent = parent }
 
 		func applyScrollFraction(_ fraction: Double, to scrollView: NSScrollView) {
+			scroll(to: anchor(forFraction: fraction, in: scrollView), in: scrollView)
+		}
+
+		/// Drive the clip view to a fraction or character anchor. (A selection
+		/// anchor is revealed through `revealSelectionRange` instead.)
+		func scroll(to anchor: ViewportAnchor, in scrollView: NSScrollView) {
 			isSyncScroll = true
-			let documentFrame = scrollView.documentView?.frame ?? .zero
-			let visibleHeight = scrollView.contentView.bounds.height
-			let offset = MarkdownScrollGeometry.originY(
-				fraction: fraction,
-				documentFrame: documentFrame,
-				visibleHeight: visibleHeight)
-			if MarkdownSplitSyncLog.enabled {
-				NSLog("[SplitSync] raw driven frac=%.4f target=%.1f doc=%.1f", fraction, offset, documentFrame.height)
-			}
-			// Preserve x: with a line-number gutter the resting origin is
-			// -contentInsets.left, and scrolling to x: 0 slid the text
-			// horizontally underneath the ruler.
-			scrollView.contentView.scroll(to: NSPoint(
-				x: scrollView.contentView.bounds.origin.x, y: offset))
-			scrollView.reflectScrolledClipView(scrollView.contentView)
-			lastReportedScrollOffset = offset
+			// A drive supersedes any caret reveal still waiting to be adopted.
+			selectionDrivenScrollPending = false
 			// Bounds-change observers queued on .main fire after this method
 			// returns. Hold the flag until the next main-queue tick so the
 			// echoed scroll is dropped instead of bouncing back as a fresh
 			// user scroll.
-			DispatchQueue.main.async { [weak self] in self?.isSyncScroll = false }
+			defer { DispatchQueue.main.async { [weak self] in self?.isSyncScroll = false } }
+			let clip = scrollView.contentView
+			let documentFrame = scrollView.documentView?.frame ?? .zero
+			let visibleHeight = clip.bounds.height
+			let minY = documentFrame.minY
+			let maxY = max(minY, documentFrame.maxY - visibleHeight)
+			let target: CGFloat
+			switch anchor {
+			case .fraction(let fraction):
+				target = MarkdownScrollGeometry.originY(
+					fraction: fraction, documentFrame: documentFrame, visibleHeight: visibleHeight)
+			case .character(let offset, let lineOffset):
+				guard let textView = scrollView.documentView as? NSTextView,
+					  let lineRect = textView.sourceLineRect(atCharacterOffset: offset) else { return }
+				target = textView.convert(lineRect, to: clip).minY + lineOffset
+			case .selection:
+				return
+			}
+			let offset = min(maxY, max(minY, target))
+			if MarkdownSplitSyncLog.enabled {
+				NSLog("[SplitSync] raw driven anchor=%@ target=%.1f doc=%.1f", String(describing: anchor), offset, documentFrame.height)
+			}
+			// Preserve x: with a line-number gutter the resting origin is
+			// -contentInsets.left, and scrolling to x: 0 slid the text
+			// horizontally underneath the ruler.
+			if abs(clip.bounds.origin.y - offset) > 0.5 {
+				clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: offset))
+				scrollView.reflectScrolledClipView(clip)
+				(scrollView.documentView as? MarkdownFormattingTextView)?.layOutViewportAfterJump()
+			}
+			lastReportedScrollOffset = clip.bounds.origin.y
 		}
 
 		/// Preserve the same normalized viewport when the containing layout
@@ -933,6 +1150,12 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					guard let self, let scrollView else { return }
 					self.geometryReplayScheduled = false
 					guard !self.isLiveScrolling else { return }
+					// A caret move this turn (⌘↓, page down, a click) scrolled the
+					// view and is about to be adopted as the anchor. The layout it
+					// triggered is what changed the frame; replaying the old anchor
+					// now would undo the move. NSTextView posts the selection change
+					// after the scroll, so this replay can be queued first.
+					guard !self.anchorCaptureScheduled else { return }
 					if MarkdownSplitSyncLog.enabled {
 						NSLog("[SplitSync] raw geometry doc=%.1f anchor=%@",
 							scrollView.documentView?.frame.height ?? 0, String(describing: self.viewportAnchor))
@@ -946,9 +1169,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		func applyScrollTarget(_ target: MarkdownScrollTarget, to scrollView: NSScrollView) {
 			guard target.token != lastScrollTargetToken else { return }
 			lastScrollTargetToken = target.token
-			viewportAnchor = .fraction(Double(target.topFraction))
+			viewportAnchor = anchor(forFraction: Double(target.topFraction), in: scrollView)
 			openGeometryWindow()
-			applyScrollFraction(Double(target.topFraction), to: scrollView)
+			scroll(to: viewportAnchor, in: scrollView)
 		}
 
 		/// Make a handed-off selection the viewport anchor and center it. A
@@ -958,22 +1181,28 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			toSelection range: NSRange, in textView: NSTextView, scrollView: NSScrollView
 		) {
 			openGeometryWindow()
+			selectionDrivenScrollPending = false
 			revealSelectionRange(range, in: textView, scrollView: scrollView)
 			viewportAnchor = range.length > 0
 				? .selection(range)
-				: .fraction(currentFraction(in: scrollView))
+				: captureViewportAnchor(in: scrollView)
 		}
 
 		/// Re-apply the current anchor to the current document geometry.
 		func replayViewportAnchor(in scrollView: NSScrollView) {
 			switch viewportAnchor {
 			case .fraction(let fraction):
-				applyScrollFraction(fraction, to: scrollView)
+				// Resolve a still-unresolved host fraction to its character now
+				// that there may be text to resolve it against.
+				viewportAnchor = anchor(forFraction: fraction, in: scrollView)
+				scroll(to: viewportAnchor, in: scrollView)
+			case .character:
+				scroll(to: viewportAnchor, in: scrollView)
 			case .selection(let range):
 				guard let textView = scrollView.documentView as? NSTextView,
 					textView.selectedRange() == range else {
 					// The user moved on; keep the view where it is from now on.
-					viewportAnchor = .fraction(currentFraction(in: scrollView))
+					viewportAnchor = captureViewportAnchor(in: scrollView)
 					return
 				}
 				revealSelectionRange(range, in: textView, scrollView: scrollView)
@@ -990,30 +1219,23 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		fileprivate func revealSelectionRange(
 			_ range: NSRange, in textView: NSTextView, scrollView: NSScrollView
 		) {
-			guard let layoutManager = textView.layoutManager,
-				let textContainer = textView.textContainer,
-				let documentView = scrollView.documentView else { return }
-			layoutManager.ensureLayout(forCharacterRange: range)
-			let glyphRange = layoutManager.glyphRange(
-				forCharacterRange: range, actualCharacterRange: nil)
-			let selectionRect = layoutManager.boundingRect(
-				forGlyphRange: glyphRange, in: textContainer
-			).offsetBy(
-				dx: textView.textContainerOrigin.x,
-				dy: textView.textContainerOrigin.y)
+			guard let documentView = scrollView.documentView,
+				let selectionRect = textView.sourceRect(for: range) else { return }
 			let visibleHeight = scrollView.contentView.bounds.height
 			let documentFrame = documentView.frame
-			// TextKit can place a tall document at a negative frame origin. The
-			// layout manager's rectangle is local to NSTextView, while the clip
-			// view scrolls in the document frame's coordinate space; include that
-			// origin before centering or the result clamps to the document bottom.
+			// The layout rectangle is local to NSTextView, while the clip view
+			// scrolls in the document frame's coordinate space (TextKit 1 could
+			// even place a tall document at a negative origin); convert before
+			// centering or the result clamps to the document bottom.
+			let clipMidY = textView.convert(selectionRect, to: scrollView.contentView).midY
 			let centeredY = MarkdownScrollGeometry.centeredOriginY(
-				localMidY: selectionRect.midY,
+				localMidY: clipMidY - documentFrame.minY,
 				documentFrame: documentFrame,
 				visibleHeight: visibleHeight)
 			scrollView.contentView.scroll(to: NSPoint(
 				x: scrollView.contentView.bounds.origin.x, y: centeredY))
 			scrollView.reflectScrolledClipView(scrollView.contentView)
+			(textView as? MarkdownFormattingTextView)?.layOutViewportAfterJump()
 			// The bounds observer treats this programmatic move as an echo, not a
 			// user scroll, so it cannot demote a selection anchor to a fraction.
 			lastReportedScrollOffset = scrollView.contentView.bounds.origin.y
@@ -1058,6 +1280,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			codeFenceRanges = codeFenceRanges.flatMap {
 				MarkdownFenceRangeTracker.updating($0, after: editedRange, delta: delta, in: storage)
 			}
+			shiftHighlightWindow(editedRange: editedRange, delta: delta)
 			if let existing = pendingHighlightRange {
 				pendingHighlightRange = NSUnionRange(existing, editedRange)
 			} else {
@@ -1071,13 +1294,9 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// scroll observer's hot path so active scrolling doesn't fire
 		/// SwiftUI invalidations through onVisibleHeadingChanged.
 		fileprivate func computeAndReportHeading(textView: NSTextView) {
-			guard let layoutManager = textView.layoutManager,
-				  let textContainer = textView.textContainer else { return }
 			let origin = textView.textContainerOrigin
-			let point = NSPoint(x: 0, y: max(0, textView.visibleRect.minY - origin.y))
-			let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
-			guard glyphIndex < layoutManager.numberOfGlyphs else { return }
-			let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+			let point = NSPoint(x: origin.x, y: max(origin.y, textView.visibleRect.minY))
+			guard let charIndex = textView.sourceCharacterOffset(at: point) else { return }
 			let heading = visibleHeading(
 				at: charIndex, in: textView.string)
 			if heading?.id != lastReportedHeading {
@@ -1086,7 +1305,6 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 		}
 		isolated deinit {
-			prelayoutTask?.cancel()
 			headingIndexTask?.cancel()
 			if let obs = scrollObserver { NotificationCenter.default.removeObserver(obs) }
 			if let obs = viewportObserver { NotificationCenter.default.removeObserver(obs) }
@@ -1143,9 +1361,15 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 					let fences = self.codeFenceRanges
 						?? MarkdownSyntaxHighlighter.fenceRanges(in: textView.string)
 					self.codeFenceRanges = fences
+					let windowed = self.usesHighlightWindow(textView)
+					if windowed, self.highlightedWindow == nil {
+						self.ensureHighlightWindow(in: textView, force: true)
+						return
+					}
 					MarkdownSyntaxHighlighter.highlight(
 						textView: textView, theme: theme,
 						options: self.parent.markdownOptions, editedRange: edited,
+						fallbackScope: windowed ? self.highlightedWindow : nil,
 						codeFenceRanges: fences)
 				}
 			}
@@ -1163,7 +1387,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 			}
 			if let stale = lastMirroredSelection,
 			   stale.location + stale.length <= (textView.textStorage?.length ?? 0) {
-				textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: stale)
+				textView.highlightSink?.clearBackground(in: stale)
 			}
 			let range = textView.selectedRange()
 			parent.applyFocusMode(to: textView, coordinator: self)
@@ -1178,6 +1402,7 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		public func textViewDidChangeSelection(_ notification: Notification) {
 			guard !isUpdatingFromSwiftUI, let tv = notification.object as? NSTextView else { return }
 			if parent.typewriterMode { centerCursor(in: tv) }
+			noteSelectionMoved(in: tv)
 			parent.applyFocusMode(to: tv, coordinator: self)
 			reportCursorPosition(in: tv)
 			// The native Find bar gives keyboard focus to its field editor while it
@@ -1217,15 +1442,13 @@ public struct MarkdownTextEditor: NSViewRepresentable {
 		/// within the comfortable middle band of the viewport, and only recenters
 		/// once the caret has drifted past the band's top or bottom edge.
 		private func centerCursor(in textView: NSTextView) {
-			guard let scrollView = textView.enclosingScrollView,
-					let layoutManager = textView.layoutManager else { return }
+			guard let scrollView = textView.enclosingScrollView else { return }
 			let visibleHeight = scrollView.contentView.bounds.height
 			guard visibleHeight > 0 else { return }
 			let insertionPoint = textView.selectedRange().location
-			let glyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: insertionPoint, length: 0), actualCharacterRange: nil)
-			let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+			guard let lineRect = textView.sourceLineRect(atCharacterOffset: insertionPoint) else { return }
 
-			let lineMidY = lineRect.midY + textView.textContainerOrigin.y
+			let lineMidY = lineRect.midY
 			let currentTop = scrollView.contentView.bounds.origin.y
 			let caretInViewport = lineMidY - currentTop
 

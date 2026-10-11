@@ -95,7 +95,8 @@ struct MarkdownTextEditorScrollTargetTests {
 	}
 
 	private func scrollFraction(in scrollView: NSScrollView) -> CGFloat {
-		MarkdownScrollGeometry.fraction(
+		if let editor = scrollView.documentView as? NSTextView { return editor.lineScrollFraction }
+		return MarkdownScrollGeometry.fraction(
 			originY: scrollView.contentView.bounds.origin.y,
 			documentFrame: scrollView.documentView?.frame ?? .zero,
 			visibleHeight: scrollView.contentView.bounds.height)

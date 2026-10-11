@@ -102,8 +102,7 @@ final class LineNumberRulerView: NSRulerView {
 	}
 
 	override func drawHashMarksAndLabels(in rect: NSRect) {
-		guard let textView, let layoutManager = textView.layoutManager,
-			  let container = textView.textContainer else { return }
+		guard let textView, let container = textView.textContainer else { return }
 		rebuildLineStartsIfNeeded()
 		guard !lineStarts.isEmpty else { return }
 
@@ -116,18 +115,16 @@ final class LineNumberRulerView: NSRulerView {
 		let visibleHeight = visible.height
 		// Only the fragments actually on screen — never walk from the top.
 		let visibleRect = NSRect(x: 0, y: scrollOffset - origin.y, width: container.size.width, height: visibleHeight)
-		let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: container)
-		guard glyphRange.length > 0 else { return }
 
 		let attrs: [NSAttributedString.Key: Any] = [
 			.font: numberFont(),
 			.foregroundColor: textColor
 		]
-
-		layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, fragmentGlyphs, _ in
-			let charIndex = layoutManager.characterIndexForGlyph(at: fragmentGlyphs.location)
+		// Draw one number beside the first line fragment of a hard line; wrapped
+		// continuations carry none. `fragmentRect` is in text container
+		// coordinates and `charIndex` is the fragment's first character.
+		let drawLine = { (fragmentRect: CGRect, charIndex: Int) in
 			let line = self.lineIndex(for: charIndex)
-			// Wrapped continuations of a hard line carry no number.
 			guard charIndex == self.lineStarts[line] else { return }
 			let rulerY = fragmentRect.origin.y + origin.y - scrollOffset
 			guard rulerY + fragmentRect.height >= 0, rulerY < visibleHeight else { return }
@@ -138,6 +135,59 @@ final class LineNumberRulerView: NSRulerView {
 			let size = numStr.size(withAttributes: attrs)
 			let x = self.ruleThickness - size.width - self.gutterPadding
 			numStr.draw(at: NSPoint(x: x, y: rulerY + (fragmentRect.height - size.height) / 2), withAttributes: attrs)
+		}
+
+		if let textLayoutManager = textView.textLayoutManager {
+			enumerateVisibleLayoutFragments(
+				in: textLayoutManager, visibleRect: visibleRect, drawLine)
+			return
+		}
+		guard let layoutManager = textView.textKit1LayoutManager else { return }
+		let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: container)
+		guard glyphRange.length > 0 else { return }
+		layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, fragmentGlyphs, _ in
+			drawLine(fragmentRect, layoutManager.characterIndexForGlyph(at: fragmentGlyphs.location))
+		}
+	}
+
+	/// TextKit 2 lays out a paragraph per layout fragment, so a hard line's
+	/// number sits beside its fragment's first line fragment. Enumeration
+	/// starts at the fragment under the visible top — found by position, or
+	/// from the viewport range when that point is not laid out yet — and stops
+	/// at the first fragment below the visible bottom, so the cost is the
+	/// screenful rather than the document.
+	///
+	/// It never starts from the top of the document. Mid-jump (⌘↓ in a 20 MB
+	/// file) neither lookup may resolve yet, and enumerating from the start
+	/// with `.ensuresLayout` until reaching the viewport lays out the entire
+	/// document — after which every keystroke near the top costs seconds,
+	/// because each edit shifts every laid-out fragment after it. Skipping the
+	/// draw is harmless: the ruler is redrawn once the viewport has laid out.
+	private func enumerateVisibleLayoutFragments(
+		in textLayoutManager: NSTextLayoutManager,
+		visibleRect: CGRect,
+		_ body: (CGRect, Int) -> Void
+	) {
+		guard let contentManager = textLayoutManager.textContentManager,
+			  let start = textLayoutManager.textLayoutFragment(for: visibleRect.origin)?.rangeInElement.location
+				?? textLayoutManager.textViewportLayoutController.viewportRange?.location else {
+			needsDisplay = true
+			return
+		}
+		// A screenful is at most a few hundred fragments; the cap only guards
+		// against an estimate that places `start` far above the viewport.
+		var budget = 2_000
+		textLayoutManager.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+			budget -= 1
+			guard budget > 0 else { return false }
+			let frame = fragment.layoutFragmentFrame
+			guard frame.minY < visibleRect.maxY else { return false }
+			guard frame.maxY > visibleRect.minY else { return true }
+			let charIndex = contentManager.characterOffset(of: fragment.rangeInElement.location)
+			let firstLine = fragment.textLineFragments.first?.typographicBounds
+				?? CGRect(origin: .zero, size: frame.size)
+			body(firstLine.offsetBy(dx: frame.minX, dy: frame.minY), charIndex)
+			return true
 		}
 	}
 

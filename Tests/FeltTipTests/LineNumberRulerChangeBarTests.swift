@@ -89,8 +89,9 @@
 	}
 
 	@Test func largeDocumentTailRulerUsesVisibleTextCoordinates() throws {
-		// A large editor can rebase its bounds while the clip view keeps an
-		// earlier origin. The visible changed line must still mark the gutter.
+		// A rebased bounds origin (TextKit 1 did this for tall documents; on
+		// TextKit 2 `textContainerOrigin` follows it) must not break the
+		// gutter: the visible changed line deep in the document still marks it.
 		let source = (1...8_808).map { "line \($0) lorem ipsum\n" }.joined()
 		let (ruler, window) = makeRuler(text: source)
 		defer { closeTestWindow(window) }
@@ -101,17 +102,14 @@
 		textView.textContainer?.heightTracksTextView = false
 		textView.textContainer?.containerSize = NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude)
 		textView.sizeToFit()
-		textView.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: 0, length: (source as NSString).length))
+		let textLayoutManager = try #require(textView.textLayoutManager)
+		textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
 		textView.bounds.origin.y = 100_000
-		scrollView.contentView.scroll(to: NSPoint(x: 0, y: 13_000))
+		scrollView.contentView.scroll(to: NSPoint(x: 0, y: 113_000))
 		window.displayIfNeeded()
 		let visible = textView.visibleRect
-		let manager = try #require(textView.layoutManager)
-		let container = try #require(textView.textContainer)
-		let glyphs = manager.glyphRange(forBoundingRect: NSRect(
-			x: 0, y: visible.midY - textView.textContainerOrigin.y,
-			width: container.size.width, height: 1), in: container)
-		let position = manager.characterIndexForGlyph(at: glyphs.location)
+		let position = try #require(textView.sourceCharacterOffset(
+			at: CGPoint(x: textView.textContainerOrigin.x, y: visible.midY)))
 		let line = MarkdownLineIndex(text: source).position(at: position).line
 		#expect(line > 7_000)
 		ruler.lineChanges = MarkdownLineChanges(changedLines: [line - 1: .added], deletionsAfter: [], changedRanges: [], deletionOffsets: [])
@@ -133,7 +131,10 @@
 		scrollView.verticalRulerView = ruler
 		scrollView.hasVerticalRuler = true
 		scrollView.rulersVisible = true
-		textView.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: 0, length: (text as NSString).length))
+		// The ruler reads TextKit 2 layout fragments, like the raw editor's view.
+		if let textLayoutManager = textView.textLayoutManager {
+			textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+		}
 		window.orderFront(nil)
 		return (ruler, window)
 	}
