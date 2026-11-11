@@ -44,8 +44,7 @@ struct BlockBuilder: MarkupWalker {
 	}
 
 	mutating func visitHeading(_ heading: Heading) {
-		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
-		let inline = builder.build(from: heading, linkifyURLs: linkifyURLs)
+		let inline = buildInline(from: Array(heading.children))
 		blocks.append(.heading(level: heading.level, content: inline.content, id: nextID()))
 	}
 
@@ -267,6 +266,13 @@ struct BlockBuilder: MarkupWalker {
 	private func buildInline(from children: [Markup]) -> InlineResult {
 		var builder = InlineBuilder(theme: theme, fontSize: fontSize, sourceConverter: sourceConverter)
 		for child in children { builder.visit(child) }
+		// Paragraph-final spaces and tabs are omitted by the Markdown AST.
+		// Editable rendering needs them as real stamped text so re-rendering
+		// after a second space or Tab does not strand the caret in an empty row.
+		if let end = children.last?.range?.upperBound,
+		   let whitespace = sourceConverter?.trailingWhitespace(line: end.line, column: end.column) {
+			builder.result.append(InlineRun(whitespace.text, markdownSourceOffset: whitespace.offset))
+		}
 		return builder.finalize(linkifyURLs: linkifyURLs)
 	}
 

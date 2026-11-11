@@ -63,23 +63,14 @@ import Testing
 		], harness: harness)
 	}
 
-	@Test func physicalTabInAListIsANoOpThatKeepsTheCaret() async throws {
+	@Test func shiftTabKeepsTheCaretAndControlsRetainTabNavigation() async throws {
 		let harness = try await CoordinatorBridgeHarness(source: Self.source)
 		let result = try await harness.evaluate("""
 			window.__mdPlaceCaret(16);
-			var tab = new KeyboardEvent('keydown', {
-			  key: 'Tab', bubbles: true, cancelable: true
-			});
-			document.body.dispatchEvent(tab);
 			var shiftTab = new KeyboardEvent('keydown', {
 			  key: 'Tab', shiftKey: true, bubbles: true, cancelable: true
 			});
 			document.body.dispatchEvent(shiftTab);
-			window.__mdPlaceCaret(1);
-			var paragraphTab = new KeyboardEvent('keydown', {
-			  key: 'Tab', bubbles: true, cancelable: true
-			});
-			document.body.dispatchEvent(paragraphTab);
 			var control = document.createElement('button');
 			document.body.appendChild(control);
 			control.focus();
@@ -89,16 +80,11 @@ import Testing
 			control.dispatchEvent(controlTab);
 			control.remove();
 			window.__mdPlaceCaret(16);
-			String(tab.defaultPrevented) + '|' + String(shiftTab.defaultPrevented)
-			  + '|' + String(paragraphTab.defaultPrevented)
-			  + '|' + String(controlTab.defaultPrevented);
+			String(shiftTab.defaultPrevented) + '|' + String(controlTab.defaultPrevented);
 			""")
-		#expect(result == "true|true|false|false")
+		#expect(result == "true|false")
 		#expect(harness.source == Self.source)
-
-		// The keys must not merely avoid a source edit; the next real edit must
-		// still land at the list caret instead of the start of the document.
-		try await harness.run("document.execCommand('insertText', false, 'X')")
+		try await harness.type("X")
 		try await harness.waitForSourceEdits(1)
 		#expect(harness.source == "alpha beta\n\n- onXe\n- two\n")
 		#expect(try await harness.stampMismatches() == [])

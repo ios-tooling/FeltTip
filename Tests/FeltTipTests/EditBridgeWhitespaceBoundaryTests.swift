@@ -17,6 +17,120 @@ import Testing
 
 @Suite(.serialized) @MainActor
 struct EditBridgeWhitespaceBoundaryTests {
+	@Test func repeatedSpacesRemainVisibleAndBackspaceRemovesOne() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha Beta")
+		try await harness.type(" ", at: 6)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type(" ")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha   Beta")
+		#expect(try await harness.evaluate("document.querySelector('p').innerText") == "Alpha   Beta")
+		let widths = try await harness.evaluate("""
+		  var node = document.querySelector('p [data-s]').firstChild;
+		  JSON.stringify([5, 6, 7].map(i => {
+		    var r = document.createRange(); r.setStart(node, i); r.setEnd(node, i + 1);
+		    return r.getBoundingClientRect().width > 0;
+		  }))
+		  """)
+		#expect(widths == "[true,true,true]")
+		try await harness.run("document.execCommand('delete')")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == "Alpha  Beta")
+		try await assertHealthy(harness)
+	}
+
+	@Test func tabInsertsLiteralWhitespaceAndKeepsTypingAtTheCaret() async throws {
+		for source in ["Alpha Beta", "Alpha", "# Alpha", "- Alpha Beta", "- Alpha", "```\nAlpha Beta\n```"] {
+			let harness = try await CoordinatorBridgeHarness(source: source)
+			let caret = (source as NSString).range(of: "Alpha").upperBound
+			try await harness.placeCaret(caret)
+			try await harness.run("""
+			  document.body.dispatchEvent(new KeyboardEvent('keydown', {
+			    key: 'Tab', bubbles: true, cancelable: true
+			  }))
+			  """)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			#expect(harness.source == source.replacingOccurrences(of: "Alpha", with: "Alpha\t"))
+			try await harness.type("X")
+			try await harness.waitForSourceEdits(2)
+			#expect(harness.source == source.replacingOccurrences(of: "Alpha", with: "Alpha\tX"))
+			try await assertHealthy(harness)
+		}
+	}
+
+	@Test func rapidTabsAndTypingReplayInOrder() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "AlphaBeta")
+		try await harness.placeCaret(5)
+		try await harness.run("""
+		  function tab() {
+		    document.body.dispatchEvent(new KeyboardEvent('keydown', {
+		      key: 'Tab', bubbles: true, cancelable: true
+		    }));
+		  }
+		  tab(); tab(); document.execCommand('insertText', false, 'X');
+		  """)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha\t\tXBeta")
+		try await assertHealthy(harness)
+	}
+
+	@Test func trailingSpacesStayVisibleWhileTypingAndDeleting() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "Alpha")
+		try await harness.type(" ", at: 5)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.type(" ")
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha  ")
+		#expect(try await harness.evaluate("document.querySelector('p').innerText") == "Alpha  ")
+		try await harness.run("document.execCommand('delete')")
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == "Alpha ")
+		try await harness.type("X")
+		try await harness.waitForSourceEdits(4)
+		#expect(harness.source == "Alpha X")
+		try await assertHealthy(harness)
+	}
+
+	@Test func physicalSpacesRejectPeriodSubstitutionButAnExplicitPeriodStillTypes() async throws {
+		let harness = try await CoordinatorBridgeHarness(source: "AlphaBeta")
+		try await harness.placeCaret(5)
+		try await harness.run("""
+		  document.body.dispatchEvent(new KeyboardEvent('keydown', {
+		    key: ' ', bubbles: true, cancelable: true
+		  }));
+		  """)
+		try await harness.waitForSourceEdits(1)
+		try await harness.waitQuiescent()
+		try await harness.run("""
+		  window.__mdPlaceCaret(5, 1);
+		  document.execCommand('insertText', false, '. ');
+		  """)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha Beta")
+		try await harness.run("""
+		  document.body.dispatchEvent(new KeyboardEvent('keydown', {
+		    key: ' ', bubbles: true, cancelable: true
+		  }));
+		  """)
+		try await harness.waitForSourceEdits(2)
+		try await harness.waitQuiescent()
+		#expect(harness.source == "Alpha  Beta")
+		try await harness.run("""
+		  window.__mdPlaceCaret(7);
+		  document.body.dispatchEvent(new KeyboardEvent('keydown', {key: '.', bubbles: true}));
+		  document.execCommand('insertText', false, '.');
+		  """)
+		try await harness.waitForSourceEdits(3)
+		#expect(harness.source == "Alpha  .Beta")
+		try await assertHealthy(harness)
+	}
+
 	private func assertHealthy(
 		_ harness: CoordinatorBridgeHarness,
 		sourceLocation: SourceLocation = #_sourceLocation

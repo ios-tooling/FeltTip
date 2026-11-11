@@ -94,6 +94,7 @@ pre-restore source — typing the undo straight back out.
 | Typing, delete, forward/word delete | in-place | cross-run, Markdown-syntax-sensitive, and table-cell pipe insertions go structural; a literal pipe becomes `\|` |
 | Typing / Return in fenced code | in-place / structural | mapped only when the rendered code is one exact source slice; Return inserts one source newline and syntax highlighting is preserved after re-render |
 | ⌘X | in-place / structural | falls back to the DOM selection when WebKit omits target ranges; whole styled runs/blocks consume their hidden Markdown syntax |
+| Tab | structural | inserts a literal source tab at the selection, including in list text; Shift-Tab is a no-op, not list outdent |
 | Enter | structural | list items keep their **source** indentation (`listBreak`), and task items continue as a new unchecked task; at a visual block start, any verified hidden Markdown prefix and the caret move down with the text |
 | Enter in a table cell | caret move | last row asks the host to append a row |
 | ⌘B / ⌘I / ⌘⇧X | structural | toggles off when already wrapped |
@@ -125,6 +126,14 @@ removed while an opener such as `**` remains intact.
 Markdown rendering normally collapses repeated blank source lines. After Return
 at a visual block start, the page installs a temporary stamped blank row before
 the moved block so the edit is visible while the caret remains with that block.
+
+Editable stamped runs use `white-space: break-spaces` and four-column tab stops.
+This keeps consecutive and trailing spaces visible without preserving the HTML
+scaffolding whitespace between blocks. Editable paragraph parsing also retains
+verified trailing horizontal whitespace omitted by the Markdown AST, so a
+structural refresh does not replace its caret with an empty paragraph.
+Physical Space bypasses native double-space-to-period substitution. Space and
+Tab dispatch verified text insertions; it never invokes native rich insertion or reads the clipboard.
 
 ### Selection handoff
 

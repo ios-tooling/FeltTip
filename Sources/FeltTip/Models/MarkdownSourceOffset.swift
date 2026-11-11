@@ -113,6 +113,19 @@ struct SourceOffsetConverter {
 		return lower..<upper
 	}
 
+	/// Horizontal whitespace omitted by Markdown at the end of a paragraph.
+	/// Only expose an exact surviving source slice; never include a line break.
+	func trailingWhitespace(line: Int, column: Int) -> (text: String, offset: Int)? {
+		guard let start = processedUTF16(line: line, column: column),
+		      var end = processedLineEnd(line), start < end else { return nil }
+		if processedUTF16[end - 1] == 0x0D { end -= 1 }
+		guard start < end,
+		      processedUTF16[start..<end].allSatisfy({ $0 == 0x20 || $0 == 0x09 }),
+		      let offset = verbatimSourceOffset(processedOffset: start, length: end - start)
+		else { return nil }
+		return (String(decoding: processedUTF16[start..<end], as: UTF16.self), offset)
+	}
+
 	func utf16Offset(line: Int, column: Int) -> Int? {
 		guard let processedOffset = processedUTF16(line: line, column: column) else { return nil }
 		return mapToSource(processedOffset) + baseOffset

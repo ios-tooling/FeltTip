@@ -34,6 +34,28 @@ import Testing
 		try await body()
 	}
 
+	@Test func pastedWhitespaceStaysVisibleAndTabDoesNotReadClipboard() async throws {
+		try await withPasteboard("  \t  ") {
+			let harness = try await CoordinatorBridgeHarness(source: "AlphaBeta")
+			try await paste(into: harness, at: 5)
+			try await harness.waitForSourceEdits(1)
+			try await harness.waitQuiescent()
+			#expect(harness.source == "Alpha  \t  Beta")
+			#expect(try await harness.evaluate("document.querySelector('p').innerText") == "Alpha  \t  Beta")
+			TestPasteboard.string = "UNRELATED CLIPBOARD TEXT"
+			try await harness.run("""
+			  document.body.dispatchEvent(new KeyboardEvent('keydown', {
+			    key: 'Tab', bubbles: true, cancelable: true
+			  }))
+			  """)
+			try await harness.waitForSourceEdits(2)
+			try await harness.waitQuiescent()
+			#expect(harness.source == "Alpha  \t  \tBeta")
+			#expect(try await harness.stampMismatches() == [])
+			#expect(harness.coordinator.hardRejections == 0)
+		}
+	}
+
 	private func withClearedPasteboard(_ body: () async throws -> Void) async throws {
 		await TestPasteboard.acquireExclusiveAccess()
 		defer { TestPasteboard.releaseExclusiveAccess() }
@@ -576,6 +598,10 @@ import Testing
 		publicCopy: String
 	) async throws {
 		let afterCut = "Head<u></u>Tail"
+		// Forward navigation now visits the paragraph's visible trailing spaces
+		// before crossing its block separator.
+		let visiblePrefix = direction == "forward"
+			? String(boundary.prefix(while: { $0 == " " || $0 == "\t" })) : ""
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
 		harness.focusWebView()
 		harness.coordinator.parent = MarkdownWebView(
@@ -598,11 +624,13 @@ import Testing
 		}
 		harness.rewireRoundTrip()
 		try await harness.run("""
+			for (var step = 0; step < \(visiblePrefix.utf16.count + 1); step++) {
 			var arrow = new KeyboardEvent('keydown', {
 			  key: '\(key)', shiftKey: true, bubbles: true, cancelable: true
 			})
 			if (document.body.dispatchEvent(arrow)) {
 			  window.getSelection().modify('extend', '\(direction)', 'character')
+			}
 			}
 			""")
 
@@ -613,8 +641,8 @@ import Testing
 			}
 			#expect(TestPasteboard.string == publicCopy, "direction=\(direction)")
 			#expect(try await harness.evaluate(
-				"window.getSelection().toString().replace(/\\u200B/g, '')"
-			) == "\n", "Copy collapsed the separator selection")
+				"String(window.getSelection().isCollapsed)"
+			) == "false", "Copy collapsed the separator selection")
 
 			try await performResponderCommand(.cut, in: harness)
 			try await harness.waitUntil("block-separator Cut source result") {
@@ -851,7 +879,8 @@ import Testing
 		 afterTyping: "<u>**Bold** </u>\n\n<u></u><u>X</u>Tail"),
 		(source: "Head<u></u><u></u>\n\n[ ***Bold***](https://x.test)", caret: 7,
 		 key: "ArrowRight", direction: "forward", extensions: 2, reversals: 0,
-		 afterTyping: "Head<u></u><u></u>\n\n[ ***BXold***](https://x.test)"),
+		 // The link's leading space now has its own visible caret stop.
+		 afterTyping: "Head<u></u><u></u>\n\n[ X***Bold***](https://x.test)"),
 		(source: "**Bold**\n\n<u></u><u></u><u></u>Tail", caret: 20,
 		 key: "ArrowLeft", direction: "backward", extensions: 3, reversals: 1,
 		 afterTyping: "**Bold**\n\n<u></u><u>X</u><u></u>Tail"),
@@ -1419,6 +1448,9 @@ import Testing
 		afterReplacement: String,
 		afterTyping: String
 	) async throws {
+		let firstLine = source.prefix(while: { $0 != "\n" })
+		let outerWhitespace = String(firstLine.reversed().prefix(while: { $0 == " " || $0 == "\t" }).reversed())
+		let visibleCopy = String(publicCopy.dropLast()) + outerWhitespace + "\n"
 		let harness = try await CoordinatorBridgeHarness(source: "Seed")
 		restore(source, caret: caret, token: 1104 + caret, in: harness)
 		try await harness.waitUntil("Copy-then-whitespace boundary caret") {
@@ -1427,7 +1459,9 @@ import Testing
 		}
 		harness.rewireRoundTrip()
 		try await harness.run("""
-			for (var index = 0; index < 2; index++) {
+			// Include the final letter as well as each now-visible whitespace stop.
+			for (var index = 0; index < 12; index++) {
+			  if (window.getSelection().toString().replace(/\\u200B/g, '').startsWith('\(publicCopy.prefix(1))')) break;
 			  var arrow = new KeyboardEvent('keydown', {
 			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
 			  })
@@ -1442,7 +1476,7 @@ import Testing
 			try await harness.waitUntil("Copy-then-whitespace public flavor") {
 				TestPasteboard.string != nil
 			}
-			#expect(TestPasteboard.string == publicCopy)
+			#expect(TestPasteboard.string == visibleCopy)
 			#expect(TestPasteboard.source == nil)
 			try await harness.type(replacement)
 			try await harness.waitForSourceEdits(1)
@@ -1469,7 +1503,7 @@ import Testing
 		}
 		harness.rewireRoundTrip()
 		try await harness.run("""
-			for (var index = 0; index < 2; index++) {
+			for (var index = 0; index < 5; index++) {
 			  var arrow = new KeyboardEvent('keydown', {
 			    key: 'ArrowLeft', shiftKey: true, bubbles: true, cancelable: true
 			  })
@@ -1481,7 +1515,7 @@ import Testing
 		try await withClearedPasteboard {
 			try await performResponderCommand(.copy, in: harness)
 			try await harness.waitUntil("Nested-link whitespace public flavor") {
-				TestPasteboard.string == " \n"
+				TestPasteboard.string == "   \n"
 			}
 			try await harness.run("""
 				document.body.dispatchEvent(new InputEvent('beforeinput', {
@@ -1534,7 +1568,8 @@ import Testing
 		}
 		harness.rewireRoundTrip()
 		try await harness.run("""
-			for (var index = 0; index < 2; index++) {
+			for (var index = 0; index < 12; index++) {
+			  if (window.getSelection().toString().replace(/\\u200B/g, '').endsWith('B')) break;
 			  var arrow = new KeyboardEvent('keydown', {
 			    key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true
 			  })
@@ -4526,7 +4561,9 @@ import Testing
 			#expect(harness.source == afterCut)
 			try await harness.waitQuiescent()
 
-			let destination = (afterCut as NSString).range(of: "omega").location
+			// Paste between the two preserved spaces, at the original cut site.
+			// The old collapsed layout snapped an omega-start caret back here.
+			let destination = whole.location
 			try await paste(into: harness, at: destination)
 			try await harness.waitForSourceEdits(2)
 			#expect(harness.source == source)

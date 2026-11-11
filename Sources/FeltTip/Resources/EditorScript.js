@@ -23,6 +23,12 @@
   document.body.spellcheck = (document.body.textContent || '').length <= automaticSpellcheckCharacterLimit;
   document.body.contentEditable = 'true';
   document.body.style.outline = 'none';
+  // Preserve every source space and tab in editable runs, including at line
+  // ends. Scope this to stamped text: preserving the HTML's own indentation
+  // on the body would introduce phantom blank lines between blocks.
+  var whitespaceStyle = document.createElement('style');
+  whitespaceStyle.textContent = 'body[contenteditable="true"] [data-s] { white-space: break-spaces; tab-size: 4; }';
+  document.head.appendChild(whitespaceStyle);
   // Blocks we can't map edits inside become read-only islands, so the caret
   // can't land somewhere a keystroke would be silently vetoed. Tables are
   // NOT among them: cell runs carry data-s stamps like any paragraph, so
@@ -369,6 +375,7 @@
     if (typeof rev === 'number') { stampRev = rev; }
     if (window.__mdRenderMermaid) { window.__mdRenderMermaid(); }
     document.querySelectorAll('pre, .alert, details, .frontmatter, .mermaid, img, hr').forEach(function (el) {
+      if (el.tagName === 'PRE' && el.querySelector('[data-s]')) return;
       el.contentEditable = 'false';
     });
     installLinkOpenButtons();
@@ -390,7 +397,8 @@
           window.__mdPlaceCaret(input.selection.offset, input.selection.length);
         }
         if (input.command === 'insertText') {
-          document.execCommand('insertText', false, input.text);
+          if (input.text.includes('\t')) insertLiteralWhitespaceText(input.text);
+          else document.execCommand('insertText', false, input.text);
         } else if (input.command === 'deleteWordBackward' ||
                    input.command === 'deleteWordForward') {
           var selection = window.getSelection();
@@ -1093,6 +1101,24 @@
       }
     }
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return null;
+    // A visible trailing-space run adds caret stops before the next block.
+    // Once the selection reaches that block, recover the verified separator
+    // metadata even though navigation began with an ordinary stamped space.
+    // The DOM's Range text omits the paragraph separator entirely.
+    var separatorOffset = startsAtHome
+      ? home.__mdNeutralNextBoundaryOffset : home.__mdNeutralPreviousBoundaryOffset;
+    var separatorSource = startsAtHome
+      ? home.__mdNeutralNextBoundarySource : home.__mdNeutralPreviousBoundarySource;
+    if (/^\s*$/.test(expected) && separatorSource &&
+        start === separatorOffset && end === separatorOffset + separatorSource.length) {
+      return {
+        start: start, end: end, expected: expected, sourceExpected: separatorSource,
+        canonicalSourceSelection: false, blockBoundary: true,
+        boundaryDirection: startsAtHome ? 'forward' : 'backward',
+        boundaryClipboardText: expected, home: home,
+        syntaxStart: [], syntaxEnd: [], range: range.cloneRange()
+      };
+    }
     var syntaxStart = selectedSyntaxBoundaries(range, true);
     var syntaxEnd = selectedSyntaxBoundaries(range, false);
     // A synthetic home sits outside the adjacent inline element. When the
@@ -2398,28 +2424,58 @@
     }, 0);
   });
 
+  // AppKit may deliver its period substitution separately from the Space
+  // key's default action, even when that default was prevented. Remember the
+  // physical key so that replacement cannot rewrite literal spaces afterwards.
+  var lastPhysicalSpace = 0;
+  var rejectedPeriodSelection = false;
+  document.addEventListener('pointerdown', function () {
+    rejectedPeriodSelection = false;
+    lastPhysicalSpace = 0;
+  }, true);
   document.addEventListener('keydown', function (event) {
-    // WebKit treats Tab as focus traversal before it emits a beforeinput
-    // indent/outdent command. In a list that silently abandons the live
-    // caret; Shift-Tabbing back then recreates it at the start of the page,
-    // so the next keystroke edits the heading instead of the list item the
-    // user left. List indentation is deliberately unsupported for now (see
-    // EDITING.md), so make the physical keys the same true no-op as the
-    // blocked edit commands while leaving normal Tab navigation everywhere
-    // else intact.
-    if (event.key === 'Tab' && document.activeElement === document.body &&
-        !event.metaKey && !event.ctrlKey && !event.altKey) {
-      var tabSelection = window.getSelection();
-      if (tabSelection && tabSelection.rangeCount) {
-        var tabRange = tabSelection.getRangeAt(0);
-        var tabNode = tabRange.startContainer.nodeType === 1
-          ? tabRange.startContainer : tabRange.startContainer.parentNode;
-        if (tabNode && tabNode.closest && tabNode.closest('li')) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
+    lastPhysicalSpace = event.key === ' ' && !event.metaKey && !event.ctrlKey &&
+      !event.altKey && !event.isComposing ? Date.now() : 0;
+    if (!lastPhysicalSpace) rejectedPeriodSelection = false;
+  }, true);
+
+  // Used by physical whitespace keys and buffered typing with tabs. Never
+  // hand tabs to execCommand: native rich insertion may take the paste route.
+  function insertLiteralWhitespaceText(text) {
+    var selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    var range = selection.getRangeAt(0).cloneRange();
+    var input = new InputEvent('beforeinput', {
+      inputType: 'insertText', data: text, bubbles: true, cancelable: true
+    });
+    // WebKit ignores targetRanges in InputEventInit for synthetic events.
+    input.getTargetRanges = function () { return [range]; };
+    input.__mdLiteralWhitespace = true;
+    document.body.dispatchEvent(input);
+  }
+
+  document.addEventListener('keydown', function (event) {
+    // Physical spaces must remain literal, bypassing double-space-to-period
+    // substitution. A tab is a source edit, never focus traversal or a rich
+    // HTML insertion (which WebKit can report as paste). Route it through the
+    // same verified structural splice as typing; no clipboard is involved.
+    if ((event.key === 'Tab' || event.key === ' ') && document.activeElement === document.body &&
+        !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Tab' && event.shiftKey) return; // Outdent remains unsupported.
+      if (event.key === 'Tab') insertLiteralWhitespaceText('\t');
+      else {
+        // A cancelled AppKit replacement can leave the previous space selected.
+        // The next Space must insert after it, not replace that selection.
+        if (rejectedPeriodSelection) {
+          var spaceSelection = window.getSelection();
+          if (spaceSelection && spaceSelection.rangeCount) spaceSelection.collapseToEnd();
+          rejectedPeriodSelection = false;
         }
+        insertLiteralWhitespaceText(' ');
       }
+      return;
     }
     // WebKit can decline the native Delete command (and AppKit emits the
     // system beep) when a mouse selection owns PRE/CODE element boundaries,
@@ -2486,6 +2542,19 @@
     // so it can't desync the source or move the caret. Checked first, before
     // the range lookup, because a history beforeinput may carry no range.
     if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); return; }
+    var substitutionText = e.data;
+    if (substitutionText == null && e.dataTransfer) {
+      substitutionText = e.dataTransfer.getData('text/plain');
+    }
+    if (!e.isComposing && lastPhysicalSpace && Date.now() - lastPhysicalSpace < 1000 &&
+        (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') &&
+        (substitutionText === '.' || substitutionText === '. ')) {
+      e.preventDefault();
+      rejectedPeriodSelection = true;
+      var substitutionSelection = window.getSelection();
+      if (substitutionSelection && substitutionSelection.rangeCount) substitutionSelection.collapseToEnd();
+      return;
+    }
     // Match Style belongs to exactly one native paste command. Consume the
     // request before any early-out so a refused paste cannot affect the next.
     var requestedMatchStyle = false;
@@ -3067,7 +3136,8 @@
       if ((startCell && (data.includes('|') || escapedPipeInsertionTarget ||
             (!range.collapsed && expected !== plain(rangeText(range))))) ||
           crossRun || ownsInlineRun || isSyntheticCaretHolder(startSpan) ||
-          needsStructuralTabRun(startSpan) ||
+          e.__mdLiteralWhitespace === true ||
+          data.includes('\t') || needsStructuralTabRun(startSpan) ||
           needsStructuralWhitespaceInsertion(data, before, after) ||
           needsStructuralBlockPrefixRefresh(range, data, before, after) ||
           needsStructuralInlineRefresh(range, data, before, after)) {
